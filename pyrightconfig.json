@@ -1,0 +1,15 @@
+{
+  "typeCheckingMode": "strict",
+  "reportMissingImports": true,
+  "reportUndefinedVariable": true,
+  "reportUnknownMemberType": false,
+  "reportUnknownArgumentType": false,
+  "reportIncompatibleMethodOverride": true,
+  "reportArgumentType": true,
+  "reportGeneralTypeIssues": true,
+  "reportAny": false,
+
+  "exclude": ["**/__pycache__", "build", "dist", ".venv", "tests"],
+
+  "extraPaths": ["src", "."]
+}
