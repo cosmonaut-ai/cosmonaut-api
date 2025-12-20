@@ -31,9 +31,6 @@ class Settings(BaseSettings):
     PINECONE_INDEX: str | None = Field(
         default=None, description="Target Pinecone index for vector operations."
     )
-    PINECONE_NAMESPACE: str = Field(
-        default="default", description="Namespace for isolating vectors."
-    )
     PINECONE_TOP_K: int = Field(default=10, description="Default top-k for similarity search.")
     PINECONE_EMBED_DIM: int = Field(default=1536, description="Embedding dimension for index.")
 
