@@ -10,6 +10,7 @@ from aws_lambda_powertools.metrics import MetricUnit
 from fastapi import FastAPI, Request, Response
 from mangum import Mangum
 
+from app.api.worlds import router as worlds_router
 from app.core.config import settings
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
@@ -41,6 +42,9 @@ async def health():
 
     metrics.add_metric(name="HealthCheck", unit=MetricUnit.Count, value=1)
     return {"status": "ok"}
+
+
+app.include_router(worlds_router)
 
 
 handler = Mangum(app)
