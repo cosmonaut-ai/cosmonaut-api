@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     )
     PINECONE_TOP_K: int = Field(default=10, description="Default top-k for similarity search.")
     PINECONE_EMBED_DIM: int = Field(default=1536, description="Embedding dimension for index.")
+    MOCK_AUTH: bool = Field(
+        default=False, description="If True, bypasses JWT validation (DEV ONLY)."
+    )
+    COGNITO_USER_POOL_ID: str = Field(default="", description="AWS Cognito User Pool ID.")
+    COGNITO_CLIENT_ID: str = Field(default="", description="AWS Cognito Client ID (Audience).")
+    AWS_REGION: str = Field(default="us-east-2", description="AWS Region.")
 
 
 settings: Settings = Settings()

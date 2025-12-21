@@ -17,6 +17,7 @@ dependencies = [
     "pinecone>=8.0.0",
     "google-genai>=1.56.0",
     "pydantic-ai>=1.37.0",
+    "pyjwt[crypto]>=2.10.1",
 ]
 
 
