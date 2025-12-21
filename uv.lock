@@ -442,6 +442,7 @@ dependencies = [
     { name = "pydantic" },
     { name = "pydantic-ai" },
     { name = "pydantic-settings" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "pynamodb" },
     { name = "tenacity" },
 ]
@@ -465,6 +466,7 @@ requires-dist = [
     { name = "pydantic" },
     { name = "pydantic-ai", specifier = ">=1.37.0" },
     { name = "pydantic-settings" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.10.1" },
     { name = "pynamodb" },
     { name = "tenacity" },
 ]
