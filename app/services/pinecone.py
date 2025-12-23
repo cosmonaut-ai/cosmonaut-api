@@ -1,12 +1,29 @@
+from enum import Enum
 from typing import Any
 
 from pinecone import Pinecone
 from pinecone.db_data import Index, SearchQuery, SearchResponse, UpsertResponse
+from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
 
 pc: Pinecone | None = None
 index: Index | None = None
+PINECONE_NAMESPACE = "default"
+
+
+class EntityType(str, Enum):
+  NODE_TEXT = "node_text"
+  WORLD_FACT = "world_fact"
+  BRANCH_FACT = "branch_fact"
+
+
+class PineconeRecord(BaseModel):
+  model_config = ConfigDict(extra="allow")
+
+  id: str
+  text: str
+  entity_type: EntityType
 
 
 def get_client() -> Pinecone:
@@ -29,19 +46,20 @@ def get_index() -> Index:
   return index
 
 
-def upsert_records(namespace: str, records: list[Any]) -> UpsertResponse:
+def upsert_records(records: list[PineconeRecord]) -> UpsertResponse:
   index = get_index()
-  return index.upsert_records(namespace=namespace, records=records)
+  return index.upsert_records(
+    namespace=PINECONE_NAMESPACE, records=[record.model_dump(mode="json") for record in records]
+  )
 
 
 def search_vectors(
-  namespace: str,
   query: str,
   top_k: int = 10,
   filter: dict[str, Any] | None = None,
 ) -> SearchResponse:
   index = get_index()
   return index.search(
-    namespace=namespace,
+    namespace=PINECONE_NAMESPACE,
     query=SearchQuery(inputs={"text": query}, top_k=top_k, filter=filter),
   )
