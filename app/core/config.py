@@ -7,38 +7,44 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    """Runtime configuration sourced from environment variables."""
+  """Runtime configuration sourced from environment variables."""
 
-    model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(env_prefix="", extra="ignore")
+  model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(env_prefix="", extra="ignore")
 
-    ENV: Literal["dev", "prod"] = Field(default="dev", description="Runtime environment label.")
-    POWERTOOLS_SERVICE_NAME: str = Field(
-        default="cosmonaut-api", description="Service name for AWS Powertools telemetry."
-    )
-    DYNAMODB_TABLE_NAME: str = Field(
-        default="cosmonaut-dev", description="Primary DynamoDB table for application state."
-    )
-    GEMINI_API_KEY: str | None = Field(default=None, description="API key for Gemini access.")
-    GEMINI_MODEL: str = Field(default="gemini-3.0-flash", description="Gemini model name.")
-    GEMINI_TIMEOUT_S: int = Field(default=30, description="Client timeout in seconds.")
-    PINECONE_API_KEY: str | None = Field(default=None, description="API key for Pinecone.")
-    PINECONE_ENV: str | None = Field(
-        default=None, description="Pinecone environment/region (e.g., us-east-1)."
-    )
-    PINECONE_PROJECT: str | None = Field(
-        default=None, description="Pinecone project name/ID for index access."
-    )
-    PINECONE_INDEX: str | None = Field(
-        default=None, description="Target Pinecone index for vector operations."
-    )
-    PINECONE_TOP_K: int = Field(default=10, description="Default top-k for similarity search.")
-    PINECONE_EMBED_DIM: int = Field(default=1536, description="Embedding dimension for index.")
-    MOCK_AUTH: bool = Field(
-        default=False, description="If True, bypasses JWT validation (DEV ONLY)."
-    )
-    COGNITO_USER_POOL_ID: str = Field(default="", description="AWS Cognito User Pool ID.")
-    COGNITO_CLIENT_ID: str = Field(default="", description="AWS Cognito Client ID (Audience).")
-    AWS_REGION: str = Field(default="us-east-2", description="AWS Region.")
+  ENV: Literal["dev", "prod"] = Field(default="dev", description="Runtime environment label.")
+  POWERTOOLS_SERVICE_NAME: str = Field(
+    default="cosmonaut-api", description="Service name for AWS Powertools telemetry."
+  )
+  DYNAMODB_TABLE_NAME: str = Field(
+    default="cosmonaut-dev", description="Primary DynamoDB table for application state."
+  )
+  GEMINI_API_KEY: str | None = Field(default=None, description="API key for Gemini access.")
+  GEMINI_MODEL: str = Field(default="gemini-3.0-flash", description="Gemini model name.")
+  GEMINI_TIMEOUT_S: int = Field(default=30, description="Client timeout in seconds.")
+  PINECONE_API_KEY: str | None = Field(default=None, description="API key for Pinecone.")
+  PINECONE_ENV: str | None = Field(
+    default=None, description="Pinecone environment/region (e.g., us-east-1)."
+  )
+  PINECONE_PROJECT: str | None = Field(
+    default=None, description="Pinecone project name/ID for index access."
+  )
+  PINECONE_INDEX: str | None = Field(
+    default=None, description="Target Pinecone index for vector operations."
+  )
+  PINECONE_TOP_K: int = Field(default=10, description="Default top-k for similarity search.")
+  PINECONE_EMBED_DIM: int = Field(default=1536, description="Embedding dimension for index.")
+  MOCK_AUTH: bool = Field(default=False, description="If True, bypasses JWT validation (DEV ONLY).")
+  COGNITO_USER_POOL_ID: str = Field(default="", description="AWS Cognito User Pool ID.")
+  COGNITO_CLIENT_ID: str = Field(default="", description="AWS Cognito Client ID (Audience).")
+  AWS_REGION: str = Field(default="us-east-2", description="AWS Region.")
+  CORS_ORIGINS: list[str] = Field(
+    default=[
+      "http://localhost:5173",
+      "https://cosmonaut-ai.com",
+      "https://dev.cosmonaut-ai.com",
+    ],
+    description="Allowed CORS origins for cross-origin requests.",
+  )
 
 
 settings: Settings = Settings()
