@@ -2,7 +2,9 @@ from enum import Enum
 from typing import Any
 
 from pinecone import Pinecone
-from pinecone.db_data import Index, SearchQuery, SearchResponse, UpsertResponse
+from pinecone.db_data import Index, SearchQuery, UpsertResponse
+from pinecone.db_data.models import SearchRecordsResponse
+from pinecone.db_data.types import FilterTypedDict
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
@@ -24,6 +26,18 @@ class PineconeRecord(BaseModel):
   id: str
   text: str
   entity_type: EntityType
+
+
+class PineconeStoryFact(PineconeRecord):
+  world_id: str
+
+
+class PineconeWorldFact(PineconeStoryFact):
+  pass
+
+
+class PineconeBranchFact(PineconeStoryFact):
+  origin_node_id: str
 
 
 def get_client() -> Pinecone:
@@ -53,13 +67,24 @@ def upsert_records(records: list[PineconeRecord]) -> UpsertResponse:
   )
 
 
-def search_vectors(
+def search_records(
   query: str,
   top_k: int = 10,
   filter: dict[str, Any] | None = None,
-) -> SearchResponse:
+) -> SearchRecordsResponse:
   index = get_index()
   return index.search(
     namespace=PINECONE_NAMESPACE,
     query=SearchQuery(inputs={"text": query}, top_k=top_k, filter=filter),
+  )
+
+
+def delete_records(
+  ids: list[str] | None = None, filter: FilterTypedDict | None = None
+) -> dict[str, Any]:
+  index = get_index()
+  return index.delete(
+    ids=ids,
+    namespace=PINECONE_NAMESPACE,
+    filter=filter,
   )

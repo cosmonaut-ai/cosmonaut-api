@@ -22,17 +22,9 @@ class Settings(BaseSettings):
   GEMINI_MODEL: str = Field(default="gemini-3.0-flash", description="Gemini model name.")
   GEMINI_TIMEOUT_S: int = Field(default=30, description="Client timeout in seconds.")
   PINECONE_API_KEY: str | None = Field(default=None, description="API key for Pinecone.")
-  PINECONE_ENV: str | None = Field(
-    default=None, description="Pinecone environment/region (e.g., us-east-1)."
-  )
-  PINECONE_PROJECT: str | None = Field(
-    default=None, description="Pinecone project name/ID for index access."
-  )
   PINECONE_INDEX: str | None = Field(
     default=None, description="Target Pinecone index for vector operations."
   )
-  PINECONE_TOP_K: int = Field(default=10, description="Default top-k for similarity search.")
-  PINECONE_EMBED_DIM: int = Field(default=1536, description="Embedding dimension for index.")
   MOCK_AUTH: bool = Field(default=False, description="If True, bypasses JWT validation (DEV ONLY).")
   COGNITO_USER_POOL_ID: str = Field(default="", description="AWS Cognito User Pool ID.")
   COGNITO_CLIENT_ID: str = Field(default="", description="AWS Cognito Client ID (Audience).")

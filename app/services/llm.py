@@ -52,23 +52,32 @@ def format_model_with_descriptions(model: BaseModel) -> str:
 ##################################################################
 
 GENERATE_WORLD_INFO_PROMPT = """
-You are a world-building expert for a Choose Your Own Adventure game. Given a short prompt describing the world or the story, build out a detailed description of the world.
+You are a world-building expert for a Choose Your Own Adventure game.
 
-The world info should include:
-- The context of the narrative (context and background of the story)
-- The main characters
-- Potential plot points
-- Endings that the user should be guided towards
+Given a short prompt describing the world or story concept, create a detailed, immersive world foundation.
+
+## Your Task
+Build out these elements:
+- **Narrative Context**: The background, history, and circumstances that set up this story
+- **World State**: The current situation when the story begins—tensions, opportunities, or conflicts in play
+- **Tone & Genre**: Infer the appropriate atmosphere (e.g., dark fantasy, lighthearted sci-fi, gritty noir) from the prompt
+- **Potential Endings**: Generate a list of potential endings for the story to guide the narrative towards.
+
+## Guidelines
+- Always address the player as "you" to create immediacy
+- Be specific—names, places, and details make worlds memorable
+- Leave room for player agency; don't predetermine the protagonist's personality or key decisions
+- Aim for 2-4 paragraphs of setting detail—enough to ground the story without overwhelming
 """  # noqa: E501
 
 
 class LLMWorldInfo(BaseModel):
   setting: str = Field(description="The setting of the story and the world it is in.")
-  characters: list[str] = Field(description="The characters in the story and their roles.")
-  potential_endings: list[str] = Field(description="3-6 potential endings of the story.")
-  story_background: str = Field(description="The background and context leading up to the story")
   story_title: str = Field(description="A title for the story, max 5 words.")
   story_description: str = Field(description="A short description of the story.")
+  potential_endings: list[str] = Field(
+    description="A list of potential endings for the story to guide the narrative towards."
+  )
 
 
 world_info_agent: None | Agent[None, LLMWorldInfo] = None
@@ -96,16 +105,31 @@ def generate_world_info(world_prompt: str) -> LLMWorldInfo:
 ##################################################################
 
 GENERATE_START_NODE_PROMPT = """
-You are a storyteller for a Choose Your Own Adventure game. Given a detailed description of the world, generate the first story node.
+You are a storyteller for a Choose Your Own Adventure game. Generate the opening story node that hooks the player.
 
-All choices should come from the generated text of the story node - don't reference external context that is not in the generated text.
+## Your Task
+Create an engaging first node that:
+- Establishes the immediate situation with sensory detail
+- Introduces a compelling hook or initial tension
+- Presents the player with their first meaningful choices
 
-The story node should include:
-- The introduction to the story
-- The choices available from this node
-- A short summary of the story up to this node
-- A title for the story node
+## Choice Design Guidelines
+- Provide 2-4 distinct choices that feel meaningfully different
+- Each choice should emerge naturally from the narrative (no "left door vs. right door" without context)
+- Mix choice types: cautious vs. bold, investigative vs. action-oriented
+- Avoid giving away which choices are "correct"—all should feel viable
+
+## Writing Guidelines
+- Address the player as "you" throughout
+- Open in media res when possible—action or intrigue, not lengthy exposition
+- Keep text to 2-4 paragraphs; this is interactive fiction, not a novel
+- The title should be evocative and specific to this moment
 """  # noqa: E501
+
+
+class LLMRootNodeDeps(BaseModel):
+  world_info: LLMWorldInfo
+  narrator_profile: str = Field(description="The narrator's profile.")
 
 
 class LLMStoryNode(BaseModel):
@@ -117,35 +141,39 @@ class LLMStoryNode(BaseModel):
   title: str = Field(description="A short 1-5 word title for the story node.")
 
 
-root_node_agent: None | Agent[LLMWorldInfo, LLMStoryNode] = None
+root_node_agent: None | Agent[LLMRootNodeDeps, LLMStoryNode] = None
 
 
-def get_root_node_agent() -> Agent[LLMWorldInfo, LLMStoryNode]:
+def get_root_node_agent() -> Agent[LLMRootNodeDeps, LLMStoryNode]:
   global root_node_agent
   if root_node_agent is None:
     root_node_agent = Agent(
       settings.GEMINI_MODEL,
-      deps_type=LLMWorldInfo,
+      deps_type=LLMRootNodeDeps,
       output_type=LLMStoryNode,
     )
 
     @root_node_agent.system_prompt
-    def add_world_context(ctx: RunContext[LLMWorldInfo]) -> str:  # type: ignore
+    def add_world_context(ctx: RunContext[LLMRootNodeDeps]) -> str:  # type: ignore
       # Inject dependencies explicitly into the prompt
       return f"""{GENERATE_START_NODE_PROMPT}
 
             ---
             WORLD CONTEXT:
-            {format_model_with_descriptions(ctx.deps)}
+            {format_model_with_descriptions(ctx.deps.world_info)}
+
+            ---
+            NARRATOR PROFILE:
+            {ctx.deps.narrator_profile}
             """
 
   return root_node_agent
 
 
-def generate_start_node(world_info: LLMWorldInfo) -> LLMStoryNode:
+def generate_start_node(deps: LLMRootNodeDeps) -> LLMStoryNode:
   result = get_root_node_agent().run_sync(
     "Generate the first story node.",  # Dummy user prompt, actual instructions are in system prompt
-    deps=world_info,
+    deps=deps,
   )
   return result.output
 
@@ -155,20 +183,23 @@ def generate_start_node(world_info: LLMWorldInfo) -> LLMStoryNode:
 ##################################################################
 
 GENERATE_NEXT_NODE_PROMPT = """
-You are a storyteller for a Choose Your Own Adventure game. Given a detailed description of the world, the previous story node, and the user's choice, generate the next story node.
+You are a Choose Your Own Adventure storyteller. Continue the narrative based on the player's choice.
 
-All choices should come from the generated text of the story node - don't reference external context that is not in the generated text.
+## Consequences
+- Honor the player's choice with meaningful consequences—risky choices carry real risk; clever ones are rewarded
+- Endings (good or bad) must feel earned, not arbitrary. The story should be VERY DIFFICULT; most paths lead to story ending.
 
-Do not attempt to accommodate the user's choice. If the user's choice is likely to have a negative impact or end the story, end the story or play out a negative outcome. In general, around half of the choices should be negative or end the story.
+## Choices
+- 2-4 choices per node (none if story ending), varying risk/reward, arising from current context
+- Do not cater to the player's decisions or hesitate to end the story if they make bad choices.
 
-Given the following context:
-- The detailed description of the world
-- The previous story node text
-- The user's choice
-- Facts about the world that may or may not be relevant to the next story node
-- Facts about the story up to this point that may or may not be relevant to the next story node
+## Continuity
+- Maintain consistency with world facts, branch history, characterization, and established details
+- Story summaries should capture key events for future reference
 
-Generate the next story node.
+## Style
+- Second-person ("you"), match established tone, scale text to moment significance
+- Aim for 2-4 paragraphs of text
 """  # noqa: E501
 
 
@@ -182,6 +213,10 @@ class LLMNextNodeDeps(BaseModel):
   branch_facts: list[str] = Field(
     description="Facts about the story up to this point that may or may not be relevant to the next story node."  # noqa: E501
   )
+  similar_nodes: list[str] = Field(
+    description="Similar story nodes that are relevant to the next story node."
+  )
+  narrator_profile: str = Field(description="The narrator's profile.")
 
 
 next_node_agent: None | Agent[LLMNextNodeDeps, LLMStoryNode] = None
@@ -198,36 +233,43 @@ def get_next_node_agent() -> Agent[LLMNextNodeDeps, LLMStoryNode]:
 
     @next_node_agent.system_prompt
     def add_context(ctx: RunContext[LLMNextNodeDeps]) -> str:  # type: ignore
-      d = ctx.deps
-      return f"""{GENERATE_NEXT_NODE_PROMPT}
-
-            ---
-            CONTEXT:
-            Previous Node Text: {d.previous_node}
-            // The previous story node text.
-
-            User Choice: {d.user_choice}
-            // The user's choice.
-
-            World Facts:
-            // Facts about the world that may or may not be relevant to the next story node.
-            {chr(10).join(f"- {f}" for f in d.world_facts)}
-
-            Branch Facts:
-            // Facts about the story up to this point that may or may not be relevant to the next
-            // story node.
-            {chr(10).join(f"- {f}" for f in d.branch_facts)}
-
-            World Info:
-            {format_model_with_descriptions(d.world_info)}
-            """
+      return GENERATE_NEXT_NODE_PROMPT
 
   return next_node_agent
 
 
 def generate_next_node(deps: LLMNextNodeDeps) -> LLMStoryNode:
+  prompt = f"""
+Given the following context, generate the next story node.
+# CONTEXT:
+
+## Previous Node Text:
+{deps.previous_node}
+
+## Similar Nodes:
+These are story nodes from other choice branches that you should use to ensure consistency within
+the world and story.
+
+{"\n\n".join(deps.similar_nodes)}
+
+## User Choice:
+{deps.user_choice}
+
+## World Facts:
+- {chr(10).join(f"- {f}" for f in deps.world_facts)}
+
+## Branch Facts:
+(ordered from newest to oldest, with the newest being first)
+- {chr(10).join(f"- {f}" for f in deps.branch_facts)}
+
+## Narrator Profile:
+{deps.narrator_profile}
+
+## World Info:
+{format_model_with_descriptions(deps.world_info)}
+"""
   result = get_next_node_agent().run_sync(
-    "Generate the next node.",  # Dummy user prompt
+    prompt,
     deps=deps,
   )
   return result.output
@@ -238,25 +280,59 @@ def generate_next_node(deps: LLMNextNodeDeps) -> LLMStoryNode:
 ##################################################################
 
 GENERATE_FACT_EXTRACTION_PROMPT = """
-You are a fact extraction expert for a Choose Your Own Adventure game. Given text from the story, extract the facts that are relevant to the story.
+You are a fact extraction system for a Choose Your Own Adventure game. Extract facts that ensure narrative consistency.
 
-You should look for two types of facts:
-- *World Facts*: Facts about the world that can be extracted from the text. These facts should be static - they should not be subject to change based on the user's choices.
-- *Branch Facts*: Facts that are a direct result of the user's choices that may not be true across all branches of the story.
+## Context
+You are given the following context:
+- The previous story node text
+- The user's choice
+- The world facts
+- The branch facts
 
-For example, if the text says "You open the chest and find a treasure.", the fact "You found a treasure" is a branch fact because it is not true across all branches of the story.
-If the text says "The sky is blue.", the fact "The sky is blue" is a world fact because it is true across all branches of the story.
+Do not extract facts that are already in the context. If a fact in the existing context should be modified or added to, insert a new fact and mark the old fact for deletion.
+
+## Fact Types
+
+### World Facts (static truths)
+Facts about the world that are true regardless of player choices:
+- Geography, rules of magic/technology, cultural norms
+- Named characters' baseline traits (not their current state)
+- Historical events or established lore
+
+Examples:
+- "The kingdom of Valdris is ruled by Queen Seraphina"
+- "Magic requires spoken incantations"
+- "The old mine collapsed 20 years ago"
+
+### Branch Facts (choice-dependent truths)
+Facts that resulted from player choices and may differ in other story branches:
+- Items obtained, allies made, injuries sustained
+- Secrets learned, doors opened (or closed)
+- Reputation changes, relationship states
+
+Examples:
+- "You possess the iron key from the guard captain"
+- "Marcus now distrusts you after your lie"
+- "Your left arm is wounded"
+
+## Extraction Guidelines
+- Be concise: information density over prose quality
+- Be self-contained: facts must make sense without the source text
+- Be selective: only extract facts likely to matter 2+ nodes later
+- Avoid obvious/trivial facts that won't affect future narrative
+- Prefer specific over vague: "You have 3 gold coins" > "You have some money"
 """  # noqa: E501
 
 
 class LLMFactExtractionDeps(BaseModel):
   text: str = Field(description="The text from the story to extract facts from.")
-  user_choice: str = Field(description="The user's choice.")
+  user_choice: str | None = Field(description="The user's choice.")
 
 
 class LLMFactExtraction(BaseModel):
   world_facts: list[str] = Field(description="The world facts extracted from the text.")
   branch_facts: list[str] = Field(description="The branch facts extracted from the text.")
+  fact_ids_to_delete: list[str] = Field(description="The IDs of the facts to delete.")
 
 
 fact_extraction_agent: None | Agent[LLMFactExtractionDeps, LLMFactExtraction] = None
@@ -273,20 +349,21 @@ def get_fact_extraction_agent() -> Agent[LLMFactExtractionDeps, LLMFactExtractio
 
     @fact_extraction_agent.system_prompt
     def add_text_context(ctx: RunContext[LLMFactExtractionDeps]) -> str:  # type: ignore
-      return f"""{GENERATE_FACT_EXTRACTION_PROMPT}
-            
-            ---
-            CONTENT TO ANALYZE:
-            Story Text: {ctx.deps.text}
-            User Choice: {ctx.deps.user_choice}
-            """
+      return GENERATE_FACT_EXTRACTION_PROMPT
 
   return fact_extraction_agent
 
 
-def generate_facts(deps: LLMFactExtractionDeps) -> LLMFactExtraction:
-  result = get_fact_extraction_agent().run_sync(
-    "Extract facts.",  # Dummy user prompt
+async def generate_facts_async(deps: LLMFactExtractionDeps) -> LLMFactExtraction:
+  """Async version of generate_facts for use in async contexts."""
+  prompt = f"""
+# STORY TEXT: 
+{deps.text}
+# USER CHOICE:
+{deps.user_choice}
+"""
+  result = await get_fact_extraction_agent().run(
+    prompt,
     deps=deps,
   )
   return result.output
