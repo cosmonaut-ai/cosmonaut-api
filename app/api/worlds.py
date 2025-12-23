@@ -120,6 +120,6 @@ async def generate_start_node(
 ) -> WorldMetaDTO:
   """Generate the first story node for a world."""
   try:
-    return world_service.generate_start_node(world_id)
+    return await world_service.generate_start_node(world_id)
   except WorldNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e

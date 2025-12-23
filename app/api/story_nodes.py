@@ -61,7 +61,7 @@ async def choose_and_generate(
   4. Returns the newly generated node
   """
   try:
-    return node_service.choose_and_generate(world_id, node_id, choice_index)
+    return await node_service.choose_and_generate(world_id, node_id, choice_index)
   except NodeNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
   except WorldNotFoundError as e:

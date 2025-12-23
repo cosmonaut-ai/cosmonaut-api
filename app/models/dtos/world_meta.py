@@ -43,9 +43,7 @@ class WorldMetaDTO(DTOModel):
   visibility: str | None = None
   world_prompt: str | None = None
   setting: str | None = None
-  characters: list[str] = Field(default=[])
-  potential_endings: list[str] = Field(default=[])
-  story_background: str | None = None
+  potential_endings: list[str] | None = None
   narrator_profile: str | None = None
   node_text_length: int | None = None
   world_image_url: str | None = None

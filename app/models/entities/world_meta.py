@@ -33,11 +33,9 @@ class WorldMeta(BaseCosmonautModel):
   # Additional information about the story - what the main storyline is, main characters, etc. LLM
   # generated.
   setting: UnicodeAttribute = UnicodeAttribute(null=True)
-  characters: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
   potential_endings: ListAttribute[UnicodeAttribute] = ListAttribute(
     of=UnicodeAttribute, default=list
   )
-  story_background: UnicodeAttribute = UnicodeAttribute(null=True)
 
   # Prompt defining the narrator's personality and style.
   narrator_profile: UnicodeAttribute = UnicodeAttribute(null=True)
@@ -64,9 +62,7 @@ class WorldMeta(BaseCosmonautModel):
       generation_status=GenerationStatus(self.generation_status),
       world_prompt=self.world_prompt,
       setting=self.setting,
-      characters=[str(character) for character in self.characters],
-      potential_endings=[str(ending) for ending in self.potential_endings],
-      story_background=self.story_background,
+      potential_endings=self.potential_endings or [],  # type: ignore[arg-type]
       narrator_profile=self.narrator_profile,
       node_text_length=int(self.node_text_length) if self.node_text_length else None,
       world_image_url=self.world_image_url,
@@ -98,9 +94,7 @@ class WorldMeta(BaseCosmonautModel):
       visibility=dto.visibility,
       world_prompt=dto.world_prompt,
       setting=dto.setting,
-      characters=[character for character in dto.characters],
-      potential_endings=[ending for ending in dto.potential_endings],
-      story_background=dto.story_background,
+      potential_endings=dto.potential_endings or [],  # type: ignore[arg-type]
       narrator_profile=dto.narrator_profile,
       node_text_length=dto.node_text_length,
       world_image_url=dto.world_image_url,

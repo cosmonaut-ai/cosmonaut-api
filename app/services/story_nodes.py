@@ -10,14 +10,21 @@ Architecture:
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 
+from aws_lambda_powertools import Logger
 from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
+import app.services.pinecone as pinecone
+from app.core.config import settings
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO
 from app.models.entities.story_node import StoryNode
+from app.services.pinecone import PineconeBranchFact
 from app.services.worlds import get_world_entity
+
+logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 
 class NodeServiceError(Exception):
@@ -45,6 +52,61 @@ class InvalidChoiceError(NodeServiceError):
     self.max_index = max_index
 
 
+def _get_world_facts(
+  world_id: str, node_text: str, top_k: int = 10
+) -> list[pinecone.PineconeWorldFact]:
+  """Get the world facts for a given node."""
+  return [
+    pinecone.PineconeWorldFact.model_validate({**x.fields, "id": x._id})
+    for x in pinecone.search_records(  # type: ignore[reportUnknownReturnType]
+      query=node_text,
+      top_k=top_k,
+      filter={
+        "world_id": {"$eq": world_id},
+        "entity_type": {"$eq": pinecone.EntityType.WORLD_FACT},
+      },
+    ).result.hits
+  ]
+
+
+def _get_branch_facts(
+  world_id: str, node_text: str, ancestors: list[str], top_k: int = 10
+) -> list[pinecone.PineconeBranchFact]:
+  """Get the branch facts for a given node."""
+
+  results: list[PineconeBranchFact] = [
+    pinecone.PineconeBranchFact.model_validate({**x.fields, "id": x._id})
+    for x in pinecone.search_records(  # type: ignore[reportUnknownReturnType]
+      query=node_text,
+      top_k=top_k,
+      filter={
+        "world_id": {"$eq": world_id},
+        "entity_type": {"$eq": pinecone.EntityType.BRANCH_FACT},
+        "origin_node_id": {"$in": ancestors},
+      },
+    ).result.hits
+  ]
+
+  return sorted(results, key=lambda x: -ancestors.index(x.origin_node_id))
+
+
+def _get_similar_nodes(
+  world_id: str, node_text: str, top_k: int = 3
+) -> list[pinecone.PineconeRecord]:
+  """Get the similar story nodes for a given node."""
+  return [
+    pinecone.PineconeRecord.model_validate({**x.fields, "id": x._id})
+    for x in pinecone.search_records(  # type: ignore[reportUnknownReturnType]
+      query=node_text,
+      top_k=top_k,
+      filter={
+        "world_id": {"$eq": world_id},
+        "entity_type": {"$eq": pinecone.EntityType.NODE_TEXT},
+      },
+    ).result.hits
+  ]
+
+
 def _node_keys(world_id: str, node_id: str) -> tuple[str, str]:
   """Generate PynamoDB primary and sort keys for a node ID."""
   return (StoryNode.pk(world_id), StoryNode.sk(node_id))
@@ -69,11 +131,10 @@ def list_nodes(world_id: str) -> list[StoryNodeDTO]:
 def get_node(world_id: str, node_id: str) -> StoryNodeDTO:
   """Fetch a single node by identifier."""
   node = _get_node_entity(world_id, node_id)
-  print(node.attribute_values)
   return node.to_dto()
 
 
-def choose_and_generate(world_id: str, node_id: str, choice_index: int) -> StoryNodeDTO:
+async def choose_and_generate(world_id: str, node_id: str, choice_index: int) -> StoryNodeDTO:
   """Generate a new story node based on a user's choice.
 
   Workflow:
@@ -89,7 +150,6 @@ def choose_and_generate(world_id: str, node_id: str, choice_index: int) -> Story
   """
   # Step 1: Fetch parent node and validate choice index
   parent_node = _get_node_entity(world_id, node_id)
-  print("RETURNED PARENT NODE: ", parent_node.attribute_values)
 
   if not parent_node.choices or choice_index < 0 or choice_index >= len(parent_node.choices):
     max_index = len(parent_node.choices) - 1 if parent_node.choices else -1
@@ -102,29 +162,45 @@ def choose_and_generate(world_id: str, node_id: str, choice_index: int) -> Story
 
   # Step 2: Fetch world metadata for context
   world_meta = get_world_entity(world_id)
-  print("RETURNED WORLD META: ", world_meta.attribute_values)
 
   # Step 3: Build LLMNextNodeDeps
   llm_world_info = llm.LLMWorldInfo(
     story_title=world_meta.title or "",
     story_description=world_meta.description or "",
     setting=world_meta.setting or "",
-    characters=world_meta.characters or [],  # type: ignore[arg-type]
     potential_endings=world_meta.potential_endings or [],  # type: ignore[arg-type]
-    story_background=world_meta.story_background or "",
   )
+  world_facts: list[pinecone.PineconeWorldFact] = []
+  branch_facts: list[pinecone.PineconeBranchFact] = []
+  ancestors: list[str] = [str(ancestor) for ancestor in parent_node.ancestors]
+  ancestors.append(parent_node.id)
+  try:
+    world_facts = _get_world_facts(world_id, parent_node.text)
+    branch_facts = _get_branch_facts(world_id, parent_node.text, ancestors)
+
+  except Exception as e:
+    logger.error(f"Error searching Pinecone for facts: {e}")
+
+  world_facts_text: list[str] = [fact.text for fact in world_facts]
+  branch_facts_text: list[str] = [fact.text for fact in branch_facts]
+  print("WORLD FACTS:\n -", "\n - ".join(world_facts_text))
+  print("BRANCH FACTS:\n -", "\n - ".join(branch_facts_text))
+
+  similar_nodes = _get_similar_nodes(world_id, parent_node.text)
+  similar_nodes_text: list[str] = [node.text for node in similar_nodes]
 
   deps = llm.LLMNextNodeDeps(
     world_info=llm_world_info,
     previous_node=parent_node.text,
     user_choice=selected_choice.label,
-    world_facts=[],  # Skip fact extraction per user decision
-    branch_facts=[],  # Skip fact extraction per user decision
+    world_facts=world_facts_text,
+    branch_facts=branch_facts_text,
+    similar_nodes=similar_nodes_text,
+    narrator_profile=world_meta.narrator_profile or "",
   )
 
   # Step 4: Generate next node content via LLM
   generated_node: llm.LLMStoryNode = llm.generate_next_node(deps)
-
   # Step 5: Create new StoryNode entity
   new_node_id = str(uuid.uuid4())
   # Build ancestors list: parent's ancestors + parent's id
@@ -132,7 +208,6 @@ def choose_and_generate(world_id: str, node_id: str, choice_index: int) -> Story
   if parent_node.ancestors:
     new_ancestors = [str(ancestor) for ancestor in parent_node.ancestors]
   new_ancestors.append(str(parent_node.id))
-
   new_node_dto = StoryNodeDTO(
     id=new_node_id,
     world_id=world_id,
@@ -144,6 +219,13 @@ def choose_and_generate(world_id: str, node_id: str, choice_index: int) -> Story
     ancestors=new_ancestors,
   )
 
+  # Kick off a background task to extract facts from the generated node
+  fact_deps = llm.LLMFactExtractionDeps(
+    text=generated_node.text,
+    user_choice=selected_choice.label,
+  )
+  facts_task = asyncio.create_task(llm.generate_facts_async(fact_deps))
+
   # Step 6: Save new node
   new_node = StoryNode.from_dto(new_node_dto)
   new_node.save()
@@ -153,6 +235,51 @@ def choose_and_generate(world_id: str, node_id: str, choice_index: int) -> Story
 
   # Step 8: Save updated parent
   parent_node.save()
+
+  # Step 9: Await fact extraction before returning
+  facts: llm.LLMFactExtraction = await facts_task
+
+  print("PRODUCED THE BELOW FACTS: \n")
+  print("WORLD FACTS: \n -", "\n - ".join(facts.world_facts))
+  print("BRANCH FACTS: \n -", "\n - ".join(facts.branch_facts))
+  pinecone.upsert_records(
+    [
+      pinecone.PineconeRecord.model_validate(
+        {
+          "id": new_node_id,
+          "text": generated_node.text,
+          "entity_type": pinecone.EntityType.NODE_TEXT,
+          "world_id": world_id,
+        }
+      )
+    ]
+  )
+  if facts.world_facts or facts.branch_facts:
+    pinecone.upsert_records(
+      [
+        pinecone.PineconeRecord.model_validate(
+          {
+            "id": str(uuid.uuid4()),
+            "text": fact,
+            "entity_type": pinecone.EntityType.WORLD_FACT,
+            "world_id": world_id,
+          }
+        )
+        for fact in facts.world_facts
+      ]
+      + [
+        pinecone.PineconeRecord.model_validate(
+          {
+            "id": str(uuid.uuid4()),
+            "text": fact,
+            "entity_type": pinecone.EntityType.BRANCH_FACT,
+            "world_id": world_id,
+            "origin_node_id": parent_node.id,
+          }
+        )
+        for fact in facts.branch_facts
+      ]
+    )
 
   # Step 9: Return new node as DTO
   return new_node.to_dto()
