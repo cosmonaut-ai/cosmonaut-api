@@ -10,7 +10,6 @@ Architecture:
 
 from __future__ import annotations
 
-from app.services.llm import LLMFactExtractionDeps
 import asyncio
 import uuid
 
@@ -22,6 +21,7 @@ import app.services.pinecone as pinecone
 from app.core.config import settings
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.entities.story_node import StoryNode
+from app.services.llm import LLMFactExtractionDeps
 from app.services.pinecone import PineconeBranchFact
 from app.services.worlds import get_world_entity
 
