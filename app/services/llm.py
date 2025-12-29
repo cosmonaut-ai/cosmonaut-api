@@ -205,7 +205,7 @@ You are a Choose Your Own Adventure storyteller. Continue the narrative based on
 
 class LLMNextNodeDeps(BaseModel):
   world_info: LLMWorldInfo
-  previous_node: str = Field(description="The previous story node text.")
+  previous_text: str = Field(description="The previous story node text.")
   user_choice: str = Field(description="The user's choice.")
   world_facts: list[str] = Field(
     description="Facts about the world that may or may not be relevant to the next story node."
@@ -213,9 +213,7 @@ class LLMNextNodeDeps(BaseModel):
   branch_facts: list[str] = Field(
     description="Facts about the story up to this point that may or may not be relevant to the next story node."  # noqa: E501
   )
-  similar_nodes: list[str] = Field(
-    description="Similar story nodes that are relevant to the next story node."
-  )
+  similar_nodes: list[str] = Field(description="Similar story nodes that are relevant to the next story node.")
   narrator_profile: str = Field(description="The narrator's profile.")
 
 
@@ -244,7 +242,7 @@ Given the following context, generate the next story node.
 # CONTEXT:
 
 ## Previous Node Text:
-{deps.previous_node}
+{deps.previous_text}
 
 ## Similar Nodes:
 These are story nodes from other choice branches that you should use to ensure consistency within
@@ -294,7 +292,7 @@ Do not extract facts that are already in the context. If a fact in the existing 
 ## Fact Types
 
 ### World Facts (static truths)
-Facts about the world that are true regardless of player choices:
+Facts about the world, characters, items, locations, etc. that are true regardless of player choices:
 - Geography, rules of magic/technology, cultural norms
 - Named characters' baseline traits (not their current state)
 - Historical events or established lore
@@ -305,7 +303,7 @@ Examples:
 - "The old mine collapsed 20 years ago"
 
 ### Branch Facts (choice-dependent truths)
-Facts that resulted from player choices and may differ in other story branches:
+Facts that resulted from player choices, actions, or events and may differ in other story branches:
 - Items obtained, allies made, injuries sustained
 - Secrets learned, doors opened (or closed)
 - Reputation changes, relationship states
@@ -332,7 +330,6 @@ class LLMFactExtractionDeps(BaseModel):
 class LLMFactExtraction(BaseModel):
   world_facts: list[str] = Field(description="The world facts extracted from the text.")
   branch_facts: list[str] = Field(description="The branch facts extracted from the text.")
-  fact_ids_to_delete: list[str] = Field(description="The IDs of the facts to delete.")
 
 
 fact_extraction_agent: None | Agent[LLMFactExtractionDeps, LLMFactExtraction] = None
@@ -363,6 +360,59 @@ async def generate_facts_async(deps: LLMFactExtractionDeps) -> LLMFactExtraction
 {deps.user_choice}
 """
   result = await get_fact_extraction_agent().run(
+    prompt,
+    deps=deps,
+  )
+  return result.output
+
+
+##################################################################
+# N A R R A T O R   P R O F I L E
+##################################################################
+
+GENERATE_NARRATOR_PROFILE_PROMPT = """
+You generate narrator profiles for a Choose Your Own Adventure game.
+
+## Your Task
+Given a prompt containing a general outline of the story, generate a narrator profile for a narrator that will be used to tell the story.
+
+## Guidelines
+- The narrator profile should be a single paragraph of text.
+- The narrator profile should be in the present tense.
+- The profile should contain the narrator's writing style, tone, and personality.
+- The profile should match the type of story being told.
+"""  # noqa: E501
+
+
+class LLMNarratorProfile(BaseModel):
+  narrator_profile: str = Field(description="The narrator's profile.")
+
+
+narrator_profile_agent: None | Agent[LLMWorldInfo, LLMNarratorProfile] = None
+
+
+def get_narrator_profile_agent() -> Agent[LLMWorldInfo, LLMNarratorProfile]:
+  global narrator_profile_agent
+  if narrator_profile_agent is None:
+    narrator_profile_agent = Agent(
+      settings.GEMINI_MODEL,
+      deps_type=LLMWorldInfo,
+      output_type=LLMNarratorProfile,
+    )
+
+    @narrator_profile_agent.system_prompt
+    def add_world_context(ctx: RunContext[LLMWorldInfo]) -> str:  # type: ignore
+      return GENERATE_NARRATOR_PROFILE_PROMPT
+
+  return narrator_profile_agent
+
+
+def generate_narrator_profile(deps: LLMWorldInfo) -> LLMNarratorProfile:
+  prompt = f"""
+# WORLD INFO:
+{format_model_with_descriptions(deps)}
+"""
+  result = get_narrator_profile_agent().run_sync(
     prompt,
     deps=deps,
   )

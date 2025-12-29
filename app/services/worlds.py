@@ -119,7 +119,7 @@ def generate_lore(world_id: str) -> WorldMetaDTO:
   if meta.generation_status != GenerationStatus.GENERATING_LORE:
     raise WorldServiceError(f"World {world_id} is not in the GENERATING_LORE state")
 
-  meta.generation_status = GenerationStatus.GENERATING_START_NODE
+  meta.generation_status = GenerationStatus.GENERATING_NARRATOR_PROFILE
   llm_world_info: llm.LLMWorldInfo = llm.generate_world_info(meta.world_prompt)
   meta.title = llm_world_info.story_title
   meta.description = llm_world_info.story_description
@@ -127,6 +127,28 @@ def generate_lore(world_id: str) -> WorldMetaDTO:
   meta.potential_endings = llm_world_info.potential_endings or []  # type: ignore[arg-type]
   meta.save()
 
+  return meta.to_dto()
+
+
+def generate_narrator_profile(world_id: str) -> WorldMetaDTO:
+  """Generate a narrator profile for a world."""
+
+  meta: WorldMeta = get_world_entity(world_id)
+  if meta.generation_status != GenerationStatus.GENERATING_NARRATOR_PROFILE:
+    raise WorldServiceError(f"World {world_id} is not in the GENERATING_NARRATOR_PROFILE state")
+
+  if meta.narrator_profile:
+    return meta.to_dto()
+  llm_world_info = llm.LLMWorldInfo(
+    story_title=meta.title,
+    story_description=meta.description,
+    setting=meta.setting,
+    potential_endings=meta.potential_endings or [],  # type: ignore[arg-type]
+  )
+  narrator_profile = llm.generate_narrator_profile(llm_world_info)
+  meta.narrator_profile = narrator_profile.narrator_profile
+  meta.generation_status = GenerationStatus.GENERATING_START_NODE
+  meta.save()
   return meta.to_dto()
 
 
@@ -156,7 +178,7 @@ async def generate_start_node(world_id: str) -> WorldMetaDTO:
   )
   facts_task = asyncio.create_task(llm.generate_facts_async(fact_deps))
 
-  root_node_id = str(uuid.uuid4())
+  root_node_id = "0"
   story_node_dto = StoryNodeDTO(
     id=root_node_id,
     world_id=meta.id,

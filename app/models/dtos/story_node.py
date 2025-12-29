@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from enum import Enum
 
 from pydantic import Field
 
@@ -16,6 +17,23 @@ class ChoiceDTO(DTOModel):
   target: str | None = None
 
 
+class StoryNodeProcessingStatus(str, Enum):
+  """Status of the story node processing."""
+
+  PENDING = "pending"
+  COMPLETED = "completed"
+  FAILED = "failed"
+
+
+class StoryNodeContextDTO(DTOModel):
+  """Context to be provided to the LLM when generating a new story node."""
+
+  world_facts: list[str]
+  branch_facts: list[str]
+  similar_nodes: list[str]
+  previous_text: str | None = None
+
+
 class StoryNodeDTO(DTOModel):
   """Story node response DTO."""
 
@@ -26,6 +44,8 @@ class StoryNodeDTO(DTOModel):
   title: str | None = None
   choices: list[ChoiceDTO] = Field(default_factory=list)
   parent_id: str | None = None
+  context: StoryNodeContextDTO | None = None
   ancestors: list[str] = Field(default_factory=list)
   created_at: datetime | None = None
   updated_at: datetime | None = None
+  processing_status: StoryNodeProcessingStatus
