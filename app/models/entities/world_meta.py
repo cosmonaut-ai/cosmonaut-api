@@ -33,9 +33,7 @@ class WorldMeta(BaseCosmonautModel):
   # Additional information about the story - what the main storyline is, main characters, etc. LLM
   # generated.
   setting: UnicodeAttribute = UnicodeAttribute(null=True)
-  potential_endings: ListAttribute[UnicodeAttribute] = ListAttribute(
-    of=UnicodeAttribute, default=list
-  )
+  potential_endings: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
 
   # Prompt defining the narrator's personality and style.
   narrator_profile: UnicodeAttribute = UnicodeAttribute(null=True)
@@ -80,9 +78,7 @@ class WorldMeta(BaseCosmonautModel):
       PK=cls.pk(dto.id),
       SK=cls.sk(),
       GSI1PK=cls.gsi1_pk(dto.author_id) if dto.author_id else None,
-      GSI1SK=cls.gsi1_sk(dto.updated_at)
-      if dto.updated_at
-      else datetime.now(timezone.utc).isoformat(),
+      GSI1SK=cls.gsi1_sk(dto.updated_at) if dto.updated_at else datetime.now(timezone.utc).isoformat(),
       id=dto.id,
       generation_status=GenerationStatus(dto.generation_status).value,
       title=dto.title,
