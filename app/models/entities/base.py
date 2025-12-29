@@ -41,9 +41,5 @@ class BaseCosmonautModel(Model):
   PK: ClassVar[UnicodeAttribute] = UnicodeAttribute(hash_key=True)
   SK: ClassVar[UnicodeAttribute] = UnicodeAttribute(range_key=True)
 
-  created_at: UTCDateTimeAttribute = UTCDateTimeAttribute(
-    default_for_new=datetime.now(timezone.utc), null=True
-  )
-  updated_at: UTCDateTimeAttribute = UTCDateTimeAttribute(
-    default_for_new=datetime.now(timezone.utc), null=True
-  )
+  created_at: UTCDateTimeAttribute = UTCDateTimeAttribute(default_for_new=datetime.now(timezone.utc), null=True)
+  updated_at: UTCDateTimeAttribute = UTCDateTimeAttribute(default_for_new=datetime.now(timezone.utc), null=True)
