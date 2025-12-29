@@ -10,6 +10,6 @@ DTO = TypeVar("DTO", bound=BaseModel)
 
 
 class DTOModel(BaseModel):
-  """Base DTO with sensible defaults for API responses."""
+  """Base DTO with sensible defaults for API respon ses."""
 
   model_config = ConfigDict(populate_by_name=True)
