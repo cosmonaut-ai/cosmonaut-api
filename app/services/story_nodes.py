@@ -10,7 +10,6 @@ Architecture:
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 
 from aws_lambda_powertools import Logger
@@ -20,7 +19,7 @@ import app.services.llm as llm
 import app.services.pinecone as pinecone
 from app.core.config import settings
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO, StoryNodeProcessingStatus
-from app.models.entities.story_node import StoryNode
+from app.models.entities.story_node import StoryNode, StoryNodeContext
 from app.services.llm import LLMFactExtractionDeps
 from app.services.pinecone import PineconeBranchFact
 from app.services.worlds import get_world_entity
@@ -216,71 +215,85 @@ async def choose_and_generate(world_id: str, node_id: str, choice_index: int) ->
 
 
 async def process_node(world_id: str, node_id: str):
-  node = _get_node_entity(world_id, node_id)
-  world_facts: list[pinecone.PineconeWorldFact] = []
-  branch_facts: list[pinecone.PineconeBranchFact] = []
-
+  node: StoryNode = _get_node_entity(world_id, node_id)
+  if node.processing_status == StoryNodeProcessingStatus.COMPLETED:
+    return
   try:
-    world_facts = _get_world_facts(world_id, node.text)
-    branch_facts = _get_branch_facts(world_id, node.text, node.ancestors)
+    node.processing_status = StoryNodeProcessingStatus.PROCESSING
+    node.save()
+    parent_node: StoryNode | None = _get_node_entity(world_id, node.parent_id) if node.parent_id else None
+    world_facts: list[pinecone.PineconeWorldFact] = []
+    branch_facts: list[pinecone.PineconeBranchFact] = []
+    similar_nodes: list[pinecone.PineconeRecord] = []
+    try:
+      world_facts = _get_world_facts(world_id, node.text)
+      branch_facts = _get_branch_facts(world_id, node.text, node.ancestors)
+      similar_nodes = _get_similar_nodes(world_id, node.text)
 
-  except Exception as e:
-    logger.error(f"Error searching Pinecone for facts: {e}")
+    except Exception as e:
+      logger.error(f"Error searching Pinecone for facts: {e}")
 
-  world_facts_text: list[str] = [fact.text for fact in world_facts]
-  branch_facts_text: list[str] = [fact.text for fact in branch_facts]
-  print("WORLD FACTS:\n -", "\n - ".join(world_facts_text))
-  print("BRANCH FACTS:\n -", "\n - ".join(branch_facts_text))
+    world_facts_text: list[str] = [fact.text for fact in world_facts]
+    branch_facts_text: list[str] = [fact.text for fact in branch_facts]
+    similar_nodes_text: list[str] = [node.text for node in similar_nodes]
 
-  similar_nodes = _get_similar_nodes(world_id, node.text)
-  similar_nodes_text: list[str] = [node.text for node in similar_nodes]
+    node_context: StoryNodeContext = StoryNodeContext(
+      world_facts=world_facts_text,
+      branch_facts=branch_facts_text,
+      similar_nodes=similar_nodes_text,
+    )
 
-  fact_deps: LLMFactExtractionDeps = llm.LLMFactExtractionDeps(
-    text=node.text,
-    user_choice=selected_choice.label,
-  )
-  facts_task = asyncio.create_task(llm.generate_facts_async(fact_deps))
-  # Step 9: Await fact extraction before returning
-  facts: llm.LLMFactExtraction = await facts_task
+    node.context = node_context
 
-  print("PRODUCED THE BELOW FACTS: \n")
-  print("WORLD FACTS: \n -", "\n - ".join(facts.world_facts))
-  print("BRANCH FACTS: \n -", "\n - ".join(facts.branch_facts))
-  pinecone.upsert_records(
-    [
-      pinecone.PineconeRecord.model_validate(
-        {
-          "id": new_node_id,
-          "text": generated_node.text,
-          "entity_type": pinecone.EntityType.NODE_TEXT,
-          "world_id": world_id,
-        }
-      )
-    ]
-  )
-  if facts.world_facts or facts.branch_facts:
+    fact_deps: LLMFactExtractionDeps = llm.LLMFactExtractionDeps(
+      text=node.text,
+      user_choice=parent_node.choices[node.choice_index].label if parent_node and node.choice_index else None,
+    )
+
+    facts = await llm.generate_facts_async(fact_deps)
     pinecone.upsert_records(
       [
         pinecone.PineconeRecord.model_validate(
           {
-            "id": str(uuid.uuid4()),
-            "text": fact,
-            "entity_type": pinecone.EntityType.WORLD_FACT,
+            "id": node.id,
+            "text": node.text,
+            "entity_type": pinecone.EntityType.NODE_TEXT,
             "world_id": world_id,
           }
         )
-        for fact in facts.world_facts
-      ]
-      + [
-        pinecone.PineconeRecord.model_validate(
-          {
-            "id": str(uuid.uuid4()),
-            "text": fact,
-            "entity_type": pinecone.EntityType.BRANCH_FACT,
-            "world_id": world_id,
-            "origin_node_id": node.id,
-          }
-        )
-        for fact in facts.branch_facts
       ]
     )
+    if facts.world_facts or facts.branch_facts:
+      pinecone.upsert_records(
+        [
+          pinecone.PineconeRecord.model_validate(
+            {
+              "id": str(uuid.uuid4()),
+              "text": fact,
+              "entity_type": pinecone.EntityType.WORLD_FACT,
+              "world_id": world_id,
+            }
+          )
+          for fact in facts.world_facts
+        ]
+        + [
+          pinecone.PineconeRecord.model_validate(
+            {
+              "id": str(uuid.uuid4()),
+              "text": fact,
+              "entity_type": pinecone.EntityType.BRANCH_FACT,
+              "world_id": world_id,
+              "origin_node_id": node.id,
+            }
+          )
+          for fact in facts.branch_facts
+        ]
+      )
+
+    node.processing_status = StoryNodeProcessingStatus.COMPLETED
+    node.save()
+  except Exception as e:
+    logger.error(f"Error processing node: {e}")
+    node.processing_status = StoryNodeProcessingStatus.FAILED
+    node.save()
+    raise e

@@ -21,6 +21,7 @@ class StoryNodeProcessingStatus(str, Enum):
   """Status of the story node processing."""
 
   PENDING = "pending"
+  PROCESSING = "processing"
   COMPLETED = "completed"
   FAILED = "failed"
 
@@ -31,7 +32,6 @@ class StoryNodeContextDTO(DTOModel):
   world_facts: list[str]
   branch_facts: list[str]
   similar_nodes: list[str]
-  previous_text: str | None = None
 
 
 class StoryNodeDTO(DTOModel):

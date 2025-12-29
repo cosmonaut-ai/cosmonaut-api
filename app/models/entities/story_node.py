@@ -43,14 +43,12 @@ class StoryNodeContext(MapAttribute[str, UnicodeAttribute]):
   world_facts: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list, null=True)
   branch_facts: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list, null=True)
   similar_nodes: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list, null=True)
-  previous_text: UnicodeAttribute = UnicodeAttribute(null=True)
 
   def to_dto(self) -> StoryNodeContextDTO:
     return StoryNodeContextDTO(
       world_facts=self.world_facts,  # type: ignore[arg-type]
       branch_facts=self.branch_facts,  # type: ignore[arg-type]
       similar_nodes=self.similar_nodes,  # type: ignore[arg-type]
-      previous_text=self.previous_text,
     )
 
   @classmethod
@@ -59,7 +57,6 @@ class StoryNodeContext(MapAttribute[str, UnicodeAttribute]):
       world_facts=dto.world_facts,  # type: ignore[arg-type]
       branch_facts=dto.branch_facts,  # type: ignore[arg-type]
       similar_nodes=dto.similar_nodes,  # type: ignore[arg-type]
-      previous_text=dto.previous_text,
     )
 
 
@@ -122,6 +119,13 @@ class StoryNode(BaseCosmonautModel):
       return self.ancestors[-2]
     return None
 
+  @cached_property
+  def choice_index(self) -> int | None:
+    """Get the index of the choice that led to this node."""
+    if not self.parent_id:
+      return None
+    return self._base52_to_number(self.id[len(self.parent_id) :])
+
   @staticmethod
   def _number_to_base52(number: int) -> str:
     """Convert a number to a base-52 string."""
@@ -137,6 +141,22 @@ class StoryNode(BaseCosmonautModel):
         result = chr((number) % 52 + ord("a")) + result
       number //= 52
     return result
+
+  @staticmethod
+  def _base52_to_number(base52_string: str) -> int:
+    """Convert a base-52 string to a number."""
+    if not base52_string:
+      return 0
+    number = 0
+    for i, c in enumerate(reversed(base52_string)):
+      if c.isdigit():
+        continue
+
+      base_value = ord(c) - ord("a") if c.islower() else ord(c) - ord("A") + 26
+      if base_value < 0 or base_value > 51:
+        raise ValueError("Invalid base-52 string")
+      number += base_value * 52**i
+    return number
 
   def get_child_id(self, choice_index: int) -> str:
     """Get the ID of the child node for a given choice index."""

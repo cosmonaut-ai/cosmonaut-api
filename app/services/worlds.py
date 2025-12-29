@@ -10,7 +10,6 @@ Architecture:
 
 from __future__ import annotations
 
-import asyncio
 import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -19,7 +18,7 @@ from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
-from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO
+from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.dtos.world_meta import GenerationStatus, WorldCreateRequest, WorldMetaDTO
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
@@ -172,12 +171,6 @@ async def generate_start_node(world_id: str) -> WorldMetaDTO:
   )
 
   generated_node: LLMStoryNode = llm.generate_start_node(deps)
-  fact_deps = llm.LLMFactExtractionDeps(
-    text=generated_node.text,
-    user_choice=None,
-  )
-  facts_task = asyncio.create_task(llm.generate_facts_async(fact_deps))
-
   root_node_id = "0"
   story_node_dto = StoryNodeDTO(
     id=root_node_id,
@@ -186,8 +179,7 @@ async def generate_start_node(world_id: str) -> WorldMetaDTO:
     story_summary=generated_node.story_summary,
     title=generated_node.title,
     choices=[ChoiceDTO(label=choice, target=None) for choice in generated_node.choices],
-    parent_id=None,
-    ancestors=[],
+    processing_status=StoryNodeProcessingStatus.PENDING,  # type: ignore[arg-type]
   )
   story_node = StoryNode.from_dto(story_node_dto)
   story_node.save()
@@ -195,47 +187,4 @@ async def generate_start_node(world_id: str) -> WorldMetaDTO:
   meta.generation_status = GenerationStatus.COMPLETED
   meta_dto = meta.to_dto()
   meta.save()
-
-  # Step 10: Await fact extraction before returning
-  facts: llm.LLMFactExtraction = await facts_task
-
-  pinecone.upsert_records(
-    [
-      pinecone.PineconeRecord.model_validate(
-        {
-          "id": root_node_id,
-          "text": generated_node.text,
-          "entity_type": pinecone.EntityType.NODE_TEXT,
-          "world_id": world_id,
-        }
-      )
-    ]
-  )
-  if facts.world_facts or facts.branch_facts:
-    pinecone.upsert_records(
-      [
-        pinecone.PineconeRecord.model_validate(
-          {
-            "id": str(uuid.uuid4()),
-            "text": fact,
-            "entity_type": pinecone.EntityType.WORLD_FACT,
-            "world_id": world_id,
-          }
-        )
-        for fact in facts.world_facts
-      ]
-      + [
-        pinecone.PineconeRecord.model_validate(
-          {
-            "id": str(uuid.uuid4()),
-            "text": fact,
-            "entity_type": pinecone.EntityType.BRANCH_FACT,
-            "world_id": world_id,
-            "origin_node_id": root_node_id,
-          }
-        )
-        for fact in facts.branch_facts
-      ]
-    )
-
   return meta_dto
