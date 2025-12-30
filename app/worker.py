@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Callable, Dict, List, cast
+from typing import Any, Callable, Dict, Iterable, List, cast
 
 from aws_lambda_powertools import Logger, Tracer
 from aws_lambda_powertools.utilities.data_classes import SQSEvent, event_source  # type: ignore[import-untyped]
@@ -8,6 +8,9 @@ from pydantic import TypeAdapter
 from app.core.config import settings
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
 from app.services import story_nodes, worlds
+
+# Concurrency cap for processing messages in parallel within a Lambda invocation.
+BATCH_CONCURRENCY = 5
 
 # Initialize Powertools
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
@@ -36,29 +39,35 @@ def handler(event: SQSEvent, context: Any) -> HandlerReturn:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-  failed_message_ids: List[str] = []
-
-  # Process batch of messages
-  for record in event.records:
-    try:
-      # 1. Parse Body
-      payload: SQSPayload = sqs_payload_adapter.validate_json(record.body)
-      logger.info(f"Processing task: {payload.task_type}", extra={"payload": payload})
-
-      # 2. Route to Service Logic
-      # We use the loop to run async tasks synchronously within this handler
-      loop.run_until_complete(_process_task(payload))
-
-    except Exception:
-      logger.exception(f"Failed to process message {record.message_id}")
-      # Add to failed list so SQS knows to retry ONLY this message (Partial Batch Failure)
-      failed_message_ids.append(record.message_id)
+  failed_message_ids: List[str] = loop.run_until_complete(_process_batch(event.records))
 
   return {
     "statusCode": 200,
     "body": "Batch processed",
     "failed_message_ids": failed_message_ids,
   }
+
+
+async def _process_batch(records: Iterable[Any]) -> List[str]:
+  """
+  Process SQS records concurrently with a bounded semaphore to avoid resource saturation.
+  Returns message_ids that failed (for partial batch failure).
+  """
+  semaphore = asyncio.Semaphore(BATCH_CONCURRENCY)
+
+  async def _process_record(record: Any) -> str | None:
+    async with semaphore:
+      try:
+        payload: SQSPayload = sqs_payload_adapter.validate_json(record.body)
+        logger.info(f"Processing task: {payload.task_type}", extra={"payload": payload})
+        await _process_task(payload)
+        return None
+      except Exception:
+        logger.exception(f"Failed to process message {record.message_id}")
+        return record.message_id
+
+  results = await asyncio.gather(*(_process_record(record) for record in records))
+  return [message_id for message_id in results if message_id]
 
 
 async def _process_task(payload: SQSPayload):
