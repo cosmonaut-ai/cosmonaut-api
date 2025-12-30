@@ -16,10 +16,8 @@ class Settings(BaseSettings):
     default="cosmonaut-api", description="Service name for AWS Powertools telemetry."
   )
   DYNAMODB_TABLE_NAME: str = Field(default="cosmonaut-dev", description="Primary DynamoDB table for application state.")
-  GEMINI_API_KEY: str | None = Field(default=None, description="API key for Gemini access.")
   GEMINI_MODEL: str = Field(default="gemini-3.0-flash", description="Gemini model name.")
   GEMINI_TIMEOUT_S: int = Field(default=30, description="Client timeout in seconds.")
-  PINECONE_API_KEY: str | None = Field(default=None, description="API key for Pinecone.")
   PINECONE_INDEX: str | None = Field(default=None, description="Target Pinecone index for vector operations.")
   MOCK_AUTH: bool = Field(default=False, description="If True, bypasses JWT validation (DEV ONLY).")
   COGNITO_USER_POOL_ID: str = Field(default="", description="AWS Cognito User Pool ID.")
@@ -36,6 +34,13 @@ class Settings(BaseSettings):
 
   SLOW_WORKER_QUEUE_URL: str = Field(default="", description="URL of the slow worker queue.")
   FAST_WORKER_QUEUE_URL: str = Field(default="", description="URL of the fast worker queue.")
+
+  CLOUDFRONT_PRIVATE_KEY_PARAM: str = Field(
+    default="", description="Parameter store path for the CloudFront private key."
+  )
+  GOOGLE_CLIENT_SECRET_PARAM: str = Field(default="", description="Parameter store path for the Google client secret.")
+  GEMINI_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Gemini API key.")
+  PINECONE_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Pinecone API key.")
 
 
 settings: Settings = Settings()

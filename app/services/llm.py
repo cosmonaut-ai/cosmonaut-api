@@ -1,12 +1,22 @@
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.providers.google import GoogleProvider
 
 from app.core.config import settings
+from app.services.secret_manager import get_secret_value
 
 # Note: This model instance isn't strictly used by the Agents below
 # (they currently use the model name string), but kept for your existing logic.
 model: GoogleModel | None = None
+provider: GoogleProvider | None = None
+
+
+def get_gemini_provider() -> GoogleProvider:
+  global provider
+  if provider is None:
+    provider = GoogleProvider(api_key=get_secret_value(settings.GEMINI_API_KEY_PARAM))
+  return provider
 
 
 def get_gemini_model() -> GoogleModel:
@@ -14,6 +24,7 @@ def get_gemini_model() -> GoogleModel:
   if model is None:
     model = GoogleModel(
       model_name=settings.GEMINI_MODEL,
+      provider=get_gemini_provider(),
     )
   return model
 
@@ -87,7 +98,7 @@ def get_world_info_agent() -> Agent[None, LLMWorldInfo]:
   global world_info_agent
   if world_info_agent is None:
     world_info_agent = Agent(
-      settings.GEMINI_MODEL,
+      model=get_gemini_model(),
       system_prompt=GENERATE_WORLD_INFO_PROMPT,
       output_type=LLMWorldInfo,
     )
@@ -148,7 +159,7 @@ def get_root_node_agent() -> Agent[LLMRootNodeDeps, LLMStoryNode]:
   global root_node_agent
   if root_node_agent is None:
     root_node_agent = Agent(
-      settings.GEMINI_MODEL,
+      model=get_gemini_model(),
       deps_type=LLMRootNodeDeps,
       output_type=LLMStoryNode,
     )
@@ -224,7 +235,7 @@ def get_next_node_agent() -> Agent[LLMNextNodeDeps, LLMStoryNode]:
   global next_node_agent
   if next_node_agent is None:
     next_node_agent = Agent(
-      settings.GEMINI_MODEL,
+      model=get_gemini_model(),
       deps_type=LLMNextNodeDeps,
       output_type=LLMStoryNode,
     )
@@ -339,7 +350,7 @@ def get_fact_extraction_agent() -> Agent[LLMFactExtractionDeps, LLMFactExtractio
   global fact_extraction_agent
   if fact_extraction_agent is None:
     fact_extraction_agent = Agent(
-      settings.GEMINI_MODEL,
+      model=get_gemini_model(),
       output_type=LLMFactExtraction,
       deps_type=LLMFactExtractionDeps,
     )
@@ -395,7 +406,7 @@ def get_narrator_profile_agent() -> Agent[LLMWorldInfo, LLMNarratorProfile]:
   global narrator_profile_agent
   if narrator_profile_agent is None:
     narrator_profile_agent = Agent(
-      settings.GEMINI_MODEL,
+      model=get_gemini_model(),
       deps_type=LLMWorldInfo,
       output_type=LLMNarratorProfile,
     )
