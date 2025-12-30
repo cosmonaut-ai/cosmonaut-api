@@ -14,16 +14,20 @@ import uuid
 from collections.abc import Mapping
 from datetime import datetime, timezone
 
+from aws_lambda_powertools import Logger
 from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
+from app.core.config import settings
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.dtos.world_meta import GenerationStatus, WorldCreateRequest, WorldMetaDTO
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
 from app.services.llm import LLMStoryNode
 from app.services.sqs import send_world_generation_message
+
+logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 
 class WorldServiceError(Exception):
@@ -77,7 +81,7 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMetaD
     id=world_id,
     author_id=user_id,
     **create_request.model_dump(exclude_unset=True),
-    generation_status=GenerationStatus.GENERATING_LORE,
+    generation_status=GenerationStatus.INITIALIZED,
     created_at=datetime.now(timezone.utc).isoformat(),
     updated_at=datetime.now(timezone.utc).isoformat(),
   )
@@ -115,26 +119,17 @@ def delete_world(world_id: str) -> None:
 async def generate_lore(world: WorldMeta) -> WorldMeta:
   """Generate lore for a world (LLM integration TBD)."""
 
-  # Reuse internal entity fetch to avoid unnecessary conversions
-  if world.generation_status != GenerationStatus.GENERATING_LORE:
-    raise WorldServiceError(f"World {world.id} is not in the GENERATING_LORE state")
-
-  world.generation_status = GenerationStatus.GENERATING_NARRATOR_PROFILE
   llm_world_info: llm.LLMWorldInfo = await llm.generate_world_info(world.world_prompt)
   world.title = llm_world_info.story_title
   world.description = llm_world_info.story_description
   world.setting = llm_world_info.setting
   world.potential_endings = llm_world_info.potential_endings or []  # type: ignore[arg-type]
-  world.save()
 
   return world
 
 
 async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
   """Generate a narrator profile for a world."""
-
-  if world.generation_status != GenerationStatus.GENERATING_NARRATOR_PROFILE:
-    raise WorldServiceError(f"World {world.id} is not in the GENERATING_NARRATOR_PROFILE state")
 
   if world.narrator_profile:
     return world
@@ -146,16 +141,11 @@ async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
   )
   narrator_profile = await llm.generate_narrator_profile(llm_world_info)
   world.narrator_profile = narrator_profile.narrator_profile
-  world.generation_status = GenerationStatus.GENERATING_START_NODE
-  world.save()
   return world
 
 
 async def generate_start_node(world: WorldMeta) -> WorldMeta:
   """Generate the first story node for a world."""
-
-  if world.generation_status != GenerationStatus.GENERATING_START_NODE:
-    raise WorldServiceError(f"World {world.id} is not in the GENERATING_START_NODE state")
 
   llm_world_info = llm.LLMWorldInfo(
     story_title=world.title,
@@ -183,7 +173,6 @@ async def generate_start_node(world: WorldMeta) -> WorldMeta:
   story_node = StoryNode.from_dto(story_node_dto)
   story_node.save()
   world.root_node_id = story_node.id
-  world.generation_status = GenerationStatus.COMPLETED
-  world.save()
+  logger.info(f"Root node {root_node_id} generated for world {world.id}")
 
   return world

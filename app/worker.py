@@ -7,9 +7,11 @@ from pydantic import TypeAdapter
 
 from app.core.config import settings
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
+from app.models.dtos.story_node import StoryNodeProcessingStatus
 from app.models.dtos.world_meta import GenerationStatus
+from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
-from app.services import story_nodes, worlds
+from app.services import sqs, story_nodes, worlds
 
 # Concurrency cap for processing messages in parallel within a Lambda invocation.
 BATCH_CONCURRENCY = 5
@@ -99,36 +101,60 @@ async def _analyze_node(payload: AnalyzeNodePayload):
   if not world_id or not node_id:
     raise ValueError("Missing world_id or node_id for analyze_node")
 
-  await story_nodes.process_node(world_id, node_id)
-  logger.info(f"Node {node_id} analysis complete.")
+  node: StoryNode = story_nodes.get_node_entity(world_id, node_id)
+  if node.processing_status in [StoryNodeProcessingStatus.COMPLETED, StoryNodeProcessingStatus.PROCESSING]:
+    return
+  node.processing_status = StoryNodeProcessingStatus.PROCESSING
+  node.save()
+  try:
+    await story_nodes.process_node(node)
+    node.processing_status = StoryNodeProcessingStatus.COMPLETED
+    logger.info(f"Node {node_id} analysis complete.")
+  except Exception as e:
+    logger.exception(f"Error analyzing node {node_id}: {e}")
+    node.processing_status = StoryNodeProcessingStatus.FAILED
+    raise
+  finally:
+    node.save()
 
 
 async def _generate_world(payload: GenerateWorldPayload):
   world_id = payload.world_id
-  world: WorldMeta = worlds.get_world_entity(world_id)
-  if world.generation_status != GenerationStatus.GENERATING_LORE:
-    raise ValueError(f"World {world_id} is not in the GENERATING_LORE state")
-  try:
-    # SLOW LANE TASK (~60s)
-    # Generates Lore -> Narrator -> Start Node
-    if not world_id:
-      raise ValueError("Missing world_id for generate_world")
+  if not world_id:
+    raise ValueError("Missing world_id for generate_world")
 
-    # 1. Generate Lore (Async)
+  world: WorldMeta = worlds.get_world_entity(world_id)
+
+  if world.generation_status not in [GenerationStatus.INITIALIZED, GenerationStatus.FAILED]:
+    raise ValueError(f"World {world_id} is not in the INITIALIZED or FAILED state")
+
+  try:
+    # 1. Generate Lore
     logger.info("Generating Lore...")
+    world.generation_status = GenerationStatus.GENERATING_LORE
+    world.save()
     await worlds.generate_lore(world)
 
-    # 2. Generate Narrator Profile (Async)
+    # 2. Generate Narrator Profile
     logger.info("Generating Narrator...")
+    world.generation_status = GenerationStatus.GENERATING_NARRATOR_PROFILE
+    world.save()
     await worlds.generate_narrator_profile(world)
 
-    # 3. Generate Start Node (Async)
+    # 3. Generate Start Node
     logger.info("Generating Start Node...")
+    world.generation_status = GenerationStatus.GENERATING_START_NODE
+    world.save()
     await worlds.generate_start_node(world)
 
+    if world.root_node_id:
+      sqs.send_node_analysis_message(world.id, world.root_node_id)
+    world.generation_status = GenerationStatus.COMPLETED
     logger.info(f"World {world_id} generation complete.")
+
   except Exception as e:
     logger.exception(f"Error generating world {world_id}: {e}")
     world.generation_status = GenerationStatus.FAILED
-    world.save()
     raise
+  finally:
+    world.save()
