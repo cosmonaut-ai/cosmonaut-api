@@ -16,7 +16,7 @@ class Settings(BaseSettings):
     default="cosmonaut-api", description="Service name for AWS Powertools telemetry."
   )
   DYNAMODB_TABLE_NAME: str = Field(default="cosmonaut-dev", description="Primary DynamoDB table for application state.")
-  GEMINI_MODEL: str = Field(default="gemini-3.0-flash", description="Gemini model name.")
+  GEMINI_MODEL: str = Field(default="gemini-3-flash-preview", description="Gemini model name.")
   GEMINI_TIMEOUT_S: int = Field(default=30, description="Client timeout in seconds.")
   PINECONE_INDEX: str | None = Field(default=None, description="Target Pinecone index for vector operations.")
   MOCK_AUTH: bool = Field(default=False, description="If True, bypasses JWT validation (DEV ONLY).")
