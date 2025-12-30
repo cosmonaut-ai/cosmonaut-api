@@ -23,6 +23,7 @@ from app.models.dtos.world_meta import GenerationStatus, WorldCreateRequest, Wor
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
 from app.services.llm import LLMStoryNode
+from app.services.sqs import send_world_generation_message
 
 
 class WorldServiceError(Exception):
@@ -84,6 +85,7 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMetaD
   meta = WorldMeta.from_dto(meta)
 
   meta.save()
+  send_world_generation_message(world_id)
   return meta.to_dto()
 
 
