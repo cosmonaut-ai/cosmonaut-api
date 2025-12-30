@@ -10,6 +10,7 @@ Architecture:
 
 from __future__ import annotations
 
+import time
 import uuid
 
 from aws_lambda_powertools import Logger
@@ -159,7 +160,11 @@ async def choose_and_generate(world_id: str, node_id: str, choice_index: int) ->
     raise InvalidChoiceError(node_id, choice_index, max_index)
 
   if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
-    raise NodeProcessingError(node_id)
+    # Wait for node to be completed for 5 seconds prior to raising an error
+    time.sleep(5)
+    node = _get_node_entity(world_id, node_id)
+    if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
+      raise NodeProcessingError(node_id)
 
   selected_choice = node.choices[choice_index]
 
