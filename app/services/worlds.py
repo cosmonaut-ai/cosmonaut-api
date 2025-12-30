@@ -112,7 +112,7 @@ def delete_world(world_id: str) -> None:
   pinecone.delete_records(filter={"world_id": world_id})
 
 
-def generate_lore(world_id: str) -> WorldMetaDTO:
+async def generate_lore(world_id: str) -> WorldMetaDTO:
   """Generate lore for a world (LLM integration TBD)."""
 
   # Reuse internal entity fetch to avoid unnecessary conversions
@@ -121,7 +121,7 @@ def generate_lore(world_id: str) -> WorldMetaDTO:
     raise WorldServiceError(f"World {world_id} is not in the GENERATING_LORE state")
 
   meta.generation_status = GenerationStatus.GENERATING_NARRATOR_PROFILE
-  llm_world_info: llm.LLMWorldInfo = llm.generate_world_info(meta.world_prompt)
+  llm_world_info: llm.LLMWorldInfo = await llm.generate_world_info(meta.world_prompt)
   meta.title = llm_world_info.story_title
   meta.description = llm_world_info.story_description
   meta.setting = llm_world_info.setting
@@ -131,7 +131,7 @@ def generate_lore(world_id: str) -> WorldMetaDTO:
   return meta.to_dto()
 
 
-def generate_narrator_profile(world_id: str) -> WorldMetaDTO:
+async def generate_narrator_profile(world_id: str) -> WorldMetaDTO:
   """Generate a narrator profile for a world."""
 
   meta: WorldMeta = get_world_entity(world_id)
@@ -146,7 +146,7 @@ def generate_narrator_profile(world_id: str) -> WorldMetaDTO:
     setting=meta.setting,
     potential_endings=meta.potential_endings or [],  # type: ignore[arg-type]
   )
-  narrator_profile = llm.generate_narrator_profile(llm_world_info)
+  narrator_profile = await llm.generate_narrator_profile(llm_world_info)
   meta.narrator_profile = narrator_profile.narrator_profile
   meta.generation_status = GenerationStatus.GENERATING_START_NODE
   meta.save()
@@ -172,7 +172,7 @@ async def generate_start_node(world_id: str) -> WorldMetaDTO:
     narrator_profile=meta.narrator_profile or "",
   )
 
-  generated_node: LLMStoryNode = llm.generate_start_node(deps)
+  generated_node: LLMStoryNode = await llm.generate_start_node(deps)
   root_node_id = "0"
   story_node_dto = StoryNodeDTO(
     id=root_node_id,
