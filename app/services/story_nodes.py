@@ -22,6 +22,7 @@ from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO, StoryNodeProcess
 from app.models.entities.story_node import StoryNode, StoryNodeContext
 from app.services.llm import LLMFactExtractionDeps
 from app.services.pinecone import PineconeBranchFact
+from app.services.sqs import send_node_analysis_message
 from app.services.worlds import get_world_entity
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
@@ -209,6 +210,9 @@ async def choose_and_generate(world_id: str, node_id: str, choice_index: int) ->
 
   # Step 8: Save updated parent
   node.save()
+
+  # Step 9: Send node analysis message
+  send_node_analysis_message(world_id, new_node_id)
 
   # Step 9: Return new node as DTO
   return new_node.to_dto()

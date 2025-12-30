@@ -15,16 +15,12 @@ class Settings(BaseSettings):
   POWERTOOLS_SERVICE_NAME: str = Field(
     default="cosmonaut-api", description="Service name for AWS Powertools telemetry."
   )
-  DYNAMODB_TABLE_NAME: str = Field(
-    default="cosmonaut-dev", description="Primary DynamoDB table for application state."
-  )
+  DYNAMODB_TABLE_NAME: str = Field(default="cosmonaut-dev", description="Primary DynamoDB table for application state.")
   GEMINI_API_KEY: str | None = Field(default=None, description="API key for Gemini access.")
   GEMINI_MODEL: str = Field(default="gemini-3.0-flash", description="Gemini model name.")
   GEMINI_TIMEOUT_S: int = Field(default=30, description="Client timeout in seconds.")
   PINECONE_API_KEY: str | None = Field(default=None, description="API key for Pinecone.")
-  PINECONE_INDEX: str | None = Field(
-    default=None, description="Target Pinecone index for vector operations."
-  )
+  PINECONE_INDEX: str | None = Field(default=None, description="Target Pinecone index for vector operations.")
   MOCK_AUTH: bool = Field(default=False, description="If True, bypasses JWT validation (DEV ONLY).")
   COGNITO_USER_POOL_ID: str = Field(default="", description="AWS Cognito User Pool ID.")
   COGNITO_CLIENT_ID: str = Field(default="", description="AWS Cognito Client ID (Audience).")
@@ -37,6 +33,9 @@ class Settings(BaseSettings):
     ],
     description="Allowed CORS origins for cross-origin requests.",
   )
+
+  SLOW_WORKER_QUEUE_URL: str = Field(default="", description="URL of the slow worker queue.")
+  FAST_WORKER_QUEUE_URL: str = Field(default="", description="URL of the fast worker queue.")
 
 
 settings: Settings = Settings()

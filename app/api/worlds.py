@@ -51,15 +51,13 @@ async def get_world(
 
 
 @router.post(
-  "/init",
-  status_code=status.HTTP_201_CREATED,
+  "/",
+  status_code=status.HTTP_200_OK,
   response_model=WorldMetaDTO,
   summary="Initialize a new world",
 )
-async def initialize_world(
-  payload: WorldCreateRequest, user: User = Depends(get_current_user)
-) -> WorldMetaDTO:
-  """Initialize a new world scaffold; actual persistence wiring is pending."""
+async def create_world(payload: WorldCreateRequest, user: User = Depends(get_current_user)) -> WorldMetaDTO:
+  """Create a new world."""
   return world_service.create_world(payload, user.id)
 
 
@@ -95,31 +93,31 @@ async def delete_world(world_id: str = Path(..., description="Identifier for the
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
 
-@router.post(
-  "/{world_id}/generate-lore",
-  response_model=WorldMetaDTO,
-  summary="Generate lore for a world",
-)
-async def generate_lore(
-  world_id: str = Path(..., description="Identifier for the world"),
-) -> WorldMetaDTO:
-  """Generate lore for a world."""
-  try:
-    return world_service.generate_lore(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+# @router.post(
+#   "/{world_id}/generate-lore",
+#   response_model=WorldMetaDTO,
+#   summary="Generate lore for a world",
+# )
+# async def generate_lore(
+#   world_id: str = Path(..., description="Identifier for the world"),
+# ) -> WorldMetaDTO:
+#   """Generate lore for a world."""
+#   try:
+#     return world_service.generate_lore(world_id)
+#   except WorldNotFoundError as e:
+#     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
 
-@router.post(
-  "/{world_id}/generate-start-node",
-  response_model=WorldMetaDTO,
-  summary="Generate the first story node for a world",
-)
-async def generate_start_node(
-  world_id: str = Path(..., description="Identifier for the world"),
-) -> WorldMetaDTO:
-  """Generate the first story node for a world."""
-  try:
-    return await world_service.generate_start_node(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+# @router.post(
+#   "/{world_id}/generate-start-node",
+#   response_model=WorldMetaDTO,
+#   summary="Generate the first story node for a world",
+# )
+# async def generate_start_node(
+#   world_id: str = Path(..., description="Identifier for the world"),
+# ) -> WorldMetaDTO:
+#   """Generate the first story node for a world."""
+#   try:
+#     return await world_service.generate_start_node(world_id)
+#   except WorldNotFoundError as e:
+#     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e

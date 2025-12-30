@@ -24,6 +24,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "boto3-stubs[essential]>=1.42.18",
     "httpx",
     "pytest",
     "uvicorn>=0.38.0",
