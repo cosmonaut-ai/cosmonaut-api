@@ -117,7 +117,7 @@ def _node_keys(world_id: str, node_id: str) -> tuple[str, str]:
   return (StoryNode.pk(world_id), StoryNode.sk(node_id))
 
 
-def _get_node_entity(world_id: str, node_id: str) -> StoryNode:
+def get_node_entity(world_id: str, node_id: str) -> StoryNode:
   """Internal: fetch node entity for service composition."""
   pk, sk = _node_keys(world_id, node_id)
   try:
@@ -135,7 +135,7 @@ def list_nodes(world_id: str) -> list[StoryNodeDTO]:
 
 def get_node(world_id: str, node_id: str) -> StoryNodeDTO:
   """Fetch a single node by identifier."""
-  node = _get_node_entity(world_id, node_id)
+  node = get_node_entity(world_id, node_id)
   return node.to_dto()
 
 
@@ -151,7 +151,7 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
   6. Update parent node and send analysis message
   """
   # Step 1: Fetch parent node and validate choice index
-  node = _get_node_entity(world_id, node_id)
+  node = get_node_entity(world_id, node_id)
 
   if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
     max_index = len(node.choices) - 1 if node.choices else -1
@@ -160,14 +160,14 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
   if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
     # Wait for node to be completed for 5 seconds prior to raising an error
     await asyncio.sleep(5)
-    node = _get_node_entity(world_id, node_id)
+    node = get_node_entity(world_id, node_id)
     if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
       raise NodeProcessingError(node_id)
 
   selected_choice = node.choices[choice_index]
 
   if selected_choice.target:
-    target_node = _get_node_entity(world_id, selected_choice.target)
+    target_node = get_node_entity(world_id, selected_choice.target)
     yield target_node.text
     return
 
@@ -234,86 +234,68 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
   send_node_analysis_message(world_id, new_node_id)
 
 
-async def process_node(world_id: str, node_id: str):
-  node: StoryNode = _get_node_entity(world_id, node_id)
-  if node.processing_status == StoryNodeProcessingStatus.COMPLETED:
-    return
+async def process_node(node: StoryNode):
+  world_id = node.world_id
+  parent_node: StoryNode | None = get_node_entity(world_id, node.parent_id) if node.parent_id else None
+  world_facts: list[pinecone.PineconeWorldFact] = []
+  branch_facts: list[pinecone.PineconeBranchFact] = []
+  similar_nodes: list[pinecone.PineconeRecord] = []
   try:
-    node.processing_status = StoryNodeProcessingStatus.PROCESSING
-    node.save()
-    parent_node: StoryNode | None = _get_node_entity(world_id, node.parent_id) if node.parent_id else None
-    world_facts: list[pinecone.PineconeWorldFact] = []
-    branch_facts: list[pinecone.PineconeBranchFact] = []
-    similar_nodes: list[pinecone.PineconeRecord] = []
-    try:
-      world_facts = _get_world_facts(world_id, node.text)
-      branch_facts = _get_branch_facts(world_id, node.text, node.ancestors)
-      similar_nodes = _get_similar_nodes(world_id, node.text)
+    world_facts = _get_world_facts(world_id, node.text)
+    branch_facts = _get_branch_facts(world_id, node.text, node.ancestors)
+    similar_nodes = _get_similar_nodes(world_id, node.text)
+  except Exception as e:
+    logger.error(f"Error getting facts for node {node.id}: {e}")
 
-    except Exception as e:
-      logger.error(f"Error searching Pinecone for facts: {e}")
-
-    world_facts_text: list[str] = [fact.text for fact in world_facts]
-    branch_facts_text: list[str] = [fact.text for fact in branch_facts]
-    similar_nodes_text: list[str] = [node.text for node in similar_nodes]
-
-    node_context: StoryNodeContext = StoryNodeContext(
-      world_facts=world_facts_text,
-      branch_facts=branch_facts_text,
-      similar_nodes=similar_nodes_text,
-    )
-
-    node.context = node_context
-
-    fact_deps: LLMFactExtractionDeps = llm.LLMFactExtractionDeps(
-      text=node.text,
-      user_choice=parent_node.choices[node.choice_index].label if parent_node and node.choice_index else None,
-    )
-
-    facts = await llm.generate_facts_async(fact_deps)
+  world_facts_text: list[str] = [fact.text for fact in world_facts]
+  branch_facts_text: list[str] = [fact.text for fact in branch_facts]
+  similar_nodes_text: list[str] = [node.text for node in similar_nodes]
+  node_context: StoryNodeContext = StoryNodeContext(
+    world_facts=world_facts_text,
+    branch_facts=branch_facts_text,
+    similar_nodes=similar_nodes_text,
+  )
+  node.context = node_context
+  fact_deps: LLMFactExtractionDeps = llm.LLMFactExtractionDeps(
+    text=node.text,
+    user_choice=parent_node.choices[node.choice_index].label if parent_node and node.choice_index else None,
+  )
+  facts = await llm.generate_facts_async(fact_deps)
+  pinecone.upsert_records(
+    [
+      pinecone.PineconeRecord.model_validate(
+        {
+          "id": node.id,
+          "text": node.text,
+          "entity_type": pinecone.EntityType.NODE_TEXT,
+          "world_id": world_id,
+        }
+      )
+    ]
+  )
+  if facts.world_facts or facts.branch_facts:
     pinecone.upsert_records(
       [
         pinecone.PineconeRecord.model_validate(
           {
-            "id": node.id,
-            "text": node.text,
-            "entity_type": pinecone.EntityType.NODE_TEXT,
+            "id": str(uuid.uuid4()),
+            "text": fact,
+            "entity_type": pinecone.EntityType.WORLD_FACT,
             "world_id": world_id,
           }
         )
+        for fact in facts.world_facts
+      ]
+      + [
+        pinecone.PineconeRecord.model_validate(
+          {
+            "id": str(uuid.uuid4()),
+            "text": fact,
+            "entity_type": pinecone.EntityType.BRANCH_FACT,
+            "world_id": world_id,
+            "origin_node_id": node.id,
+          }
+        )
+        for fact in facts.branch_facts
       ]
     )
-    if facts.world_facts or facts.branch_facts:
-      pinecone.upsert_records(
-        [
-          pinecone.PineconeRecord.model_validate(
-            {
-              "id": str(uuid.uuid4()),
-              "text": fact,
-              "entity_type": pinecone.EntityType.WORLD_FACT,
-              "world_id": world_id,
-            }
-          )
-          for fact in facts.world_facts
-        ]
-        + [
-          pinecone.PineconeRecord.model_validate(
-            {
-              "id": str(uuid.uuid4()),
-              "text": fact,
-              "entity_type": pinecone.EntityType.BRANCH_FACT,
-              "world_id": world_id,
-              "origin_node_id": node.id,
-            }
-          )
-          for fact in facts.branch_facts
-        ]
-      )
-
-    node.processing_status = StoryNodeProcessingStatus.COMPLETED
-    node.save()
-  except Exception as e:
-    logger.error(f"Error processing node: {e}")
-    node.processing_status = StoryNodeProcessingStatus.FAILED
-    node.save()
-    raise e
