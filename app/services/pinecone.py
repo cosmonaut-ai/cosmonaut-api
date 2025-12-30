@@ -8,6 +8,7 @@ from pinecone.db_data.types import FilterTypedDict
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
+from app.services.secret_manager import get_secret_value
 
 pc: Pinecone | None = None
 index: Index | None = None
@@ -43,7 +44,7 @@ class PineconeBranchFact(PineconeStoryFact):
 def get_client() -> Pinecone:
   global pc
   if pc is None:
-    pc = Pinecone(api_key=settings.PINECONE_API_KEY)
+    pc = Pinecone(api_key=get_secret_value(settings.PINECONE_API_KEY_PARAM))
   return pc
 
 
@@ -79,9 +80,7 @@ def search_records(
   )
 
 
-def delete_records(
-  ids: list[str] | None = None, filter: FilterTypedDict | None = None
-) -> dict[str, Any]:
+def delete_records(ids: list[str] | None = None, filter: FilterTypedDict | None = None) -> dict[str, Any]:
   index = get_index()
   return index.delete(
     ids=ids,

@@ -19,12 +19,13 @@ dependencies = [
     "pydantic-ai>=1.37.0",
     "pyjwt[crypto]>=2.10.1",
     "nest-asyncio>=1.6.0",
+    "cryptography>=46.0.3",
 ]
 
 
 [dependency-groups]
 dev = [
-    "boto3-stubs[essential]>=1.42.18",
+    "boto3-stubs[all]>=1.42.18",
     "httpx",
     "pytest",
     "uvicorn>=0.38.0",
