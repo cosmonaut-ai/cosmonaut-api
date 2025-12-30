@@ -25,10 +25,10 @@ def _raise_not_implemented() -> NoReturn:
   raise _NOT_IMPLEMENTED
 
 
-@router.get("", response_model=list[WorldMetaDTO], summary="List available worlds")
+@router.get("/", response_model=list[WorldMetaDTO], summary="List available worlds")
 async def list_worlds(user: User = Depends(get_current_user)) -> list[WorldMetaDTO]:
   """Return a discoverable set of worlds (paged feed TBD)."""
-
+  print(f"Listing worlds for user {user.id}")
   try:
     return world_service.list_worlds(user.id)
   except NotImplementedError:

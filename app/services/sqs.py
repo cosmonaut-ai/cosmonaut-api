@@ -1,10 +1,14 @@
+from __future__ import annotations
+
 import json
 import logging
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import boto3
 from botocore.exceptions import ClientError
-from mypy_boto3_sqs.client import SQSClient
+
+if TYPE_CHECKING:
+  from mypy_boto3_sqs.client import SQSClient
 
 from app.core.config import settings
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldPayload
