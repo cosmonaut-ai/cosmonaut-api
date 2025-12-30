@@ -189,6 +189,12 @@ async def generate_start_node(deps: LLMRootNodeDeps) -> LLMStoryNode:
   return result.output
 
 
+class LLMNodeMetadata(BaseModel):
+  choices: list[str] = Field(description="The choices available from this node. (2-4 choices).")
+  story_summary: str = Field(description="A summary of the story up to this node.")
+  title: str = Field(description="A short 1-5 word title for the story node.")
+
+
 ##################################################################
 # G E N E R A T E   N E X T   N O D E
 ##################################################################
@@ -211,6 +217,23 @@ You are a Choose Your Own Adventure storyteller. Continue the narrative based on
 ## Style
 - Second-person ("you"), match established tone, scale text to moment significance
 - Aim for 2-4 paragraphs of text
+
+## IMPORTANT: OUTPUT FORMAT
+You must output the response in two distinct parts using XML-style tags.
+1. First, write the story text inside <story> tags.
+2. Second, write the metadata (choices, story_summary, title) as a JSON object inside <metadata> tags.
+
+Example Format:
+<story>
+The door creaks open and you step into the darkness...
+</story>
+<metadata>
+{
+  "choices": ["Enter the room", "Run away"],
+  "story_summary": "The player opened the mysterious door.",
+  "title": "The Dark Room"
+}
+</metadata>
 """  # noqa: E501
 
 
@@ -228,16 +251,16 @@ class LLMNextNodeDeps(BaseModel):
   narrator_profile: str = Field(description="The narrator's profile.")
 
 
-next_node_agent: None | Agent[LLMNextNodeDeps, LLMStoryNode] = None
+next_node_agent: None | Agent[LLMNextNodeDeps, str] = None
 
 
-def get_next_node_agent() -> Agent[LLMNextNodeDeps, LLMStoryNode]:
+def get_next_node_agent() -> Agent[LLMNextNodeDeps, str]:
   global next_node_agent
   if next_node_agent is None:
     next_node_agent = Agent(
       model=get_gemini_model(),
       deps_type=LLMNextNodeDeps,
-      output_type=LLMStoryNode,
+      output_type=str,
     )
 
     @next_node_agent.system_prompt
@@ -277,15 +300,6 @@ the world and story.
 ## World Info:
 {format_model_with_descriptions(deps.world_info)}
 """
-
-
-async def generate_next_node(deps: LLMNextNodeDeps) -> LLMStoryNode:
-  prompt = build_next_node_prompt(deps)
-  result = await get_next_node_agent().run(
-    prompt,
-    deps=deps,
-  )
-  return result.output
 
 
 ##################################################################

@@ -11,6 +11,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import re
 import uuid
 from typing import AsyncGenerator
 
@@ -152,7 +153,6 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
   """
   # Step 1: Fetch parent node and validate choice index
   node = get_node_entity(world_id, node_id)
-
   if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
     max_index = len(node.choices) - 1 if node.choices else -1
     raise InvalidChoiceError(node_id, choice_index, max_index)
@@ -194,43 +194,67 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
 
   # Step 4: Stream next node content via LLM
   new_node_id = node.get_child_id(choice_index)
-  generated_node: llm.LLMStoryNode | None = None
+  full_response_buffer = ""
+  last_emitted_index = 0
 
   async with llm.get_next_node_agent().run_stream(llm.build_next_node_prompt(deps), deps=deps) as result:
-    last_text = ""
-    async for partial in result.stream_output(debounce_by=None):
-      if partial.text and len(partial.text) > len(last_text):
-        new_text = partial.text[len(last_text) :]
-        yield new_text
-        last_text = partial.text
-      generated_node = partial
+    async for chunk in result.stream_text(delta=True):
+      full_response_buffer += chunk
 
-  if not generated_node:
-    # Should not happen in normal circumstances with pydantic-ai
+      # Look for content between <story> and </story> (or end of buffer if </story> not yet present)
+      story_match = re.search(r"<story>(.*?)(?:</story>|$)", full_response_buffer, re.DOTALL)
+      if story_match:
+        full_story_so_far = story_match.group(1)
+        if len(full_story_so_far) > last_emitted_index:
+          new_text = full_story_so_far[last_emitted_index:]
+          yield new_text
+          last_emitted_index = len(full_story_so_far)
+
+  # Step 5: Parse metadata from the full buffer using Regex
+  try:
+    meta_match = re.search(r"<metadata>(.*?)</metadata>", full_response_buffer, re.DOTALL)
+    if not meta_match:
+      logger.error(f"LLM failed to output metadata tags. Full response: {full_response_buffer}")
+      raise ValueError("LLM failed to output metadata tags")
+
+    metadata_json = meta_match.group(1).strip()
+    # Clean up potential markdown code blocks in metadata
+    metadata_json = re.sub(r"^```(?:json)?\s*", "", metadata_json, flags=re.IGNORECASE)
+    metadata_json = re.sub(r"\s*```$", "", metadata_json)
+
+    metadata = llm.LLMNodeMetadata.model_validate_json(metadata_json)
+
+    # Extract the story text from the buffer as well
+    story_match = re.search(r"<story>(.*?)</story>", full_response_buffer, re.DOTALL)
+    story_text = story_match.group(1).strip() if story_match else ""
+
+  except Exception as e:
+    logger.error(f"Failed to parse node metadata: {e}")
+    # Fallback or Error handling - we might want to still save what we can or raise
     return
 
-  # Step 5: Create new StoryNode entity
+  # Step 6: Create new StoryNode entity
   new_node_dto = StoryNodeDTO(
     id=new_node_id,
     world_id=world_id,
-    text=generated_node.text,
-    story_summary=generated_node.story_summary,
-    title=generated_node.title,
-    choices=[ChoiceDTO(label=choice, target=None) for choice in generated_node.choices],
+    text=story_text,
+    story_summary=metadata.story_summary,
+    title=metadata.title,
+    choices=[ChoiceDTO(label=choice, target=None) for choice in metadata.choices],
     processing_status=StoryNodeProcessingStatus.PENDING,
   )
 
-  # Step 6: Save new node
+  # Step 7: Save new node
   new_node = StoryNode.from_dto(new_node_dto)
   new_node.save()
 
-  # Step 7: Update parent node's choice target
+  # Step 8: Update parent node's choice target
   node.choices[choice_index].target = new_node_id
 
-  # Step 8: Save updated parent
+  # Step 9: Save updated parent
   node.save()
 
-  # Step 9: Send node analysis message
+  # Step 10: Send node analysis message
   send_node_analysis_message(world_id, new_node_id)
 
 
