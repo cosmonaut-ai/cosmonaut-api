@@ -105,9 +105,9 @@ def get_world_info_agent() -> Agent[None, LLMWorldInfo]:
   return world_info_agent
 
 
-def generate_world_info(world_prompt: str) -> LLMWorldInfo:
+async def generate_world_info(world_prompt: str) -> LLMWorldInfo:
   # The world_prompt becomes the User message
-  result = get_world_info_agent().run_sync(world_prompt)
+  result = await get_world_info_agent().run(world_prompt)
   return result.output
 
 
@@ -181,8 +181,8 @@ def get_root_node_agent() -> Agent[LLMRootNodeDeps, LLMStoryNode]:
   return root_node_agent
 
 
-def generate_start_node(deps: LLMRootNodeDeps) -> LLMStoryNode:
-  result = get_root_node_agent().run_sync(
+async def generate_start_node(deps: LLMRootNodeDeps) -> LLMStoryNode:
+  result = await get_root_node_agent().run(
     "Generate the first story node.",  # Dummy user prompt, actual instructions are in system prompt
     deps=deps,
   )
@@ -279,9 +279,9 @@ the world and story.
 """
 
 
-def generate_next_node(deps: LLMNextNodeDeps) -> LLMStoryNode:
+async def generate_next_node(deps: LLMNextNodeDeps) -> LLMStoryNode:
   prompt = build_next_node_prompt(deps)
-  result = get_next_node_agent().run_sync(
+  result = await get_next_node_agent().run(
     prompt,
     deps=deps,
   )
@@ -422,12 +422,12 @@ def get_narrator_profile_agent() -> Agent[LLMWorldInfo, LLMNarratorProfile]:
   return narrator_profile_agent
 
 
-def generate_narrator_profile(deps: LLMWorldInfo) -> LLMNarratorProfile:
+async def generate_narrator_profile(deps: LLMWorldInfo) -> LLMNarratorProfile:
   prompt = f"""
 # WORLD INFO:
 {format_model_with_descriptions(deps)}
 """
-  result = get_narrator_profile_agent().run_sync(
+  result = await get_narrator_profile_agent().run(
     prompt,
     deps=deps,
   )

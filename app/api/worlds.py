@@ -103,7 +103,7 @@ async def delete_world(world_id: str = Path(..., description="Identifier for the
 # ) -> WorldMetaDTO:
 #   """Generate lore for a world."""
 #   try:
-#     return world_service.generate_lore(world_id)
+#     return await world_service.generate_lore(world_id)
 #   except WorldNotFoundError as e:
 #     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 

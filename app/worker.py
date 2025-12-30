@@ -108,13 +108,13 @@ async def _generate_world(payload: GenerateWorldPayload):
   if not world_id:
     raise ValueError("Missing world_id for generate_world")
 
-  # 1. Generate Lore (Sync)
+  # 1. Generate Lore (Async)
   logger.info("Generating Lore...")
-  worlds.generate_lore(world_id)
+  await worlds.generate_lore(world_id)
 
-  # 2. Generate Narrator Profile (Sync)
+  # 2. Generate Narrator Profile (Async)
   logger.info("Generating Narrator...")
-  worlds.generate_narrator_profile(world_id)
+  await worlds.generate_narrator_profile(world_id)
 
   # 3. Generate Start Node (Async)
   logger.info("Generating Start Node...")
