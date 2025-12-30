@@ -144,7 +144,7 @@ async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
   return world
 
 
-async def generate_start_node(world: WorldMeta) -> WorldMeta:
+async def generate_start_node(world: WorldMeta) -> StoryNode:
   """Generate the first story node for a world."""
 
   llm_world_info = llm.LLMWorldInfo(
@@ -173,6 +173,7 @@ async def generate_start_node(world: WorldMeta) -> WorldMeta:
   story_node = StoryNode.from_dto(story_node_dto)
   story_node.save()
   world.root_node_id = story_node.id
+  world.save()
   logger.info(f"Root node {root_node_id} generated for world {world.id}")
 
-  return world
+  return story_node

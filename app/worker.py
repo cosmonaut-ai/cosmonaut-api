@@ -145,10 +145,15 @@ async def _generate_world(payload: GenerateWorldPayload):
     logger.info("Generating Start Node...")
     world.generation_status = GenerationStatus.GENERATING_START_NODE
     world.save()
-    await worlds.generate_start_node(world)
+    story_node = await worlds.generate_start_node(world)
 
-    if world.root_node_id:
-      sqs.send_node_analysis_message(world.id, world.root_node_id)
+    try:
+      sqs.send_node_analysis_message(world.id, story_node.id)
+    except Exception as e:
+      logger.exception(f"Error sending node analysis message for {story_node.id} in world {world.id}: {e}")
+      story_node.processing_status = StoryNodeProcessingStatus.FAILED
+      story_node.save()
+      raise
     world.generation_status = GenerationStatus.COMPLETED
     logger.info(f"World {world_id} generation complete.")
 
