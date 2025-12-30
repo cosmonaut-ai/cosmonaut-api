@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from mangum import Mangum
 
+from app.api.auth import router as auth_router
 from app.api.story_nodes import router as story_nodes_router
 from app.api.worlds import router as worlds_router
 from app.core.config import settings
@@ -34,9 +35,7 @@ app.add_middleware(
 
 
 @app.middleware("http")
-async def inject_logger_context(
-  request: Request, call_next: Callable[[Request], Awaitable[Response]]
-) -> Response:
+async def inject_logger_context(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
   """Attach a request identifier to structured logs for correlation."""
 
   request_id = request.headers.get("x-request-id") or str(uuid4())
@@ -59,6 +58,7 @@ async def health():
 
 app.include_router(worlds_router, dependencies=[Depends(get_current_user)])
 app.include_router(story_nodes_router, dependencies=[Depends(get_current_user)])
+app.include_router(auth_router, dependencies=[Depends(get_current_user)])
 
 
 handler = Mangum(app)
