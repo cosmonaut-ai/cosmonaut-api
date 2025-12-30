@@ -17,6 +17,7 @@ class GenerationStatus(str, Enum):
   GENERATING_START_NODE = "generating_start_node"
   GENERATING_NARRATOR_PROFILE = "generating_narrator_profile"
   COMPLETED = "completed"
+  FAILED = "failed"
 
 
 class WorldCreateRequest(BaseModel):

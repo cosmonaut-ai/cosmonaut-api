@@ -112,71 +112,68 @@ def delete_world(world_id: str) -> None:
   pinecone.delete_records(filter={"world_id": world_id})
 
 
-async def generate_lore(world_id: str) -> WorldMetaDTO:
+async def generate_lore(world: WorldMeta) -> WorldMeta:
   """Generate lore for a world (LLM integration TBD)."""
 
   # Reuse internal entity fetch to avoid unnecessary conversions
-  meta = get_world_entity(world_id)
-  if meta.generation_status != GenerationStatus.GENERATING_LORE:
-    raise WorldServiceError(f"World {world_id} is not in the GENERATING_LORE state")
+  if world.generation_status != GenerationStatus.GENERATING_LORE:
+    raise WorldServiceError(f"World {world.id} is not in the GENERATING_LORE state")
 
-  meta.generation_status = GenerationStatus.GENERATING_NARRATOR_PROFILE
-  llm_world_info: llm.LLMWorldInfo = await llm.generate_world_info(meta.world_prompt)
-  meta.title = llm_world_info.story_title
-  meta.description = llm_world_info.story_description
-  meta.setting = llm_world_info.setting
-  meta.potential_endings = llm_world_info.potential_endings or []  # type: ignore[arg-type]
-  meta.save()
+  world.generation_status = GenerationStatus.GENERATING_NARRATOR_PROFILE
+  llm_world_info: llm.LLMWorldInfo = await llm.generate_world_info(world.world_prompt)
+  world.title = llm_world_info.story_title
+  world.description = llm_world_info.story_description
+  world.setting = llm_world_info.setting
+  world.potential_endings = llm_world_info.potential_endings or []  # type: ignore[arg-type]
+  world.save()
 
-  return meta.to_dto()
+  return world
 
 
-async def generate_narrator_profile(world_id: str) -> WorldMetaDTO:
+async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
   """Generate a narrator profile for a world."""
 
-  meta: WorldMeta = get_world_entity(world_id)
-  if meta.generation_status != GenerationStatus.GENERATING_NARRATOR_PROFILE:
-    raise WorldServiceError(f"World {world_id} is not in the GENERATING_NARRATOR_PROFILE state")
+  if world.generation_status != GenerationStatus.GENERATING_NARRATOR_PROFILE:
+    raise WorldServiceError(f"World {world.id} is not in the GENERATING_NARRATOR_PROFILE state")
 
-  if meta.narrator_profile:
-    return meta.to_dto()
+  if world.narrator_profile:
+    return world
   llm_world_info = llm.LLMWorldInfo(
-    story_title=meta.title,
-    story_description=meta.description,
-    setting=meta.setting,
-    potential_endings=meta.potential_endings or [],  # type: ignore[arg-type]
+    story_title=world.title,
+    story_description=world.description,
+    setting=world.setting,
+    potential_endings=world.potential_endings or [],  # type: ignore[arg-type]
   )
   narrator_profile = await llm.generate_narrator_profile(llm_world_info)
-  meta.narrator_profile = narrator_profile.narrator_profile
-  meta.generation_status = GenerationStatus.GENERATING_START_NODE
-  meta.save()
-  return meta.to_dto()
+  world.narrator_profile = narrator_profile.narrator_profile
+  world.generation_status = GenerationStatus.GENERATING_START_NODE
+  world.save()
+  return world
 
 
-async def generate_start_node(world_id: str) -> WorldMetaDTO:
+async def generate_start_node(world: WorldMeta) -> WorldMeta:
   """Generate the first story node for a world."""
 
-  meta = get_world_entity(world_id)
-  if meta.generation_status != GenerationStatus.GENERATING_START_NODE:
-    raise WorldServiceError(f"World {world_id} is not in the GENERATING_START_NODE state")
+  if world.generation_status != GenerationStatus.GENERATING_START_NODE:
+    raise WorldServiceError(f"World {world.id} is not in the GENERATING_START_NODE state")
 
   llm_world_info = llm.LLMWorldInfo(
-    story_title=meta.title,
-    story_description=meta.description,
-    setting=meta.setting,
-    potential_endings=meta.potential_endings or [],  # type: ignore[arg-type]
+    story_title=world.title,
+    story_description=world.description,
+    setting=world.setting,
+    potential_endings=world.potential_endings or [],  # type: ignore[arg-type]
   )
 
   deps = llm.LLMRootNodeDeps(
     world_info=llm_world_info,
-    narrator_profile=meta.narrator_profile or "",
+    narrator_profile=world.narrator_profile or "",
   )
 
   generated_node: LLMStoryNode = await llm.generate_start_node(deps)
   root_node_id = "0"
   story_node_dto = StoryNodeDTO(
     id=root_node_id,
-    world_id=meta.id,
+    world_id=world.id,
     text=generated_node.text,
     story_summary=generated_node.story_summary,
     title=generated_node.title,
@@ -185,8 +182,8 @@ async def generate_start_node(world_id: str) -> WorldMetaDTO:
   )
   story_node = StoryNode.from_dto(story_node_dto)
   story_node.save()
-  meta.root_node_id = story_node.id
-  meta.generation_status = GenerationStatus.COMPLETED
-  meta_dto = meta.to_dto()
-  meta.save()
-  return meta_dto
+  world.root_node_id = story_node.id
+  world.generation_status = GenerationStatus.COMPLETED
+  world.save()
+
+  return world

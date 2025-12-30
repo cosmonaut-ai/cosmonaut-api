@@ -7,6 +7,8 @@ from pydantic import TypeAdapter
 
 from app.core.config import settings
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
+from app.models.dtos.world_meta import GenerationStatus
+from app.models.entities.world_meta import WorldMeta
 from app.services import story_nodes, worlds
 
 # Concurrency cap for processing messages in parallel within a Lambda invocation.
@@ -103,21 +105,30 @@ async def _analyze_node(payload: AnalyzeNodePayload):
 
 async def _generate_world(payload: GenerateWorldPayload):
   world_id = payload.world_id
-  # SLOW LANE TASK (~60s)
-  # Generates Lore -> Narrator -> Start Node
-  if not world_id:
-    raise ValueError("Missing world_id for generate_world")
+  world: WorldMeta = worlds.get_world_entity(world_id)
+  if world.generation_status != GenerationStatus.GENERATING_LORE:
+    raise ValueError(f"World {world_id} is not in the GENERATING_LORE state")
+  try:
+    # SLOW LANE TASK (~60s)
+    # Generates Lore -> Narrator -> Start Node
+    if not world_id:
+      raise ValueError("Missing world_id for generate_world")
 
-  # 1. Generate Lore (Async)
-  logger.info("Generating Lore...")
-  await worlds.generate_lore(world_id)
+    # 1. Generate Lore (Async)
+    logger.info("Generating Lore...")
+    await worlds.generate_lore(world)
 
-  # 2. Generate Narrator Profile (Async)
-  logger.info("Generating Narrator...")
-  await worlds.generate_narrator_profile(world_id)
+    # 2. Generate Narrator Profile (Async)
+    logger.info("Generating Narrator...")
+    await worlds.generate_narrator_profile(world)
 
-  # 3. Generate Start Node (Async)
-  logger.info("Generating Start Node...")
-  await worlds.generate_start_node(world_id)
+    # 3. Generate Start Node (Async)
+    logger.info("Generating Start Node...")
+    await worlds.generate_start_node(world)
 
-  logger.info(f"World {world_id} generation complete.")
+    logger.info(f"World {world_id} generation complete.")
+  except Exception as e:
+    logger.exception(f"Error generating world {world_id}: {e}")
+    world.generation_status = GenerationStatus.FAILED
+    world.save()
+    raise
