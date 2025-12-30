@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
   model_config: ClassVar[SettingsConfigDict] = SettingsConfigDict(env_prefix="", extra="ignore")
 
-  ENV: Literal["dev", "prod"] = Field(default="dev", description="Runtime environment label.")
+  ENV: Literal["dev", "prod", "local"] = Field(default="dev", description="Runtime environment label.")
   POWERTOOLS_SERVICE_NAME: str = Field(
     default="cosmonaut-api", description="Service name for AWS Powertools telemetry."
   )

@@ -1,8 +1,13 @@
+from __future__ import annotations
+
 from functools import lru_cache
+from typing import TYPE_CHECKING
 
 import boto3
-from mypy_boto3_ssm.client import SSMClient
-from mypy_boto3_ssm.type_defs import GetParameterResultTypeDef
+
+if TYPE_CHECKING:
+  from mypy_boto3_ssm.client import SSMClient
+  from mypy_boto3_ssm.type_defs import GetParameterResultTypeDef
 
 from app.core.config import settings
 
