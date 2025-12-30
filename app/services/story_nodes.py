@@ -10,8 +10,9 @@ Architecture:
 
 from __future__ import annotations
 
-import time
+import asyncio
 import uuid
+from typing import AsyncGenerator
 
 from aws_lambda_powertools import Logger
 from pynamodb.pagination import ResultIterator
@@ -138,19 +139,16 @@ def get_node(world_id: str, node_id: str) -> StoryNodeDTO:
   return node.to_dto()
 
 
-async def choose_and_generate(world_id: str, node_id: str, choice_index: int) -> StoryNodeDTO:
-  """Generate a new story node based on a user's choice.
+async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerator[str, None]:
+  """Choose a story node based on a user's choice and stream the text.
 
   Workflow:
   1. Fetch parent node and validate choice_index bounds
   2. Fetch world metadata for context
-  3. Build LLMNextNodeDeps with world_info, previous node text, user choice
-  4. Call llm.generate_next_node to get new node content
-  5. Create new StoryNode entity with generated UUID, parent_id, ancestors
-  6. Save new node to DynamoDB
-  7. Update parent node's choices[choice_index].target to new node ID
-  8. Save updated parent node
-  9. Return new node as DTO
+  3. Build LLMNextNodeDeps
+  4. Call llm.get_next_node_agent().run_stream to stream new node content
+  5. Create and save new StoryNode entity after stream finishes
+  6. Update parent node and send analysis message
   """
   # Step 1: Fetch parent node and validate choice index
   node = _get_node_entity(world_id, node_id)
@@ -161,7 +159,7 @@ async def choose_and_generate(world_id: str, node_id: str, choice_index: int) ->
 
   if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
     # Wait for node to be completed for 5 seconds prior to raising an error
-    time.sleep(5)
+    await asyncio.sleep(5)
     node = _get_node_entity(world_id, node_id)
     if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
       raise NodeProcessingError(node_id)
@@ -169,7 +167,9 @@ async def choose_and_generate(world_id: str, node_id: str, choice_index: int) ->
   selected_choice = node.choices[choice_index]
 
   if selected_choice.target:
-    return get_node(world_id, selected_choice.target)
+    target_node = _get_node_entity(world_id, selected_choice.target)
+    yield target_node.text
+    return
 
   # Step 2: Fetch world metadata for context
   world_meta = get_world_entity(world_id)
@@ -192,10 +192,24 @@ async def choose_and_generate(world_id: str, node_id: str, choice_index: int) ->
     narrator_profile=world_meta.narrator_profile or "",
   )
 
-  # Step 4: Generate next node content via LLM
-  generated_node: llm.LLMStoryNode = llm.generate_next_node(deps)
-  # Step 5: Create new StoryNode entity
+  # Step 4: Stream next node content via LLM
   new_node_id = node.get_child_id(choice_index)
+  generated_node: llm.LLMStoryNode | None = None
+
+  async with llm.get_next_node_agent().run_stream(llm.build_next_node_prompt(deps), deps=deps) as result:
+    last_text = ""
+    async for partial in result.stream_output(debounce_by=None):
+      if partial.text and len(partial.text) > len(last_text):
+        new_text = partial.text[len(last_text) :]
+        yield new_text
+        last_text = partial.text
+      generated_node = partial
+
+  if not generated_node:
+    # Should not happen in normal circumstances with pydantic-ai
+    return
+
+  # Step 5: Create new StoryNode entity
   new_node_dto = StoryNodeDTO(
     id=new_node_id,
     world_id=world_id,
@@ -218,9 +232,6 @@ async def choose_and_generate(world_id: str, node_id: str, choice_index: int) ->
 
   # Step 9: Send node analysis message
   send_node_analysis_message(world_id, new_node_id)
-
-  # Step 9: Return new node as DTO
-  return new_node.to_dto()
 
 
 async def process_node(world_id: str, node_id: str):

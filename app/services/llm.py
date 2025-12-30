@@ -247,8 +247,8 @@ def get_next_node_agent() -> Agent[LLMNextNodeDeps, LLMStoryNode]:
   return next_node_agent
 
 
-def generate_next_node(deps: LLMNextNodeDeps) -> LLMStoryNode:
-  prompt = f"""
+def build_next_node_prompt(deps: LLMNextNodeDeps) -> str:
+  return f"""
 Given the following context, generate the next story node.
 # CONTEXT:
 
@@ -277,6 +277,10 @@ the world and story.
 ## World Info:
 {format_model_with_descriptions(deps.world_info)}
 """
+
+
+def generate_next_node(deps: LLMNextNodeDeps) -> LLMStoryNode:
+  prompt = build_next_node_prompt(deps)
   result = get_next_node_agent().run_sync(
     prompt,
     deps=deps,
