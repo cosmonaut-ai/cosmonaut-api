@@ -17,7 +17,7 @@ COPY pyproject.toml uv.lock ./
 
 # Install dependencies using the lockfile to ensure parity between dev/prod
 # We export to requirements.txt to strictly follow the lockfile versions
-RUN uv export --format requirements-txt --no-dev --output requirements.txt \
+RUN uv export --format requirements-txt --no-dev --output-file requirements.txt \
     && uv pip install --system --no-cache -r requirements.txt
 
 # Copy application source
