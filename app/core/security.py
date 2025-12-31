@@ -3,6 +3,7 @@ from typing import Any, Dict, List, cast
 
 import httpx
 import jwt
+from aws_lambda_powertools import Logger
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from fastapi import HTTPException, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -10,6 +11,8 @@ from jwt.algorithms import RSAAlgorithm
 from pydantic import BaseModel
 
 from app.core.config import settings
+
+logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 
 # --- Data Models ---
@@ -42,7 +45,7 @@ def get_jwks() -> Dict[str, Any]:
       response.raise_for_status()
       return response.json()
   except Exception as e:
-    print(f"CRITICAL: Failed to fetch JWKS: {e}")
+    logger.error(f"Failed to fetch JWKS: {e}")
     raise HTTPException(status_code=500, detail="Authentication service unavailable")
 
 
@@ -50,14 +53,11 @@ def get_jwks() -> Dict[str, Any]:
 security = HTTPBearer(auto_error=False)
 
 
-def get_current_user(
-  request: Request, token: HTTPAuthorizationCredentials | None = Security(security)
-) -> User:
+def get_current_user(request: Request, token: HTTPAuthorizationCredentials | None = Security(security)) -> User:
   # 1. Happy Path: Mock Auth (Dev Only)
   if settings.MOCK_AUTH and settings.ENV in ["local", "dev"]:
-    return User(
-      id="mock-user-123", email="mock@cosmonaut.ai", username="CosmonautDev", groups=["Owner"]
-    )
+    logger.info("Using mock authentication")
+    return User(id="mock-user-123", email="mock@cosmonaut.ai", username="CosmonautDev", groups=["Owner"])
 
   # 2. Require token for production
   if not token:
@@ -94,17 +94,42 @@ def get_current_user(
     if not rsa_key:
       raise HTTPException(status_code=401, detail="Invalid token header (kid not found)")
 
-    # B. Verify Signature
+    # B. Verify Signature and Claims
     public_key = cast(RSAPublicKey, RSAAlgorithm.from_jwk(rsa_key))
 
-    payload = jwt.decode(
-      token_str,
-      public_key,
-      algorithms=["RS256"],
-      audience=settings.COGNITO_CLIENT_ID,
-      issuer=f"https://cognito-idp.{settings.AWS_REGION}.amazonaws.com/{settings.COGNITO_USER_POOL_ID}",
-      options={"verify_at_hash": False, "verify_aud": True, "verify_iss": True},
-    )
+    # First decode without verification to check token type
+    unverified_payload = jwt.decode(token_str, options={"verify_signature": False})
+    token_use = unverified_payload.get("token_use")
+
+    decode_options = {
+      "verify_at_hash": False,
+      "verify_aud": True,
+      "verify_iss": True,
+    }
+
+    # Cognito Access Tokens use 'client_id' instead of 'aud'
+    if token_use == "access":
+      decode_options["verify_aud"] = False
+      payload = jwt.decode(
+        token_str,
+        public_key,
+        algorithms=["RS256"],
+        issuer=f"https://cognito-idp.{settings.AWS_REGION}.amazonaws.com/{settings.COGNITO_USER_POOL_ID}",
+        options=decode_options,
+      )
+      # Manually verify client_id for access tokens
+      if payload.get("client_id") != settings.COGNITO_CLIENT_ID:
+        raise jwt.InvalidTokenError("Token client_id does not match")
+    else:
+      # ID Tokens use 'aud'
+      payload = jwt.decode(
+        token_str,
+        public_key,
+        algorithms=["RS256"],
+        audience=settings.COGNITO_CLIENT_ID,
+        issuer=f"https://cognito-idp.{settings.AWS_REGION}.amazonaws.com/{settings.COGNITO_USER_POOL_ID}",
+        options=decode_options,
+      )
 
     # C. Parse Groups
     raw_groups = payload.get("cognito:groups", [])
@@ -121,10 +146,11 @@ def get_current_user(
     )
 
   except jwt.ExpiredSignatureError:
+    logger.warning("Token has expired")
     raise HTTPException(status_code=401, detail="Token has expired")
   except jwt.InvalidTokenError as e:
-    print(f"Auth Error: {e}")
-    raise HTTPException(status_code=401, detail="Invalid token")
-  except Exception as e:
-    print(f"Unexpected Auth Error: {e}")
+    logger.warning(f"Invalid token: {e}")
+    raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
+  except Exception:
+    logger.exception("Unexpected Auth Error")
     raise HTTPException(status_code=500, detail="Authentication error")
