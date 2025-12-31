@@ -62,7 +62,7 @@ class InvalidChoiceError(NodeServiceError):
     self.max_index = max_index
 
 
-def _get_world_facts(world_id: str, node_text: str, top_k: int = 10) -> list[pinecone.PineconeWorldFact]:
+def _get_world_facts(world_id: str, node_text: str, top_k: int = 20) -> list[pinecone.PineconeWorldFact]:
   """Get the world facts for a given node."""
   return [
     pinecone.PineconeWorldFact.model_validate({**x.fields, "id": x._id})
@@ -78,7 +78,7 @@ def _get_world_facts(world_id: str, node_text: str, top_k: int = 10) -> list[pin
 
 
 def _get_branch_facts(
-  world_id: str, node_text: str, ancestors: list[str], top_k: int = 10
+  world_id: str, node_text: str, ancestors: list[str], top_k: int = 20
 ) -> list[pinecone.PineconeBranchFact]:
   """Get the branch facts for a given node."""
 
