@@ -64,9 +64,19 @@ async def choose(
   async def event_generator():
     """Wrap the story node stream in SSE format for better Lambda/Mangum compatibility."""
     try:
+      first_chunk = True
       async for chunk in node_service.choose(world_id, node_id, choice_index):
-        # SSE format: "data: <content>\n\n"
-        yield f"data: {chunk}\n\n"
+        # Only strip leading whitespace from the very first chunk to avoid breaking SSE format
+        # Preserve all other whitespace including newlines for proper paragraph formatting
+        if first_chunk:
+          chunk = chunk.lstrip()
+          first_chunk = False
+
+        if chunk:  # Only yield non-empty chunks
+          # Replace actual newlines with a placeholder to preserve them in SSE format
+          # The frontend will need to convert these back to newlines
+          chunk_escaped = chunk.replace("\n", "\\n")
+          yield f"data: {chunk_escaped}\n\n"
       # Send a done event to signal completion
       yield "data: [DONE]\n\n"
     except NodeNotFoundError as e:

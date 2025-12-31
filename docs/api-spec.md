@@ -155,15 +155,16 @@ The endpoint streams data in Server-Sent Events format:
 ```
 data: The cold weight of the Sovereign-pattern service pistol
 
-data: settles into your palm, a familiar anchor in a world
-
-data: of shifting gears and shifting loyalties.
+data: settles into your palm, a familiar anchor in a world\n\nof shifting gears and shifting loyalties.
 
 data: [DONE]
 
 ```
 
 - Each chunk of story text is prefixed with `data: `
+- Leading whitespace is stripped from the first chunk only
+- **Newlines are escaped as `\n`** to preserve paragraph breaks in the SSE format
+- Each event is terminated with a blank line (`\n\n`)
 - The stream ends with `data: [DONE]\n\n`
 - Error events use the format: `event: error\ndata: <error message>\n\n`
 
@@ -175,6 +176,8 @@ To consume the SSE stream, use the browser's `EventSource` API or parse the stre
 const response = await fetch(url, { method: 'POST' });
 const reader = response.body.getReader();
 const decoder = new TextDecoder();
+
+let storyText = '';
 
 while (true) {
   const { done, value } = await reader.read();
@@ -190,8 +193,10 @@ while (true) {
         // Stream complete
         break;
       }
-      // Append content to story text
-      storyText += content;
+      // Unescape newlines to restore paragraph breaks
+      const unescaped = content.replace(/\\n/g, '\n');
+      storyText += unescaped;
+      // Update UI with new content
     }
   }
 }
