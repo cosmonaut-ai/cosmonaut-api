@@ -143,7 +143,8 @@ def get_node(world_id: str, node_id: str) -> StoryNodeDTO:
 def get_node_entities(world_id: str, node_ids: list[str]) -> list[StoryNode]:
   """Fetch multiple nodes by identifier."""
   nodes = StoryNode.batch_get([(StoryNode.pk(world_id), StoryNode.sk(node_id)) for node_id in node_ids])
-  return [node for node in nodes]
+  nodes_map = {node.id: node for node in nodes}
+  return [nodes_map[node_id] for node_id in node_ids if node_id in nodes_map]
 
 
 async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerator[str, None]:
@@ -192,16 +193,18 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
 
   prev_story_nodes = get_node_entities(world_id, node.ancestors[-5:])
   prev_story_nodes_text = ""
-  for i in range(len(prev_story_nodes)):
-    prev_story_nodes_text += prev_story_nodes[i].text
-    choice_text = ""
+  for i, current_node in enumerate(prev_story_nodes):
+    prev_story_nodes_text += current_node.text
     if i < len(prev_story_nodes) - 1:
-      prev_choice_index: int | None = prev_story_nodes[i].choice_index
-      if prev_choice_index is not None:
-        choice_text = prev_story_nodes[i].choices[prev_choice_index].label
+      # The choice that led to the next node in our list
+      next_node = prev_story_nodes[i + 1]
+      choice_idx = next_node.choice_index
+      if choice_idx is not None and choice_idx < len(current_node.choices):
+        choice_text = current_node.choices[choice_idx].label
+        prev_story_nodes_text += f'\n\nUser chose: "{choice_text}"\n\n'
     else:
-      choice_text = selected_choice.label
-    prev_story_nodes_text += f'\n\nUser chose: "{choice_text}"\n\n'
+      # For the last node in our list (which is the current node), the choice is the one just selected
+      prev_story_nodes_text += f'\n\nUser chose: "{selected_choice.label}"\n\n'
 
   deps = llm.LLMNextNodeDeps(
     world_info=llm_world_info,
