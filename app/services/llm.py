@@ -133,7 +133,7 @@ Create an engaging first node that:
 ## Writing Guidelines
 - Address the player as "you" throughout
 - Open in media res when possible—action or intrigue, not lengthy exposition
-- Keep text to 2-4 paragraphs; this is interactive fiction, not a novel
+- Keep text to 2-4 paragraphs
 - The title should be evocative and specific to this moment
 """  # noqa: E501
 
@@ -204,19 +204,18 @@ You are a Choose Your Own Adventure storyteller. Continue the narrative based on
 
 ## Consequences
 - Honor the player's choice with meaningful consequences—risky choices carry real risk; clever ones are rewarded
-- Endings (good or bad) must feel earned, not arbitrary. The story should be VERY DIFFICULT; most paths lead to story ending.
+- If the choice leading to this node is a "bad" choice, punish the player by ending the story or negative consequences. This should be a very difficult story to complete.
 
-## Choices
-- 2-4 choices per node (none if story ending), varying risk/reward, arising from current context
-- Do not cater to the player's decisions or hesitate to end the story if they make bad choices.
+## Choice Design Guidelines
+- Provide 2-4 distinct choices that feel meaningfully different
+- Each choice should emerge naturally from the narrative (no "left door vs. right door" without context)
+- Avoid giving away which choices are "correct"—all should feel viable
 
-## Continuity
-- Maintain consistency with world facts, branch history, characterization, and established details
-- Story summaries should capture key events for future reference
-
-## Style
-- Second-person ("you"), match established tone, scale text to moment significance
-- Aim for 2-4 paragraphs of text
+## Writing Guidelines
+- Address the player as "you" throughout
+- Obey the narrator's profile as closely as possible.
+- Keep text to 2-4 paragraphs
+- The title should be evocative and specific to this moment
 
 ## IMPORTANT: OUTPUT FORMAT
 You must output the response in two distinct parts using XML-style tags.
@@ -346,6 +345,7 @@ Examples:
 - Be concise: information density over prose quality
 - Be self-contained: facts must make sense without the source text
 - Be selective: only extract facts likely to matter 2+ nodes later
+- Prioritize facts about characters, items, and locations.
 - Avoid obvious/trivial facts that won't affect future narrative
 - Prefer specific over vague: "You have 3 gold coins" > "You have some money"
 """  # noqa: E501
@@ -400,16 +400,30 @@ async def generate_facts_async(deps: LLMFactExtractionDeps) -> LLMFactExtraction
 ##################################################################
 
 GENERATE_NARRATOR_PROFILE_PROMPT = """
-You generate narrator profiles for a Choose Your Own Adventure game.
+You create narrator profiles for a Choose Your Own Adventure game.
 
 ## Your Task
-Given a prompt containing a general outline of the story, generate a narrator profile for a narrator that will be used to tell the story.
+Given the world setting and story concept, generate a narrator profile that defines how the story will be told. This profile will guide all future narrative text generation.
+
+## Profile Must Define
+- **Voice & Persona**: Is the narrator omniscient, mysterious, sardonic, warm, clinical, theatrical?
+- **Prose Style**: Sentence rhythm (terse vs. flowing), vocabulary level (pulpy vs. literary), use of figurative language
+- **Sensory Focus**: Which senses are prioritized? Does the narrator favor visceral action or introspective moments?
+- **Tone & Atmosphere**: How does the narrator build mood? Through humor, dread, wonder, tension?
+- **Player Address**: The narrator always addresses the player as "you" — how does this feel? (intimate, commanding, conspiratorial?)
 
 ## Guidelines
-- The narrator profile should be a single paragraph of text.
-- The narrator profile should be in the present tense.
-- The profile should contain the narrator's writing style, tone, and personality.
-- The profile should match the type of story being told.
+- Write a single, dense paragraph (3-5 sentences)
+- Use present tense to describe how the narrator writes
+- Be specific enough that two different story nodes would sound stylistically consistent
+- Match the narrator's personality to the genre and tone of the world
+
+## Examples of Specificity
+❌ Vague: "The narrator has a dark tone"
+✅ Specific: "The narrator whispers secrets in clipped, unsettling sentences, favoring tactile descriptions of decay and cold."
+
+❌ Vague: "The narrator is humorous"
+✅ Specific: "The narrator is a wry observer who punctuates danger with deadpan asides, treating mortal peril like mild inconvenience."
 """  # noqa: E501
 
 
