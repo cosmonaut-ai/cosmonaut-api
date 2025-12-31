@@ -133,7 +133,7 @@ Create an engaging first node that:
 ## Writing Guidelines
 - Address the player as "you" throughout
 - Open in media res when possible—action or intrigue, not lengthy exposition
-- Keep text to 2-4 paragraphs
+- Keep text to 1-3 paragraphs
 - The title should be evocative and specific to this moment
 """  # noqa: E501
 
@@ -214,7 +214,7 @@ You are a Choose Your Own Adventure storyteller. Continue the narrative based on
 ## Writing Guidelines
 - Address the player as "you" throughout
 - Obey the narrator's profile as closely as possible.
-- Keep text to 2-4 paragraphs
+- Keep text to 1-3 paragraphs
 - The title should be evocative and specific to this moment
 
 ## IMPORTANT: OUTPUT FORMAT
@@ -246,7 +246,6 @@ class LLMNextNodeDeps(BaseModel):
   branch_facts: list[str] = Field(
     description="Facts about the story up to this point that may or may not be relevant to the next story node."  # noqa: E501
   )
-  similar_nodes: list[str] = Field(description="Similar story nodes that are relevant to the next story node.")
   narrator_profile: str = Field(description="The narrator's profile.")
 
 
@@ -274,14 +273,8 @@ def build_next_node_prompt(deps: LLMNextNodeDeps) -> str:
 Given the following context, generate the next story node.
 # CONTEXT:
 
-## Previous Node Text:
+## Previous Story Text (5 previous nodes, not entire story):
 {deps.previous_text}
-
-## Similar Nodes:
-These are story nodes from other choice branches that you should use to ensure consistency within
-the world and story.
-
-{"\n\n".join(deps.similar_nodes)}
 
 ## User Choice:
 {deps.user_choice}
