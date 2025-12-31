@@ -138,6 +138,18 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
     if isinstance(raw_groups, list):
       groups = [str(g) for g in cast(List[Any], raw_groups)]
 
+    # REMOVE IN PRODUCTION
+    email = payload.get("email", "")
+    email_whitelist = [
+      "imatson9119@gmail.com",
+      "emmarestivo@gmail.com",
+      "jsrishere@gmail.com",
+      "jsr.is.here@gmail.com",
+      "fortex405@gmail.com",
+      "andrew24whitman@gmail.com",
+    ]
+    if email not in email_whitelist:
+      raise HTTPException(status_code=401, detail="Unauthorized")
     return User(
       id=payload["sub"],
       email=payload.get("email", ""),
