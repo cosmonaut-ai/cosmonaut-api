@@ -140,6 +140,12 @@ def get_node(world_id: str, node_id: str) -> StoryNodeDTO:
   return node.to_dto()
 
 
+def get_node_entities(world_id: str, node_ids: list[str]) -> list[StoryNode]:
+  """Fetch multiple nodes by identifier."""
+  nodes = StoryNode.batch_get([(StoryNode.pk(world_id), StoryNode.sk(node_id)) for node_id in node_ids])
+  return [node for node in nodes]
+
+
 async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerator[str, None]:
   """Choose a story node based on a user's choice and stream the text.
 
@@ -184,13 +190,25 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
     potential_endings=world_meta.potential_endings or [],  # type: ignore[arg-type]
   )
 
+  prev_story_nodes = get_node_entities(world_id, node.ancestors[-5:])
+  prev_story_nodes_text = ""
+  for i in range(len(prev_story_nodes)):
+    prev_story_nodes_text += prev_story_nodes[i].text
+    choice_text = ""
+    if i < len(prev_story_nodes) - 1:
+      prev_choice_index: int | None = prev_story_nodes[i].choice_index
+      if prev_choice_index is not None:
+        choice_text = prev_story_nodes[i].choices[prev_choice_index].label
+    else:
+      choice_text = selected_choice.label
+    prev_story_nodes_text += f'\n\nUser chose: "{choice_text}"\n\n'
+
   deps = llm.LLMNextNodeDeps(
     world_info=llm_world_info,
-    previous_text=node.text,
+    previous_text=prev_story_nodes_text,
     user_choice=selected_choice.label,
     world_facts=node.context.world_facts or [],  # type: ignore[arg-type]
     branch_facts=node.context.branch_facts or [],  # type: ignore[arg-type]
-    similar_nodes=node.context.similar_nodes or [],  # type: ignore[arg-type]
     narrator_profile=world_meta.narrator_profile or "",
   )
 
