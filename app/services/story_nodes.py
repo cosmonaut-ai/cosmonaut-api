@@ -167,7 +167,9 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
   selected_choice = node.choices[choice_index]
 
   if selected_choice.target:
+    logger.info(f"Returning cached node {selected_choice.target} for choice {choice_index}")
     target_node = get_node_entity(world_id, selected_choice.target)
+    logger.info(f"Cached node text length: {len(target_node.text)}, preview: {target_node.text[:100]}...")
     yield target_node.text
     return
 
@@ -196,17 +198,28 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
   new_node_id = node.get_child_id(choice_index)
   full_response_buffer = ""
   last_emitted_index = 0
+  story_started = False
+  total_chunks_yielded = 0
 
   async with llm.get_next_node_agent().run_stream(llm.build_next_node_prompt(deps), deps=deps) as result:
     async for chunk in result.stream_text(delta=True):
       full_response_buffer += chunk
 
       # Look for content between <story> and </story> (or end of buffer if </story> not yet present)
-      story_match = re.search(r"<story>(.*?)(?:</story>|$)", full_response_buffer, re.DOTALL)
+      # Match everything from <story> to </story> (if present) or end of buffer
+      # We want to match up to </story> if it exists, otherwise to the end
+      if "</story>" in full_response_buffer:
+        story_match = re.search(r"<story>(.*?)</story>", full_response_buffer, re.DOTALL)
+      else:
+        story_match = re.search(r"<story>(.*)", full_response_buffer, re.DOTALL)
       if story_match:
+        if not story_started:
+          story_started = True
+
         full_story_so_far = story_match.group(1)
         if len(full_story_so_far) > last_emitted_index:
           new_text = full_story_so_far[last_emitted_index:]
+          total_chunks_yielded += 1
           yield new_text
           last_emitted_index = len(full_story_so_far)
 
