@@ -137,22 +137,71 @@ Retrieves the content, choices, and processing status for a specific node.
 
 ### Choose and Generate (Streaming)
 
-Selects a choice and streams the narrative text of the next node.
+Selects a choice and streams the narrative text of the next node using Server-Sent Events (SSE).
 
 **POST** `{STREAMING_BASE_URL}/worlds/{world_id}/nodes/{node_id}/choose/{choice_index}`
 
 - **Note:** If the choice already has a `target` ID (pre-generated), the API will return the full text immediately.
 - **Auth:** Requires the signed cookies obtained from `/auth/session`. If these are missing or expired, the endpoint will return a `401` or `403` error.
-- **Streaming Response:** `text/plain`
+- **Streaming Response:** `text/event-stream` (Server-Sent Events format)
 - **Side Effects:**
   - After the stream completes, the new node is saved with `processing_status: "pending"`.
   - Background analysis (fact extraction, RAG context preparation) is triggered.
+
+#### SSE Response Format
+
+The endpoint streams data in Server-Sent Events format:
+
+```
+data: The cold weight of the Sovereign-pattern service pistol
+
+data: settles into your palm, a familiar anchor in a world
+
+data: of shifting gears and shifting loyalties.
+
+data: [DONE]
+
+```
+
+- Each chunk of story text is prefixed with `data: `
+- The stream ends with `data: [DONE]\n\n`
+- Error events use the format: `event: error\ndata: <error message>\n\n`
+
+#### Client-Side Parsing
+
+To consume the SSE stream, use the browser's `EventSource` API or parse the stream manually:
+
+```javascript
+const response = await fetch(url, { method: 'POST' });
+const reader = response.body.getReader();
+const decoder = new TextDecoder();
+
+while (true) {
+  const { done, value } = await reader.read();
+  if (done) break;
+
+  const chunk = decoder.decode(value);
+  const lines = chunk.split('\n');
+
+  for (const line of lines) {
+    if (line.startsWith('data: ')) {
+      const content = line.slice(6); // Remove 'data: ' prefix
+      if (content === '[DONE]') {
+        // Stream complete
+        break;
+      }
+      // Append content to story text
+      storyText += content;
+    }
+  }
+}
+```
 
 #### Polling and Error Handling
 
 - **Authentication Errors:** If a `401` or `403` is received, clients should refresh the session via the `/auth/session` endpoint and retry.
 - **Wait Time:** If you call `/choose` on a node that is still `pending` or `processing`, the server will wait up to **5 seconds** for it to complete before returning a `400 Bad Request` or `500 Internal Server Error`.
-- **Client Strategy:** 2. If the server returns a status error, wait 2-3 seconds and retry.
+- **Client Strategy:** If the server returns a status error, wait 2-3 seconds and retry.
 
 ---
 

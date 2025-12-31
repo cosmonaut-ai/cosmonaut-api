@@ -58,12 +58,34 @@ async def choose(
   1. Validates the choice index is within bounds
   2. Generates a new story node text stream based on the selected choice
   3. Updates the parent node's choice to link to the new node (after stream finishes)
-  4. Returns a stream of the generated text
+  4. Returns a stream of the generated text using Server-Sent Events (SSE) format
   """
+
+  async def event_generator():
+    """Wrap the story node stream in SSE format for better Lambda/Mangum compatibility."""
+    try:
+      async for chunk in node_service.choose(world_id, node_id, choice_index):
+        # SSE format: "data: <content>\n\n"
+        yield f"data: {chunk}\n\n"
+      # Send a done event to signal completion
+      yield "data: [DONE]\n\n"
+    except NodeNotFoundError as e:
+      yield f"event: error\ndata: {str(e)}\n\n"
+    except WorldNotFoundError as e:
+      yield f"event: error\ndata: {str(e)}\n\n"
+    except InvalidChoiceError as e:
+      yield f"event: error\ndata: {str(e)}\n\n"
+
   try:
+    # Validate early to catch errors before streaming starts
+    node_service.get_node_entity(world_id, node_id)
     return StreamingResponse(
-      node_service.choose(world_id, node_id, choice_index),
-      media_type="text/plain",
+      event_generator(),
+      media_type="text/event-stream",
+      headers={
+        "Cache-Control": "no-cache",
+        "X-Accel-Buffering": "no",  # Disable buffering in nginx/proxies
+      },
     )
   except NodeNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
