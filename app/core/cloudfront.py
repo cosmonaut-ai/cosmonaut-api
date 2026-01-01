@@ -4,10 +4,6 @@ import base64
 from datetime import datetime, timedelta, timezone
 from typing import TypedDict
 
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import padding, rsa
-from cryptography.hazmat.primitives.serialization import load_pem_private_key
-
 
 class CloudFrontCookies(TypedDict):
   """Type definition for the required CloudFront cookies."""
@@ -21,6 +17,10 @@ class CloudFrontCookies(TypedDict):
 
 def _sign_bytes(message: bytes, private_key_pem: str) -> bytes:
   """Signs a message using the RSA private key."""
+  from cryptography.hazmat.primitives import hashes
+  from cryptography.hazmat.primitives.asymmetric import padding, rsa
+  from cryptography.hazmat.primitives.serialization import load_pem_private_key
+
   key = load_pem_private_key(private_key_pem.encode("utf-8"), password=None)
 
   # Ensure we have an RSA private key
