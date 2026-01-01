@@ -52,6 +52,18 @@ jobs:
         with:
           registries: '467508858251,590474943231'
 
+      # 4. Download AWS Lambda Extension (Parameters & Secrets)
+      # We download the extension layer directly because AWS does not provide it as a public container image.
+      - name: Download AWS Lambda Extension
+        run: |
+          mkdir -p extension_layer
+          URL=$(aws lambda get-layer-version-by-arn \
+            --arn arn:aws:lambda:us-east-2:590474943231:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:25 \
+            --query 'Content.Location' --output text)
+          curl -L -o extension.zip "$URL"
+          unzip -o extension.zip -d extension_layer
+          rm extension.zip
+
         # 4. Set up Docker Buildx (Ensure it uses the docker driver for cred sharing)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
