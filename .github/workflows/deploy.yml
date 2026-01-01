@@ -45,16 +45,19 @@ jobs:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-      # 3. Login to ECR
+        # 3. Login to ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
         with:
-          registries: '590474943231'
+          # Log into your account (467508858251) AND the extension account (590474943231)
+          registries: '467508858251,590474943231'
 
-      # 4. Set up Docker Buildx
+        # 4. Set up Docker Buildx (Ensure it uses the docker driver for cred sharing)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+        with:
+          driver: docker # This is CRITICAL for sharing ECR credentials with the builder
 
       # 5. Build and Push Docker Image
       - name: Build, Tag, and Push Image
