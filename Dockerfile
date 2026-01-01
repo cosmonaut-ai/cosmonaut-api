@@ -2,8 +2,9 @@
 FROM public.ecr.aws/lambda/python:3.13
 
 # Install SSM Parameter & Secrets Extension
-FROM aws:lambda:us-east-2:590474943231:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:25 AS extension
-COPY --from=extension /opt /opt
+# The extension is available as a container image from the official AWS ECR registry
+# URI format: <account-id>.dkr.ecr.<region>.amazonaws.com/lambda/layer:<layer-name>-<version>
+COPY --from=590474943231.dkr.ecr.us-east-2.amazonaws.com/lambda/layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64-25 /opt /opt
 
 # Install uv from the official image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
