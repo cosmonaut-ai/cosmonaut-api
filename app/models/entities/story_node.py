@@ -113,6 +113,11 @@ class StoryNode(BaseCosmonautModel):
     return ancestors
 
   @cached_property
+  def depth(self) -> int:
+    """Get the depth of the node."""
+    return len(self.ancestors)
+
+  @cached_property
   def parent_id(self) -> str | None:
     """Get the parent ID of the node."""
     if len(self.ancestors) > 1:

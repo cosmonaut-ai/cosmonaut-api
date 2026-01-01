@@ -143,8 +143,7 @@ Create an engaging first node that:
 ## Writing Guidelines
 - Address the player as "you" throughout
 - Open in media res when possible—action or intrigue, not lengthy exposition
-- Keep text to 1-3 paragraphs
-- The title should be evocative and specific to this moment
+- Keep text to 1-3 short paragraphs
 """  # noqa: E501
 
 
@@ -216,18 +215,18 @@ You are a Choose Your Own Adventure storyteller. Continue the narrative based on
 
 ## Consequences
 - Honor the player's choice with meaningful consequences—risky choices carry real risk; clever ones are rewarded
-- If the choice leading to this node is a "bad" choice, punish the player by ending the story or negative consequences. This should be a very difficult story to complete.
+- Don't avoid ending the story or bad outcomes. Most branches should be dead ends.
 
 ## Choice Design Guidelines
-- Provide 2-4 distinct choices that feel meaningfully different
+- Provide 2-4 distinct choices
 - Each choice should emerge naturally from the narrative (no "left door vs. right door" without context)
 - Avoid giving away which choices are "correct"—all should feel viable
+- If the story is ending, provide no choices.
 
 ## Writing Guidelines
-- Address the player as "you" throughout
 - Obey the narrator's profile as closely as possible.
-- Keep text to 1-3 paragraphs
-- The title should be evocative and specific to this moment
+- Keep text to 1-3 short paragraphs
+- No story should exceed 10 nodes in length. Try to pace the story accordingly.
 
 ## IMPORTANT: OUTPUT FORMAT
 You must output the response in two distinct parts using XML-style tags.
@@ -259,6 +258,7 @@ class LLMNextNodeDeps(BaseModel):
     description="Facts about the story up to this point that may or may not be relevant to the next story node."  # noqa: E501
   )
   narrator_profile: str = Field(description="The narrator's profile.")
+  story_length: int = Field(description="The length of the story so far in nodes.")
 
 
 next_node_agent: Any | None = None
@@ -286,6 +286,9 @@ def build_next_node_prompt(deps: LLMNextNodeDeps) -> str:
   return f"""
 Given the following context, generate the next story node.
 # CONTEXT:
+
+## Current Length (Length of 5 means the story is 5 nodes long):
+{deps.story_length}
 
 ## Previous Story Text (5 previous nodes, not entire story):
 {deps.previous_text}
