@@ -49,6 +49,8 @@ jobs:
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registries: '590474943231'
 
       # 4. Set up Docker Buildx
       - name: Set up Docker Buildx
