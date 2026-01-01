@@ -69,6 +69,7 @@ jobs:
         run: |
           echo "Building for environment: ${{ env.ENV_NAME }}"
           aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 590474943231.dkr.ecr.us-east-2.amazonaws.com
+          docker pull 590474943231.dkr.ecr.us-east-2.amazonaws.com/lambda/layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64-25
 
           # Use buildx for ARM64. 
           # We use '--push' to build and push in one command.
