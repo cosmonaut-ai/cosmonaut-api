@@ -2,9 +2,8 @@
 FROM public.ecr.aws/lambda/python:3.13
 
 # Install SSM Parameter & Secrets Extension
-# The extension is available as a container image from the official AWS ECR registry
-# URI format: <account-id>.dkr.ecr.<region>.amazonaws.com/lambda/layer:<layer-name>-<version>
-COPY --from=590474943231.dkr.ecr.us-east-2.amazonaws.com/lambda/layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64-25 /opt /opt
+# This folder is populated by the GitHub Action. For local builds, see README or download the layer zip manually.
+COPY extension_layer /opt
 
 # Install uv from the official image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
