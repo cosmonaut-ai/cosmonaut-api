@@ -8,7 +8,6 @@ dependencies = [
     "aws-lambda-powertools[all]",
     "boto3",
     "fastapi",
-    "mangum",
     "pinecone-client",
     "pynamodb",
     "pydantic",
@@ -20,6 +19,7 @@ dependencies = [
     "pyjwt[crypto]>=2.10.1",
     "nest-asyncio>=1.6.0",
     "cryptography>=46.0.3",
+    "uvicorn>=0.38.0",
 ]
 
 
