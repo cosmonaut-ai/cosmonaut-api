@@ -68,6 +68,7 @@ jobs:
           IMAGE_TAG: ${{ github.sha }}
         run: |
           echo "Building for environment: ${{ env.ENV_NAME }}"
+          aws ecr get-login-password --region us-east-2 | docker login --username AWS --password-stdin 590474943231.dkr.ecr.us-east-2.amazonaws.com
 
           # Use buildx for ARM64. 
           # We use '--push' to build and push in one command.
