@@ -50,29 +50,25 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-      # 4. Build and Push Docker Image
+      # 4. Set up Docker Buildx
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 5. Build and Push Docker Image
       - name: Build, Tag, and Push Image
         env:
           ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
-          # Dynamically construct the Repo Name: cosmonaut-repo-dev OR cosmonaut-repo-prod
           ECR_REPOSITORY: ${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo
           IMAGE_TAG: ${{ github.sha }}
         run: |
-          echo "Building for environment: ${{ env.ENV_NAME }}"
-          echo "Pushing to repo: $ECR_REPOSITORY"
+          # Build for linux/arm64
+          docker buildx build \
+            --platform linux/arm64 \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
+            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
+            --push .
 
-          # Build
-          docker build -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
-
-          # Tag as 'latest' for convenience
-          docker tag $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
-          # Push both specific SHA tag and latest
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
-          docker push $ECR_REGISTRY/$ECR_REPOSITORY:latest
-
-          # Output the full URI for the next step
-          echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+          echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >>
 
       # 5. Update All 3 Lambda Functions
       - name: Update Lambda Code
