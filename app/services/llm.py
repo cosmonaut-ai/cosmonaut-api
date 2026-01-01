@@ -143,7 +143,7 @@ Create an engaging first node that:
 ## Writing Guidelines
 - Address the player as "you" throughout
 - Open in media res when possible—action or intrigue, not lengthy exposition
-- Keep text to 1-3 short paragraphs
+- Keep text to 1-2 short paragraphs
 """  # noqa: E501
 
 
@@ -225,7 +225,7 @@ You are a Choose Your Own Adventure storyteller. Continue the narrative based on
 
 ## Writing Guidelines
 - Obey the narrator's profile as closely as possible.
-- Keep text to 1-3 short paragraphs
+- Keep text to 1-2 short paragraphs
 - No story should exceed 10 nodes in length. Try to pace the story accordingly.
 
 ## IMPORTANT: OUTPUT FORMAT
