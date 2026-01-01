@@ -10,7 +10,6 @@ from aws_lambda_powertools import Logger, Metrics, Tracer
 from aws_lambda_powertools.metrics import MetricUnit
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from mangum import Mangum
 
 from app.api.auth import router as auth_router
 from app.api.story_nodes import router as story_nodes_router
@@ -59,8 +58,5 @@ async def health():
 app.include_router(worlds_router, dependencies=[Depends(get_current_user)])
 app.include_router(story_nodes_router, dependencies=[Depends(get_current_user)])
 app.include_router(auth_router, dependencies=[Depends(get_current_user)])
-
-
-handler = Mangum(app)
 
 nest_asyncio.apply()
