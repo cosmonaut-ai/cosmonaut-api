@@ -213,6 +213,7 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
     world_facts=node.context.world_facts or [],  # type: ignore[arg-type]
     branch_facts=node.context.branch_facts or [],  # type: ignore[arg-type]
     narrator_profile=world_meta.narrator_profile or "",
+    story_length=node.depth,
   )
 
   # Step 4: Stream next node content via LLM
