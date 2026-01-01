@@ -21,11 +21,9 @@ WORKDIR /var/task
 # Copy project metadata and lock first to leverage layer caching
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies using the lockfile
-# Use uv sync with --no-dev to install only production dependencies
-# --frozen ensures we use the exact lockfile versions
-# --no-install-project skips installing the project itself (we only want deps)
-RUN uv sync --frozen --no-dev --no-install-project
+# Install dependencies using uv pip (recommended for Lambda containers)
+# This installs directly to system Python without creating a venv
+RUN uv pip install --no-cache -r pyproject.toml
 
 # Copy application source
 COPY app ./app
