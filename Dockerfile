@@ -6,23 +6,25 @@ FROM public.ecr.aws/lambda/python:3.13
 COPY extension_layer /opt
 
 # Install uv from the official image
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # Set uv environment variables
 # UV_SYSTEM_PYTHON=1 tells uv to use the system python (Lambda's python)
 # UV_COMPILE_BYTECODE=1 speeds up startup times
+# UV_CACHE_DIR ensures uv has a writable cache space during build
 ENV UV_SYSTEM_PYTHON=1
 ENV UV_COMPILE_BYTECODE=1
+ENV UV_CACHE_DIR=/tmp/.uv_cache
 
 WORKDIR /var/task
 
 # Copy project metadata and lock first to leverage layer caching
 COPY pyproject.toml uv.lock ./
 
-# Install dependencies using the lockfile to ensure parity between dev/prod
-# We export to requirements.txt to strictly follow the lockfile versions
-RUN uv export --format requirements-txt --no-dev --output-file requirements.txt \
-    && uv pip install --system --no-cache -r requirements.txt
+# Install dependencies using the lockfile
+# We run these as separate steps to better diagnose failures
+RUN uv export --format requirements-txt --no-dev --output-file requirements.txt
+RUN uv pip install --system --no-cache -r requirements.txt
 
 # Copy application source
 COPY app ./app
