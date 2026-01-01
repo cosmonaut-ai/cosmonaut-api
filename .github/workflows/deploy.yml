@@ -50,7 +50,6 @@ jobs:
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
         with:
-          # Log into your account (467508858251) AND the extension account (590474943231)
           registries: '467508858251,590474943231'
 
         # 4. Set up Docker Buildx (Ensure it uses the docker driver for cred sharing)
