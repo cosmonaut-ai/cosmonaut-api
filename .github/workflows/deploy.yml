@@ -70,27 +70,22 @@ jobs:
 
       # 5. Build and Push Docker Image
       - name: Build, Tag, and Push Image
-        env:
-          # Construct the registry URI manually to avoid empty output issues
-          # Account: 467508858251, Region: us-east-2
-          ECR_REGISTRY: 467508858251.dkr.ecr.us-east-2.amazonaws.com
-          ECR_REPOSITORY: ${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo
-          IMAGE_TAG: ${{ github.sha }}
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/arm64
+          provenance: false
+          sbom: false
+          tags: |
+            467508858251.dkr.ecr.us-east-2.amazonaws.com/${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo:${{ github.sha }}
+            467508858251.dkr.ecr.us-east-2.amazonaws.com/${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set Image URI
         run: |
-          echo "Building for environment: ${{ env.ENV_NAME }}"
-
-          # Build for ARM64 and push to ECR
-          # Use --provenance=false and --sbom=false to avoid multi-platform manifest issues with Lambda
-          docker buildx build \
-            --platform linux/arm64 \
-            --provenance=false \
-            --sbom=false \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
-            -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
-            --push .
-
-          # Output the full URI for the next step
-          echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_ENV
+          echo "IMAGE_URI=467508858251.dkr.ecr.us-east-2.amazonaws.com/${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo:${{ github.sha }}" >> $GITHUB_ENV
 
       # 6. Update All 3 Lambda Functions
       - name: Update Lambda Code
