@@ -64,11 +64,9 @@ jobs:
           unzip -o extension.zip -d extension_layer
           rm extension.zip
 
-        # 4. Set up Docker Buildx (Ensure it uses the docker driver for cred sharing)
+        # 4. Set up Docker Buildx (use docker-container driver for multi-platform builds)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
-        with:
-          driver: docker # This is CRITICAL for sharing ECR credentials with the builder
 
       # 5. Build and Push Docker Image
       - name: Build, Tag, and Push Image
