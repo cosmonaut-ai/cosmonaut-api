@@ -4,7 +4,6 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
-import boto3
 from botocore.exceptions import ClientError
 
 if TYPE_CHECKING:
@@ -22,6 +21,8 @@ sqs: SQSClient | None = None
 def get_sqs_client() -> SQSClient:
   global sqs
   if sqs is None:
+    import boto3
+
     sqs = boto3.client("sqs", region_name=settings.AWS_REGION)
   return sqs
 

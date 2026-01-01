@@ -1,17 +1,19 @@
 from enum import Enum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from pinecone import Pinecone
-from pinecone.db_data import Index, SearchQuery, UpsertResponse
-from pinecone.db_data.models import SearchRecordsResponse
-from pinecone.db_data.types import FilterTypedDict
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
 from app.services.secret_manager import get_secret_value
 
-pc: Pinecone | None = None
-index: Index | None = None
+if TYPE_CHECKING:
+  from pinecone import Pinecone
+  from pinecone.db_data import Index, UpsertResponse
+  from pinecone.db_data.models import SearchRecordsResponse
+  from pinecone.db_data.types import FilterTypedDict
+
+pc: Any | None = None
+index: Any | None = None
 PINECONE_NAMESPACE = "default"
 
 
@@ -41,14 +43,16 @@ class PineconeBranchFact(PineconeStoryFact):
   origin_node_id: str
 
 
-def get_client() -> Pinecone:
+def get_client() -> "Pinecone":
   global pc
   if pc is None:
+    from pinecone import Pinecone
+
     pc = Pinecone(api_key=get_secret_value(settings.PINECONE_API_KEY_PARAM))
   return pc
 
 
-def get_index() -> Index:
+def get_index() -> "Index":
   global index
   if index is None:
     if settings.PINECONE_INDEX is None:
@@ -61,7 +65,7 @@ def get_index() -> Index:
   return index
 
 
-def upsert_records(records: list[PineconeRecord]) -> UpsertResponse:
+def upsert_records(records: list[PineconeRecord]) -> "UpsertResponse":
   index = get_index()
   return index.upsert_records(
     namespace=PINECONE_NAMESPACE, records=[record.model_dump(mode="json") for record in records]
@@ -72,7 +76,9 @@ def search_records(
   query: str,
   top_k: int = 10,
   filter: dict[str, Any] | None = None,
-) -> SearchRecordsResponse:
+) -> "SearchRecordsResponse":
+  from pinecone.db_data import SearchQuery
+
   index = get_index()
   return index.search(
     namespace=PINECONE_NAMESPACE,
@@ -80,7 +86,7 @@ def search_records(
   )
 
 
-def delete_records(ids: list[str] | None = None, filter: FilterTypedDict | None = None) -> dict[str, Any]:
+def delete_records(ids: list[str] | None = None, filter: "FilterTypedDict | None" = None) -> dict[str, Any]:
   index = get_index()
   return index.delete(
     ids=ids,

@@ -1,27 +1,35 @@
+from typing import TYPE_CHECKING, Any
+
 from pydantic import BaseModel, Field
-from pydantic_ai import Agent, RunContext
-from pydantic_ai.models.google import GoogleModel
-from pydantic_ai.providers.google import GoogleProvider
 
 from app.core.config import settings
 from app.services.secret_manager import get_secret_value
 
+if TYPE_CHECKING:
+  from pydantic_ai import Agent, RunContext
+  from pydantic_ai.models.google import GoogleModel
+  from pydantic_ai.providers.google import GoogleProvider
+
 # Note: This model instance isn't strictly used by the Agents below
 # (they currently use the model name string), but kept for your existing logic.
-model: GoogleModel | None = None
-provider: GoogleProvider | None = None
+model: Any | None = None
+provider: Any | None = None
 
 
-def get_gemini_provider() -> GoogleProvider:
+def get_gemini_provider() -> "GoogleProvider":
   global provider
   if provider is None:
+    from pydantic_ai.providers.google import GoogleProvider
+
     provider = GoogleProvider(api_key=get_secret_value(settings.GEMINI_API_KEY_PARAM))
   return provider
 
 
-def get_gemini_model() -> GoogleModel:
+def get_gemini_model() -> "GoogleModel":
   global model
   if model is None:
+    from pydantic_ai.models.google import GoogleModel
+
     model = GoogleModel(
       model_name=settings.GEMINI_MODEL,
       provider=get_gemini_provider(),
@@ -91,12 +99,14 @@ class LLMWorldInfo(BaseModel):
   )
 
 
-world_info_agent: None | Agent[None, LLMWorldInfo] = None
+world_info_agent: Any | None = None
 
 
-def get_world_info_agent() -> Agent[None, LLMWorldInfo]:
+def get_world_info_agent() -> "Agent[None, LLMWorldInfo]":
   global world_info_agent
   if world_info_agent is None:
+    from pydantic_ai import Agent
+
     world_info_agent = Agent(
       model=get_gemini_model(),
       system_prompt=GENERATE_WORLD_INFO_PROMPT,
@@ -152,12 +162,14 @@ class LLMStoryNode(BaseModel):
   title: str = Field(description="A short 1-5 word title for the story node.")
 
 
-root_node_agent: None | Agent[LLMRootNodeDeps, LLMStoryNode] = None
+root_node_agent: Any | None = None
 
 
-def get_root_node_agent() -> Agent[LLMRootNodeDeps, LLMStoryNode]:
+def get_root_node_agent() -> "Agent[LLMRootNodeDeps, LLMStoryNode]":
   global root_node_agent
   if root_node_agent is None:
+    from pydantic_ai import Agent
+
     root_node_agent = Agent(
       model=get_gemini_model(),
       deps_type=LLMRootNodeDeps,
@@ -165,7 +177,7 @@ def get_root_node_agent() -> Agent[LLMRootNodeDeps, LLMStoryNode]:
     )
 
     @root_node_agent.system_prompt
-    def add_world_context(ctx: RunContext[LLMRootNodeDeps]) -> str:  # type: ignore
+    def add_world_context(ctx: "RunContext[LLMRootNodeDeps]") -> str:  # type: ignore
       # Inject dependencies explicitly into the prompt
       return f"""{GENERATE_START_NODE_PROMPT}
 
@@ -249,12 +261,14 @@ class LLMNextNodeDeps(BaseModel):
   narrator_profile: str = Field(description="The narrator's profile.")
 
 
-next_node_agent: None | Agent[LLMNextNodeDeps, str] = None
+next_node_agent: Any | None = None
 
 
-def get_next_node_agent() -> Agent[LLMNextNodeDeps, str]:
+def get_next_node_agent() -> "Agent[LLMNextNodeDeps, str]":
   global next_node_agent
   if next_node_agent is None:
+    from pydantic_ai import Agent
+
     next_node_agent = Agent(
       model=get_gemini_model(),
       deps_type=LLMNextNodeDeps,
@@ -262,7 +276,7 @@ def get_next_node_agent() -> Agent[LLMNextNodeDeps, str]:
     )
 
     @next_node_agent.system_prompt
-    def add_context(ctx: RunContext[LLMNextNodeDeps]) -> str:  # type: ignore
+    def add_context(ctx: "RunContext[LLMNextNodeDeps]") -> str:  # type: ignore
       return GENERATE_NEXT_NODE_PROMPT
 
   return next_node_agent
@@ -354,12 +368,14 @@ class LLMFactExtraction(BaseModel):
   branch_facts: list[str] = Field(description="The branch facts extracted from the text.")
 
 
-fact_extraction_agent: None | Agent[LLMFactExtractionDeps, LLMFactExtraction] = None
+fact_extraction_agent: Any | None = None
 
 
-def get_fact_extraction_agent() -> Agent[LLMFactExtractionDeps, LLMFactExtraction]:
+def get_fact_extraction_agent() -> "Agent[LLMFactExtractionDeps, LLMFactExtraction]":
   global fact_extraction_agent
   if fact_extraction_agent is None:
+    from pydantic_ai import Agent
+
     fact_extraction_agent = Agent(
       model=get_gemini_model(),
       output_type=LLMFactExtraction,
@@ -367,7 +383,7 @@ def get_fact_extraction_agent() -> Agent[LLMFactExtractionDeps, LLMFactExtractio
     )
 
     @fact_extraction_agent.system_prompt
-    def add_text_context(ctx: RunContext[LLMFactExtractionDeps]) -> str:  # type: ignore
+    def add_text_context(ctx: "RunContext[LLMFactExtractionDeps]") -> str:  # type: ignore
       return GENERATE_FACT_EXTRACTION_PROMPT
 
   return fact_extraction_agent
@@ -424,12 +440,14 @@ class LLMNarratorProfile(BaseModel):
   narrator_profile: str = Field(description="The narrator's profile.")
 
 
-narrator_profile_agent: None | Agent[LLMWorldInfo, LLMNarratorProfile] = None
+narrator_profile_agent: Any | None = None
 
 
-def get_narrator_profile_agent() -> Agent[LLMWorldInfo, LLMNarratorProfile]:
+def get_narrator_profile_agent() -> "Agent[LLMWorldInfo, LLMNarratorProfile]":
   global narrator_profile_agent
   if narrator_profile_agent is None:
+    from pydantic_ai import Agent
+
     narrator_profile_agent = Agent(
       model=get_gemini_model(),
       deps_type=LLMWorldInfo,
@@ -437,7 +455,7 @@ def get_narrator_profile_agent() -> Agent[LLMWorldInfo, LLMNarratorProfile]:
     )
 
     @narrator_profile_agent.system_prompt
-    def add_world_context(ctx: RunContext[LLMWorldInfo]) -> str:  # type: ignore
+    def add_world_context(ctx: "RunContext[LLMWorldInfo]") -> str:  # type: ignore
       return GENERATE_NARRATOR_PROFILE_PROMPT
 
   return narrator_profile_agent
