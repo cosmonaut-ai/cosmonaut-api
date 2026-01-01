@@ -5,10 +5,12 @@ FROM public.ecr.aws/lambda/python:3.13
 # This folder is populated by the GitHub Action. For local builds, see README or download the layer zip manually.
 COPY extension_layer /opt
 
-# Install uv from the official image
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
+# Install uv using the installer script (supports multi-arch)
+ADD --chmod=755 https://astral.sh/uv/install.sh /install.sh
+RUN /install.sh && rm /install.sh
 
-# Set uv environment variables
+# Add uv to PATH and set uv environment variables
+ENV PATH="/root/.cargo/bin:$PATH"
 # UV_SYSTEM_PYTHON=1 tells uv to use the system python (Lambda's python)
 # UV_COMPILE_BYTECODE=1 speeds up startup times
 # UV_CACHE_DIR ensures uv has a writable cache space during build
