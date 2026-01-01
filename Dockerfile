@@ -6,8 +6,7 @@ FROM public.ecr.aws/lambda/python:3.13
 COPY extension_layer /opt
 
 # Install uv using the installer script (supports multi-arch)
-ADD --chmod=755 https://astral.sh/uv/install.sh /install.sh
-RUN /install.sh && rm /install.sh
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Add uv to PATH and set uv environment variables
 ENV PATH="/root/.cargo/bin:$PATH"
