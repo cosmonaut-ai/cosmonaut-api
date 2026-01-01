@@ -69,10 +69,6 @@ jobs:
         run: |
           echo "Building for environment: ${{ env.ENV_NAME }}"
 
-          # Pre-pull the extension image to verify authentication and populate the local cache.
-          # This ensures buildx can find the image without a 403 error.
-          docker pull --platform linux/arm64 590474943231.dkr.ecr.us-east-2.amazonaws.com/aws-parameters-and-secrets-lambda-extension-arm64:25
-
           # Use buildx for ARM64. 
           # We use '--push' to build and push in one command.
           docker buildx build \
