@@ -1,13 +1,9 @@
 # Base Lambda image for Python 3.13
 FROM public.ecr.aws/lambda/python:3.13
 
-# --- ADD THIS: Install SSM Parameter & Secrets Extension ---
-# For us-east-2, the extension images are:
-# x86_64: 590474943231.dkr.ecr.us-east-2.amazonaws.com/aws-parameters-and-secrets-lambda-extension:25
-# arm64:  590474943231.dkr.ecr.us-east-2.amazonaws.com/aws-parameters-and-secrets-lambda-extension-arm64:25
-# Since we are using arm64:
-COPY --from=590474943231.dkr.ecr.us-east-2.amazonaws.com/aws-parameters-and-secrets-lambda-extension-arm64:25 /opt /opt
-# -----------------------------------------------------------
+# Install SSM Parameter & Secrets Extension
+FROM aws:lambda:us-east-2:590474943231:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:25 AS extension
+COPY --from=extension /opt /opt
 
 # Install uv from the official image
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
