@@ -22,9 +22,10 @@ WORKDIR /var/task
 COPY pyproject.toml uv.lock ./
 
 # Install dependencies using the lockfile
-# We run these as separate steps to better diagnose failures
-RUN uv export --format requirements-txt --no-dev --output-file requirements.txt
-RUN uv pip install --system --no-cache -r requirements.txt
+# Use uv sync with --no-dev to install only production dependencies
+# --frozen ensures we use the exact lockfile versions
+# --no-install-project skips installing the project itself (we only want deps)
+RUN uv sync --frozen --no-dev --no-install-project
 
 # Copy application source
 COPY app ./app
