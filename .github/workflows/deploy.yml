@@ -79,10 +79,12 @@ jobs:
         run: |
           echo "Building for environment: ${{ env.ENV_NAME }}"
 
-          # Use buildx for ARM64. 
-          # We use '--push' to build and push in one command.
+          # Build for ARM64 and push to ECR
+          # Use --provenance=false and --sbom=false to avoid multi-platform manifest issues with Lambda
           docker buildx build \
             --platform linux/arm64 \
+            --provenance=false \
+            --sbom=false \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG \
             -t $ECR_REGISTRY/$ECR_REPOSITORY:latest \
             --push .
