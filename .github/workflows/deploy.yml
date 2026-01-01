@@ -70,7 +70,7 @@ jobs:
 
           echo "IMAGE_URI=$ECR_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >>
 
-      # 5. Update All 3 Lambda Functions
+      # 6. Update All 3 Lambda Functions
       - name: Update Lambda Code
         env:
           # Construct function names: cosmonaut-dev-api, cosmonaut-dev-worker-fast, etc.
