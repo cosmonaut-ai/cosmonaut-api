@@ -34,8 +34,10 @@ COPY pyproject.toml uv.lock ./
 
 # Install dependencies using BuildKit cache mount for uv's cache
 # This persists the cache between builds, dramatically speeding up rebuilds
+# Use uv pip install --system to install directly to system Python (not a venv)
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-dev --no-install-project
+    uv export --frozen --no-dev --no-emit-project -o requirements.txt && \
+    uv pip install --system -r requirements.txt
 
 # Copy application source
 COPY app ./app
