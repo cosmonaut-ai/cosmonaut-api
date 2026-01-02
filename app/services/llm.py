@@ -258,6 +258,7 @@ The door creaks open and you step into the darkness...
 
 class LLMNextNodeDeps(BaseModel):
   world_info: LLMWorldInfo
+  story_summary: str = Field(description="A summary of the story up to this point.")
   previous_text: str = Field(description="The previous story node text.")
   user_choice: str = Field(description="The user's choice.")
   world_facts: list[str] = Field(
@@ -298,6 +299,9 @@ Given the following context, generate the next story node.
 
 ## Current Length (Length of 5 means the story is 5 nodes long):
 {deps.story_length}
+
+## Story So Far (Summary):
+{deps.story_summary}
 
 ## Previous Story Text (5 previous nodes, not entire story):
 {deps.previous_text}
