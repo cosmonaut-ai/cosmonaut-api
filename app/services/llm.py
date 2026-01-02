@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.services.secret_manager import get_secret_value
 
 if TYPE_CHECKING:
-  from pydantic_ai import Agent, RunContext
+  from pydantic_ai import Agent, RunContext, ModelSettings
   from pydantic_ai.models.google import GoogleModel
   from pydantic_ai.providers.google import GoogleProvider
 
@@ -33,6 +33,7 @@ def get_gemini_model() -> "GoogleModel":
     model = GoogleModel(
       model_name=settings.GEMINI_MODEL,
       provider=get_gemini_provider(),
+      settings=ModelSettings(temperature=0.8)
     )
   return model
 
