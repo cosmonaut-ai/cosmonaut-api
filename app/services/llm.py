@@ -4,9 +4,10 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.services.secret_manager import get_secret_value
+from pydantic_ai import ModelSettings
 
 if TYPE_CHECKING:
-  from pydantic_ai import Agent, RunContext, ModelSettings
+  from pydantic_ai import Agent, RunContext
   from pydantic_ai.models.google import GoogleModel
   from pydantic_ai.providers.google import GoogleProvider
 
