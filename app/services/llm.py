@@ -232,11 +232,17 @@ You are a Choose Your Own Adventure storyteller. Continue the narrative based on
 - No story should exceed 10 nodes in length. Try to pace the story accordingly.
 
 ## IMPORTANT: OUTPUT FORMAT
-You must output the response in two distinct parts using XML-style tags.
-1. First, write the story text inside <story> tags.
-2. Second, write the metadata (choices, story_summary, title) as a JSON object inside <metadata> tags.
+You must output the response in three distinct parts using XML-style tags.
+1. First, create a plan inside <plan> tags. Think about the narrative consequences, conflict, and how to advance the story towards an ending.
+2. Second, write the story text inside <story> tags.
+3. Third, write the metadata (choices, story_summary, title) as a JSON object inside <metadata> tags.
 
 Example Format:
+<plan>
+User chose to attack. This is risky.
+Narrative Arc: Move closer to the "Tragic Hero" ending.
+Conflict: The guard is stronger than expected.
+</plan>
 <story>
 The door creaks open and you step into the darkness...
 </story>
@@ -247,7 +253,7 @@ The door creaks open and you step into the darkness...
   "title": "The Dark Room"
 }
 </metadata>
-"""  # noqa: E501
+""" # noqa: E501
 
 
 class LLMNextNodeDeps(BaseModel):
