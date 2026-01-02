@@ -33,7 +33,7 @@ def get_gemini_model() -> "GoogleModel":
     model = GoogleModel(
       model_name=settings.GEMINI_MODEL,
       provider=get_gemini_provider(),
-      settings=ModelSettings(temperature=0.8)
+      settings=ModelSettings(temperature=0.95)
     )
   return model
 
