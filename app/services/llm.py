@@ -1,10 +1,10 @@
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
+from pydantic_ai import ModelSettings
 
 from app.core.config import settings
 from app.services.secret_manager import get_secret_value
-from pydantic_ai import ModelSettings
 
 if TYPE_CHECKING:
   from pydantic_ai import Agent, RunContext
@@ -32,9 +32,7 @@ def get_gemini_model() -> "GoogleModel":
     from pydantic_ai.models.google import GoogleModel
 
     model = GoogleModel(
-      model_name=settings.GEMINI_MODEL,
-      provider=get_gemini_provider(),
-      settings=ModelSettings(temperature=0.95)
+      model_name=settings.GEMINI_MODEL, provider=get_gemini_provider(), settings=ModelSettings(temperature=0.95)
     )
   return model
 
@@ -253,7 +251,7 @@ The door creaks open and you step into the darkness...
   "title": "The Dark Room"
 }
 </metadata>
-""" # noqa: E501
+"""  # noqa: E501
 
 
 class LLMNextNodeDeps(BaseModel):
