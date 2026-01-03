@@ -158,6 +158,7 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
   5. Create and save new StoryNode entity after stream finishes
   6. Update parent node and send analysis message
   """
+  logger.info(f"Choosing node {node_id} with choice index {choice_index}")
   # Step 1: Fetch parent node and validate choice index
   node = get_node_entity(world_id, node_id)
   if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
