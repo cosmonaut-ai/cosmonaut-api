@@ -38,21 +38,27 @@ jobs:
             echo "Environment is DEV"
           fi
 
-      # 2. Authenticate with AWS (OIDC)
+      # 2. Copy environment-specific Google client config
+      - name: Copy Google Client Config
+        run: |
+          cp .gvertex/google-client-config-${{ env.ENV_NAME }}.json client-config.json
+          echo "Copied .gvertex/google-client-config-${{ env.ENV_NAME }}.json to client-config.json"
+
+      # 3. Authenticate with AWS (OIDC)
       - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
 
-        # 3. Login to ECR
+        # 4. Login to ECR
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
         with:
           registries: '467508858251'
 
-      # 4. Download AWS Lambda Extension (Parameters & Secrets)
+      # 5. Download AWS Lambda Extension (Parameters & Secrets)
       # We download the extension layer directly because AWS does not provide it as a public container image.
       - name: Download AWS Lambda Extension
         run: |
@@ -64,11 +70,11 @@ jobs:
           unzip -o extension.zip -d extension_layer
           rm extension.zip
 
-        # 4. Set up Docker Buildx (use docker-container driver for multi-platform builds)
+        # 6. Set up Docker Buildx (use docker-container driver for multi-platform builds)
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 5. Build and Push Docker Image
+      # 7. Build and Push Docker Image
       - name: Build, Tag, and Push Image
         uses: docker/build-push-action@v6
         with:
@@ -87,7 +93,7 @@ jobs:
         run: |
           echo "IMAGE_URI=467508858251.dkr.ecr.us-east-2.amazonaws.com/${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo:${{ github.sha }}" >> $GITHUB_ENV
 
-      # 6. Update All 3 Lambda Functions
+      # 8. Update All 3 Lambda Functions
       - name: Update Lambda Code
         env:
           # Construct function names: cosmonaut-dev-api, cosmonaut-dev-worker-fast, etc.
