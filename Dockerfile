@@ -42,6 +42,9 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # Copy application source
 COPY app ./app
 
+# Copy Google client config for Vertex AI authentication
+COPY client-config.json ./client-config.json
+
 # Lambda entrypoint using uvicorn (Lambda Web Adapter translates Lambda events to HTTP)
 # For background workers (SQS-triggered), configure the Lambda with:
 #   - CMD override: ["app.worker.handler"]
