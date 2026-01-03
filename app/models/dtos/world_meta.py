@@ -48,6 +48,7 @@ class WorldMetaDTO(DTOModel):
   potential_endings: list[str] | None = None
   narrator_profile: str | None = None
   node_text_length: int | None = None
+  story_max_nodes: int | None = None
   world_image_url: str | None = None
   world_image_alt_text: str | None = None
   world_image_width: str | None = None

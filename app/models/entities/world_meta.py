@@ -40,6 +40,7 @@ class WorldMeta(BaseCosmonautModel):
 
   # User setting defining how long (typically) the text of a node should be.
   node_text_length: NumberAttribute = NumberAttribute(null=True)
+  story_max_nodes: NumberAttribute = NumberAttribute(default=10)
 
   world_image_url: UnicodeAttribute = UnicodeAttribute(null=True)
   world_image_alt_text: UnicodeAttribute = UnicodeAttribute(null=True)
@@ -68,6 +69,7 @@ class WorldMeta(BaseCosmonautModel):
       world_image_width=self.world_image_width,
       world_image_height=self.world_image_height,
       world_image_size=self.world_image_size,
+      story_max_nodes=int(self.story_max_nodes),
     )
 
   @classmethod
