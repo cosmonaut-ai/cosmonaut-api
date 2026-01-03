@@ -208,6 +208,7 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
 
   deps = llm.LLMNextNodeDeps(
     world_info=llm_world_info,
+    story_summary=node.story_summary or "The story begins.",
     previous_text=prev_story_nodes_text,
     user_choice=selected_choice.label,
     world_facts=node.context.world_facts or [],  # type: ignore[arg-type]
