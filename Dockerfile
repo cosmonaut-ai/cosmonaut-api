@@ -49,4 +49,5 @@ COPY client-config.json ./client-config.json
 # For background workers (SQS-triggered), configure the Lambda with:
 #   - CMD override: ["app.worker.handler"]
 #   - Environment variable: AWS_LWA_INVOKE_MODE=passthrough (disables the web adapter)
+ENTRYPOINT ["/bin/bash", "-l", "-c"]
 CMD ["python", "-m", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8080"]

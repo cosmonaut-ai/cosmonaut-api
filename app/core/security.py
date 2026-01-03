@@ -57,7 +57,12 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
   # 1. Happy Path: Mock Auth (Dev Only)
   if settings.MOCK_AUTH and settings.ENV in ["local", "dev"]:
     logger.info("Using mock authentication")
-    return User(id="mock-user-123", email="mock@cosmonaut.ai", username="CosmonautDev", groups=["Owner"])
+    return User(
+      id="a1abe550-30e1-70ce-4198-6e782be7e643",
+      email="imatson9119@gmail.com",
+      username="CosmonautDev",
+      groups=["Owner"],
+    )
 
   # 2. Require token for production
   if not token:
@@ -148,7 +153,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       "fortex405@gmail.com",
       "andrew24whitman@gmail.com",
       "N0ah.thomas1739@gmail.com",
-      "N0ahthomas1739@gmail.com"
+      "N0ahthomas1739@gmail.com",
     ]
     if email not in email_whitelist:
       raise HTTPException(status_code=401, detail="Unauthorized")

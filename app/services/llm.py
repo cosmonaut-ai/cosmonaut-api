@@ -23,6 +23,11 @@ def get_gemini_provider() -> "GoogleProvider":
     from pydantic_ai.providers.google import GoogleProvider
 
     provider = GoogleProvider(api_key=get_secret_value(settings.GEMINI_API_KEY_PARAM))
+    # provider = GoogleProvider(
+    #   vertexai=True,  # type: ignore
+    #   project="cosmonaut-481723",  # type: ignore
+    #   location="us-central1",  # type: ignore
+    # )
   return provider
 
 
@@ -126,10 +131,10 @@ async def generate_world_info(world_prompt: str) -> LLMWorldInfo:
 ##################################################################
 
 GENERATE_START_NODE_PROMPT = """
-You are a storyteller for a Choose Your Own Adventure game. Generate the opening story node that hooks the player.
+You are a storyteller for an interactive story where players choose their own path. Generate the opening scene that hooks the player.
 
 ## Your Task
-Create an engaging first node that:
+Create an engaging first scene that:
 - Establishes the immediate situation with sensory detail
 - Introduces a compelling hook or initial tension
 - Presents the player with their first meaningful choices
@@ -211,49 +216,39 @@ class LLMNodeMetadata(BaseModel):
 ##################################################################
 
 GENERATE_NEXT_NODE_PROMPT = """
-You are a Choose Your Own Adventure storyteller. Continue the narrative based on the player's choice.
+You are an interactive storyteller continuing a branching narrative.
 
-## Consequences
-- Honor the player's choice with meaningful consequences—risky choices carry real risk; clever ones are rewarded
-- Don't avoid ending the story or bad outcomes. Most branches should be dead ends.
+## Core Principles
+- **Consequences are real**: Risky choices carry real risk; clever ones are rewarded. Deaths, failures, and bad endings are not just possible—they're common. Most paths end.
+- **Honor the choice**: The player's decision must matter. Don't soften or redirect it.
 
-## Choice Design Guidelines
-- Provide 2-4 distinct choices
-- Each choice should emerge naturally from the narrative (no "left door vs. right door" without context)
-- Avoid giving away which choices are "correct"—all should feel viable
-- If the story is ending, provide no choices.
+## Pacing (by story progress %)
+- 0-20%: Hook — establish normalcy, then disrupt it
+- 20-70%: Escalation — raise stakes, reveal conflict
+- 70-90%: Climax — force confrontation, narrow options
+- 90+%: Resolution — close threads, deliver endings
 
-## Writing Guidelines
-- Obey the narrator's profile as closely as possible.
-- Keep text to 1-2 short paragraphs
-- Avoid introducing new concepts, ideas, people, or places without explaining them. If it isn't provided in the context, it's new.
-- Use the current story progress to pace the story accordingly:
-  - 0-20%: Inciting Incident (Establish normalcy, present the hook)
-  - 20-70%: Rising Action (Increase stakes, reveal the antagonist/conflict)
-  - 70-90%: Climax (Force a confrontation, limit choices)
-  - 90+%: Resolution (Wrap up threads)
+## Story Text
+- 1-2 short paragraphs, max
+- Follow the narrator's profile exactly
+- Never introduce unexplained elements. If it's not in previous nodes, branch facts, or world facts, you must explain it. World info is background context the player hasn't seen.
 
-## IMPORTANT: OUTPUT FORMAT
-You must output the response in three distinct parts using XML-style tags.
-1. First, create a plan inside <plan> tags. Think about the narrative consequences, conflict, and how to advance the story towards an ending.
-2. Second, write the story text inside <story> tags.
-3. Third, write the metadata (choices, story_summary, title) as a JSON object inside <metadata> tags.
+## Choices
+- 2-4 choices that emerge naturally from the scene (no arbitrary "door A vs door B")
+- All choices should feel viable—don't telegraph the "correct" answer
+- If this is an ending, provide NO choices
 
-Example Format:
+## Output Format
+Respond using these XML tags in order:
+
 <plan>
-User chose to attack. This is risky.
-Narrative Arc: Move closer to the "Tragic Hero" ending.
-Conflict: The guard is stronger than expected.
+[Brief reasoning: what are the consequences of the choice? What conflict arises? Which potential ending does this move toward?]
 </plan>
 <story>
-The door creaks open and you step into the darkness...
+[The narrative text, 1-2 paragraphs, addressing player as "you"]
 </story>
 <metadata>
-{
-  "choices": ["Enter the room", "Run away"],
-  "story_summary": "The player opened the mysterious door.",
-  "title": "The Dark Room"
-}
+{"choices": [...], "story_summary": "...", "title": "..."}
 </metadata>
 """  # noqa: E501
 
@@ -296,33 +291,33 @@ def get_next_node_agent() -> "Agent[LLMNextNodeDeps, str]":
 
 
 def build_next_node_prompt(deps: LLMNextNodeDeps) -> str:
-  return f"""
-Given the following context, generate the next story node.
-# CONTEXT:
+  progress_pct = (deps.story_length / deps.story_max_nodes) * 100
+  world_facts = "\n".join(f"- {f}" for f in deps.world_facts) if deps.world_facts else "None"
+  branch_facts = "\n".join(f"- {f}" for f in deps.branch_facts) if deps.branch_facts else "None"
 
-## Current Story Progress (in percent of total story length):
-{(deps.story_length / deps.story_max_nodes) * 100}%
+  return f"""# CONTEXT
 
-## Story So Far (Summary):
+## Story Progress: {progress_pct:.0f}%
+
+## Story Summary:
 {deps.story_summary}
 
-## Previous Story Text (5 previous nodes, not entire story):
+## Recent Text (last 5 nodes):
 {deps.previous_text}
 
-## User Choice:
+## Player's Choice:
 {deps.user_choice}
 
 ## World Facts:
-- {chr(10).join(f"- {f}" for f in deps.world_facts)}
+{world_facts}
 
-## Branch Facts:
-(ordered from newest to oldest, with the newest being first)
-- {chr(10).join(f"- {f}" for f in deps.branch_facts)}
+## Branch Facts (newest first):
+{branch_facts}
 
 ## Narrator Profile:
 {deps.narrator_profile}
 
-## World Info:
+## World Info (background—player hasn't seen this):
 {format_model_with_descriptions(deps.world_info)}
 """
 
