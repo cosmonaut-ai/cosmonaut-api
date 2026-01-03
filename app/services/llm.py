@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.services.secret_manager import get_secret_value
+from pydantic_ai import ModelSettings
 
 if TYPE_CHECKING:
   from pydantic_ai import Agent, RunContext
@@ -33,6 +34,7 @@ def get_gemini_model() -> "GoogleModel":
     model = GoogleModel(
       model_name=settings.GEMINI_MODEL,
       provider=get_gemini_provider(),
+      settings=ModelSettings(temperature=0.95)
     )
   return model
 
@@ -226,14 +228,21 @@ You are a Choose Your Own Adventure storyteller. Continue the narrative based on
 ## Writing Guidelines
 - Obey the narrator's profile as closely as possible.
 - Keep text to 1-2 short paragraphs
+- Avoid introducing new concepts, ideas, people, or places without explaining them. If it isn't provided in the context, it's new.
 - No story should exceed 10 nodes in length. Try to pace the story accordingly.
 
 ## IMPORTANT: OUTPUT FORMAT
-You must output the response in two distinct parts using XML-style tags.
-1. First, write the story text inside <story> tags.
-2. Second, write the metadata (choices, story_summary, title) as a JSON object inside <metadata> tags.
+You must output the response in three distinct parts using XML-style tags.
+1. First, create a plan inside <plan> tags. Think about the narrative consequences, conflict, and how to advance the story towards an ending.
+2. Second, write the story text inside <story> tags.
+3. Third, write the metadata (choices, story_summary, title) as a JSON object inside <metadata> tags.
 
 Example Format:
+<plan>
+User chose to attack. This is risky.
+Narrative Arc: Move closer to the "Tragic Hero" ending.
+Conflict: The guard is stronger than expected.
+</plan>
 <story>
 The door creaks open and you step into the darkness...
 </story>
@@ -244,11 +253,12 @@ The door creaks open and you step into the darkness...
   "title": "The Dark Room"
 }
 </metadata>
-"""  # noqa: E501
+""" # noqa: E501
 
 
 class LLMNextNodeDeps(BaseModel):
   world_info: LLMWorldInfo
+  story_summary: str = Field(description="A summary of the story up to this point.")
   previous_text: str = Field(description="The previous story node text.")
   user_choice: str = Field(description="The user's choice.")
   world_facts: list[str] = Field(
@@ -289,6 +299,9 @@ Given the following context, generate the next story node.
 
 ## Current Length (Length of 5 means the story is 5 nodes long):
 {deps.story_length}
+
+## Story So Far (Summary):
+{deps.story_summary}
 
 ## Previous Story Text (5 previous nodes, not entire story):
 {deps.previous_text}
