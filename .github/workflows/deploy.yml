@@ -100,7 +100,7 @@ jobs:
           FUNC_API: ${{ env.LAMBDA_BASE }}-${{ env.ENV_NAME }}-api
           FUNC_FAST: ${{ env.LAMBDA_BASE }}-${{ env.ENV_NAME }}-worker-fast
           FUNC_SLOW: ${{ env.LAMBDA_BASE }}-${{ env.ENV_NAME }}-worker-slow
-          FUNC_STREAMING: ${{ env.LAMBDA_BASE }}-${{ env.ENV_NAME }}-streaming
+          FUNC_STREAMING: ${{ env.LAMBDA_BASE }}-${{ env.ENV_NAME }}-api-streaming
         run: |
           echo "Updating API Lambda: $FUNC_API"
           aws lambda update-function-code --function-name $FUNC_API --image-uri $IMAGE_URI > /dev/null
