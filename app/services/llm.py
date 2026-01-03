@@ -227,7 +227,11 @@ You are a Choose Your Own Adventure storyteller. Continue the narrative based on
 - Obey the narrator's profile as closely as possible.
 - Keep text to 1-2 short paragraphs
 - Avoid introducing new concepts, ideas, people, or places without explaining them. If it isn't provided in the context, it's new.
-- No story should exceed 10 nodes in length. Try to pace the story accordingly.
+- Use the current story progress to pace the story accordingly:
+  - 0-20%: Inciting Incident (Establish normalcy, present the hook)
+  - 20-70%: Rising Action (Increase stakes, reveal the antagonist/conflict)
+  - 70-90%: Climax (Force a confrontation, limit choices)
+  - 90+%: Resolution (Wrap up threads)
 
 ## IMPORTANT: OUTPUT FORMAT
 You must output the response in three distinct parts using XML-style tags.
@@ -267,6 +271,7 @@ class LLMNextNodeDeps(BaseModel):
   )
   narrator_profile: str = Field(description="The narrator's profile.")
   story_length: int = Field(description="The length of the story so far in nodes.")
+  story_max_nodes: int = Field(description="The maximum length of the story in nodes.")
 
 
 next_node_agent: Any | None = None
@@ -295,8 +300,8 @@ def build_next_node_prompt(deps: LLMNextNodeDeps) -> str:
 Given the following context, generate the next story node.
 # CONTEXT:
 
-## Current Length (Length of 5 means the story is 5 nodes long):
-{deps.story_length}
+## Current Story Progress (in percent of total story length):
+{(deps.story_length / deps.story_max_nodes) * 100}%
 
 ## Story So Far (Summary):
 {deps.story_summary}
