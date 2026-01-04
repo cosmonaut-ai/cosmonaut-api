@@ -232,7 +232,7 @@ The story can end at any time without resolution due to the consequences of the 
 ## Story Text
 - 1-2 short paragraphs, max
 - Follow the narrator's profile exactly
-- Never introduce unexplained elements. If it's not in previous nodes, branch facts, or world facts, you must explain it. World info is background context the player hasn't seen.
+- Never introduce unexplained elements. If it's not in previous nodes, branch facts, or world facts, you must explain it. The World Info section is background context the player hasn't seen so be sure to explain any novel concepts or details.
 
 ## Choices
 - 2-4 choices that emerge naturally from the scene (no arbitrary "door A vs door B")
