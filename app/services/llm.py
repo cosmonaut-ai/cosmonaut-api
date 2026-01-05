@@ -82,23 +82,44 @@ Given a short prompt describing the world or story concept, create a detailed, i
 
 ## Your Task
 Build out these elements:
-- **Narrative Context**: The background, history, and circumstances that set up this story
-- **World State**: The current situation when the story begins—tensions, opportunities, or conflicts in play
-- **Tone & Genre**: Infer the appropriate atmosphere (e.g., dark fantasy, lighthearted sci-fi, gritty noir) from the prompt
+- **Narrative Context**: The background, history, and circumstances that set up this story. This is the most important element and should be the longest.
+- **Main Characters**: The main characters of the story and their relationships to each other. (0 is fine if the only character is the player.)
+- **Main Locations**: The main locations of the story and their relationships to each other. (At least one location is required)
 - **Potential Endings**: Generate a list of potential endings for the story to guide the narrative towards.
+- **Story Title**: A title for the story, max 5 words.
+- **Story Description**: A short description of the story.
+- **Story Genre**: The genre of the story. (Fantasy, Sci-fi, Horror, Mystery, Literary, etc.)
+
 
 ## Guidelines
-- Always address the player as "you" to create immediacy
-- Be specific—names, places, and details make worlds memorable
+- Use the reasoning field to think through your decisions. (This is for your own reference, not for the player.)
 - Leave room for player agency; don't predetermine the protagonist's personality or key decisions
-- Aim for 2-4 paragraphs of setting detail—enough to ground the story without overwhelming
+- If you are introducing novel concepts or mechanics, explain them in detail. Be sure to explain how they work and how they interact with the world.
+- The story title and description should be concise and descriptive.
+- Novelty is not a requirement - sometimes the most interesting stories are the most familiar.
 """  # noqa: E501
 
 
+class LLMCharacter(BaseModel):
+  name: str = Field(description="The name of the character.")
+  description: str = Field(description="A short description of the character.")
+  relationships: list[str] = Field(description="The relationships the character has with other characters.")
+
+
+class LLMLocation(BaseModel):
+  name: str = Field(description="The name of the location.")
+  description: str = Field(description="A short description of the location.")
+  connections: list[str] = Field(description="The connections the location has with other locations.")
+
+
 class LLMWorldInfo(BaseModel):
-  setting: str = Field(description="The setting of the story and the world it is in.")
-  story_title: str = Field(description="A title for the story, max 5 words.")
-  story_description: str = Field(description="A short description of the story.")
+  reasoning: str = Field(description="The reasoning behind the world info.")
+  narrative_context: str = Field(description="The setting of the story and the world it is in.")
+  characters: list[LLMCharacter] = Field(description="The main characters of the story.")
+  locations: list[LLMLocation] = Field(description="The main locations of the story.")
+  world_title: str = Field(description="A title for the story, max 5 words.")
+  world_description: str = Field(description="A short description of the story.")
+  world_genre: str = Field(description="The genre of the story.")
   potential_endings: list[str] = Field(
     description="A list of potential endings for the story to guide the narrative towards."
   )
@@ -138,6 +159,7 @@ Create an engaging first scene that:
 - Establishes the immediate situation with sensory detail
 - Introduces a compelling hook or initial tension
 - Presents the player with their first meaningful choices
+- Sets up the context for the world and story.
 
 ## Choice Design Guidelines
 - Provide 2-4 distinct choices that feel meaningfully different
@@ -219,7 +241,7 @@ GENERATE_NEXT_NODE_PROMPT = """
 You are an interactive storyteller continuing a branching narrative.
 
 ## Core Principles
-- **Consequences are real**: Risky choices carry real risk; clever ones are rewarded. Deaths, failures, and bad endings are not just possible—they're common. Most choices lead to a endings.
+- **Consequences are real**: Risky choices carry real risk; clever ones are rewarded. Deaths, failures, and bad endings are not just possible—they're common. Most choices lead to immediate endings.
 - **Honor the choice**: The player's decision must matter. Don't soften or redirect it.
 
 ## Pacing (by story progress %)
@@ -227,7 +249,7 @@ You are an interactive storyteller continuing a branching narrative.
 - 20-70%: Escalation — raise stakes, reveal conflict
 - 70-90%: Climax — force confrontation, narrow options
 - 90+%: Resolution — close threads, deliver endings
-The story can end at any time without resolution due to the consequences of the choices.
+The story can end early at any time without resolution due to the consequences of the choices.
 
 ## Story Text
 - 1-2 short paragraphs, max

@@ -29,6 +29,18 @@ class WorldCreateRequest(BaseModel):
   node_text_length: int | None = None
 
 
+class CharacterDTO(DTOModel):
+  name: str | None = None
+  description: str | None = None
+  relationships: list[str] | None = None
+
+
+class LocationDTO(DTOModel):
+  name: str | None = None
+  description: str | None = None
+  connections: list[str] | None = None
+
+
 class WorldMetaDTO(DTOModel):
   """World metadata response DTO."""
 
@@ -44,7 +56,9 @@ class WorldMetaDTO(DTOModel):
   root_node_id: str | None = None
   visibility: str | None = None
   world_prompt: str | None = None
-  setting: str | None = None
+  narrative_context: str | None = None
+  characters: list[CharacterDTO] | None = None
+  locations: list[LocationDTO] | None = None
   potential_endings: list[str] | None = None
   narrator_profile: str | None = None
   node_text_length: int | None = None

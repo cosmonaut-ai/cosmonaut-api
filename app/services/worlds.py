@@ -23,7 +23,7 @@ from app.core.config import settings
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.dtos.world_meta import GenerationStatus, WorldCreateRequest, WorldMetaDTO
 from app.models.entities.story_node import StoryNode
-from app.models.entities.world_meta import WorldMeta
+from app.models.entities.world_meta import Character, Location, WorldMeta
 from app.services.llm import LLMStoryNode
 from app.services.sqs import send_world_generation_message
 
@@ -121,9 +121,26 @@ async def generate_lore(world: WorldMeta) -> WorldMeta:
   """Generate lore for a world (LLM integration TBD)."""
 
   llm_world_info: llm.LLMWorldInfo = await llm.generate_world_info(world.world_prompt)
-  world.title = llm_world_info.story_title
-  world.description = llm_world_info.story_description
-  world.setting = llm_world_info.setting
+  world.title = llm_world_info.world_title
+  world.description = llm_world_info.world_description
+  world.genre = llm_world_info.world_genre
+  world.narrative_context = llm_world_info.narrative_context
+  world.characters = [
+    Character(
+      name=character.name,
+      description=character.description,
+      relationships=character.relationships,
+    )
+    for character in llm_world_info.characters
+  ]
+  world.locations = [
+    Location(
+      name=location.name,
+      description=location.description,
+      connections=location.connections,
+    )
+    for location in llm_world_info.locations
+  ]
   world.potential_endings = llm_world_info.potential_endings or []  # type: ignore[arg-type]
 
   return world
@@ -134,12 +151,7 @@ async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
 
   if world.narrator_profile:
     return world
-  llm_world_info = llm.LLMWorldInfo(
-    story_title=world.title,
-    story_description=world.description,
-    setting=world.setting,
-    potential_endings=world.potential_endings or [],  # type: ignore[arg-type]
-  )
+  llm_world_info = world.to_llm_world_info()
   narrator_profile = await llm.generate_narrator_profile(llm_world_info)
   world.narrator_profile = narrator_profile.narrator_profile
   return world
@@ -148,12 +160,7 @@ async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
 async def generate_start_node(world: WorldMeta) -> StoryNode:
   """Generate the first story node for a world."""
 
-  llm_world_info = llm.LLMWorldInfo(
-    story_title=world.title,
-    story_description=world.description,
-    setting=world.setting,
-    potential_endings=world.potential_endings or [],  # type: ignore[arg-type]
-  )
+  llm_world_info = world.to_llm_world_info()
 
   deps = llm.LLMRootNodeDeps(
     world_info=llm_world_info,
