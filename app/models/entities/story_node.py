@@ -14,6 +14,7 @@ from app.models.dtos.story_node import (
   StoryNodeProcessingStatus,
 )
 from app.models.entities.base import BaseCosmonautModel
+from app.utils import base52_to_number, number_to_base52
 
 
 class GSI2Model(GlobalSecondaryIndex):  # type: ignore[type-arg]
@@ -29,9 +30,16 @@ class GSI2Model(GlobalSecondaryIndex):  # type: ignore[type-arg]
 class ChoiceMap(MapAttribute[str, UnicodeAttribute]):
   label: UnicodeAttribute = UnicodeAttribute()
   target: UnicodeAttribute = UnicodeAttribute(null=True)
+  is_custom: UnicodeAttribute = UnicodeAttribute(null=True)
+  creator: UnicodeAttribute = UnicodeAttribute(null=True)
 
   def to_dto(self) -> ChoiceDTO:
-    return ChoiceDTO(label=self.label, target=self.target)
+    return ChoiceDTO(
+      label=self.label,
+      target=self.target,
+      is_custom=self.is_custom == "true" if self.is_custom else False,
+      creator=self.creator,
+    )
 
 
 class StoryNodeContext(MapAttribute[str, UnicodeAttribute]):
@@ -129,45 +137,13 @@ class StoryNode(BaseCosmonautModel):
     """Get the index of the choice that led to this node."""
     if not self.parent_id:
       return None
-    return self._base52_to_number(self.id[len(self.parent_id) :])
-
-  @staticmethod
-  def _number_to_base52(number: int) -> str:
-    """Convert a number to a base-52 string."""
-    if number < 0:
-      raise ValueError("Number must be positive")
-    if number == 0:
-      return "a"
-    result = ""
-    while number > 0:
-      if number % 52 > 25:
-        result = chr((number) % 52 - 26 + ord("A")) + result
-      else:
-        result = chr((number) % 52 + ord("a")) + result
-      number //= 52
-    return result
-
-  @staticmethod
-  def _base52_to_number(base52_string: str) -> int:
-    """Convert a base-52 string to a number."""
-    if not base52_string:
-      return 0
-    number = 0
-    for i, c in enumerate(reversed(base52_string)):
-      if c.isdigit():
-        continue
-
-      base_value = ord(c) - ord("a") if c.islower() else ord(c) - ord("A") + 26
-      if base_value < 0 or base_value > 51:
-        raise ValueError("Invalid base-52 string")
-      number += base_value * 52**i
-    return number
+    return base52_to_number(self.id[len(self.parent_id) :])
 
   def get_child_id(self, choice_index: int) -> str:
     """Get the ID of the child node for a given choice index."""
     if choice_index < 0:
       raise ValueError("Choice index must be non-negative")
-    base52_index = self._number_to_base52(choice_index)
+    base52_index = number_to_base52(choice_index)
     final_string = ""
     if len(base52_index) > 1:
       final_string = f"{len(base52_index)}{base52_index}"
@@ -203,7 +179,15 @@ class StoryNode(BaseCosmonautModel):
       text=dto.text,
       story_summary=dto.story_summary,
       title=dto.title,
-      choices=[ChoiceMap(label=choice.label, target=choice.target) for choice in dto.choices],
+      choices=[
+        ChoiceMap(
+          label=choice.label,
+          target=choice.target,
+          is_custom="true" if choice.is_custom else None,
+          creator=choice.creator,
+        )
+        for choice in dto.choices
+      ],
       processing_status=StoryNodeProcessingStatus(dto.processing_status).value,
       context=StoryNodeContext.from_dto(dto.context) if dto.context else None,
     )

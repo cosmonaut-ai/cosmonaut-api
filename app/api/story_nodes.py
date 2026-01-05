@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Path, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
 
 import app.services.story_nodes as node_service
-from app.models.dtos.story_node import StoryNodeDTO
+from app.core.security import User, get_current_user
+from app.models.dtos.story_node import ChooseRequestDTO, StoryNodeDTO
 from app.services.story_nodes import InvalidChoiceError, NodeNotFoundError
 from app.services.worlds import WorldNotFoundError
 
@@ -43,29 +44,58 @@ async def get_node(
 
 
 @router.post(
-  "/{world_id}/nodes/{node_id}/choose/{choice_index}",
+  "/{world_id}/nodes/{node_id}/choose",
   status_code=status.HTTP_201_CREATED,
   summary="Choose an option and generate the next story node (streaming)",
 )
 async def choose(
   world_id: str = Path(..., description="Identifier for the world"),
   node_id: str = Path(..., description="Identifier for the current node"),
-  choice_index: int = Path(..., description="Index of the choice to select (0-based)", ge=0),
+  request: ChooseRequestDTO = Body(...),
+  current_user: User = Depends(get_current_user),
 ) -> StreamingResponse:
   """Select a choice from the current node and stream the generated text of the next story node.
 
-  This endpoint:
-  1. Validates the choice index is within bounds
-  2. Generates a new story node text stream based on the selected choice
-  3. Updates the parent node's choice to link to the new node (after stream finishes)
-  4. Returns a stream of the generated text using Server-Sent Events (SSE) format
+  This endpoint accepts either:
+  - `choice_index`: Index of an existing choice (0-based)
+  - `custom_choice`: Free text custom choice (max 200 characters)
+
+  Exactly one of these must be provided.
+
+  The endpoint:
+  1. Validates the input (choice index bounds or custom choice length)
+  2. For custom choices, adds the choice to the node's choice list
+  3. Generates a new story node text stream based on the selected/custom choice
+  4. Updates the parent node's choice to link to the new node (after stream finishes)
+  5. Returns a stream of the generated text using Server-Sent Events (SSE) format
   """
+  # Validate that exactly one of choice_index or custom_choice is provided
+  if (request.choice_index is None) == (request.custom_choice is None):
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail="Exactly one of 'choice_index' or 'custom_choice' must be provided",
+    )
+
+  try:
+    new_node_id, stream = await node_service.choose(
+      world_id,
+      node_id,
+      choice_index=request.choice_index,
+      custom_choice=request.custom_choice,
+      user_id=current_user.id,
+    )
+  except NodeNotFoundError as e:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+  except WorldNotFoundError as e:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+  except InvalidChoiceError as e:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
   async def event_generator():
     """Wrap the story node stream in SSE format for better Lambda/Mangum compatibility."""
     try:
       first_chunk = True
-      async for chunk in node_service.choose(world_id, node_id, choice_index):
+      async for chunk in stream:
         # Only strip leading whitespace from the very first chunk to avoid breaking SSE format
         # Preserve all other whitespace including newlines for proper paragraph formatting
         if first_chunk:
@@ -86,20 +116,13 @@ async def choose(
     except InvalidChoiceError as e:
       yield f"event: error\ndata: {str(e)}\n\n"
 
-  try:
-    # Validate early to catch errors before streaming starts
-    node_service.get_node_entity(world_id, node_id)
-    return StreamingResponse(
-      event_generator(),
-      media_type="text/event-stream",
-      headers={
-        "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",  # Disable buffering in nginx/proxies
-      },
-    )
-  except NodeNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-  except InvalidChoiceError as e:
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+  return StreamingResponse(
+    event_generator(),
+    media_type="text/event-stream",
+    headers={
+      "Cache-Control": "no-cache",
+      "X-Accel-Buffering": "no",  # Disable buffering in nginx/proxies
+      "X-New-Node-Id": new_node_id,
+      "Access-Control-Expose-Headers": "X-New-Node-Id",
+    },
+  )

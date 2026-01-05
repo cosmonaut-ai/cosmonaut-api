@@ -21,12 +21,12 @@ import app.services.llm as llm
 import app.services.pinecone as pinecone
 from app.core.config import settings
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO, StoryNodeProcessingStatus
-from app.models.entities.story_node import StoryNode, StoryNodeContext
+from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
 from app.services.llm import LLMFactExtractionDeps
 from app.services.pinecone import PineconeBranchFact
 from app.services.sqs import send_node_analysis_message
-from app.services.utils import extract_xml_block, extract_xml_json
 from app.services.worlds import get_world_entity
+from app.utils import extract_xml_block, extract_xml_json
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
@@ -147,23 +147,35 @@ def get_node_entities(world_id: str, node_ids: list[str]) -> list[StoryNode]:
   return [nodes_map[node_id] for node_id in node_ids if node_id in nodes_map]
 
 
-async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerator[str, None]:
-  """Choose a story node based on a user's choice and stream the text.
+async def choose(
+  world_id: str,
+  node_id: str,
+  choice_index: int | None = None,
+  custom_choice: str | None = None,
+  user_id: str | None = None,
+) -> tuple[str, AsyncGenerator[str, None]]:
+  """Choose a story node based on a user's choice and stream the text while also exposing the new node ID.
+
+  Args:
+    world_id: The world identifier
+    node_id: The current node identifier
+    choice_index: Index of an existing choice (mutually exclusive with custom_choice)
+    custom_choice: Free text custom choice (mutually exclusive with choice_index)
+    user_id: User ID for tracking custom choice creator
 
   Workflow:
-  1. Fetch parent node and validate choice_index bounds
+  1. Fetch parent node and validate/add choice
   2. Fetch world metadata for context
   3. Build LLMNextNodeDeps
   4. Call llm.get_next_node_agent().run_stream to stream new node content
   5. Create and save new StoryNode entity after stream finishes
   6. Update parent node and send analysis message
   """
-  logger.info(f"Choosing node {node_id} with choice index {choice_index}")
-  # Step 1: Fetch parent node and validate choice index
+  is_custom_choice = custom_choice is not None
+  logger.info(f"Choosing node {node_id} with choice_index={choice_index}, custom_choice={custom_choice}")
+
+  # Step 1: Fetch parent node and validate/add choice
   node = get_node_entity(world_id, node_id)
-  if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
-    max_index = len(node.choices) - 1 if node.choices else -1
-    raise InvalidChoiceError(node_id, choice_index, max_index)
 
   if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
     # Wait for node to be completed for 5 seconds prior to raising an error
@@ -172,109 +184,138 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
     if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
       raise NodeProcessingError(node_id)
 
+  # Handle custom choice: add it to the node's choice list
+  if is_custom_choice:
+    new_choice = ChoiceMap(
+      label=custom_choice,
+      target=None,
+      is_custom="true",
+      creator=user_id,
+    )
+    node.choices.append(new_choice)
+    choice_index = len(node.choices) - 1
+    # Save node with new choice immediately
+    node.save()
+    logger.info(f"Added custom choice at index {choice_index}: {custom_choice}")
+  else:
+    # Validate existing choice index
+    if choice_index is None:
+      raise InvalidChoiceError(node_id, -1, len(node.choices) - 1 if node.choices else -1)
+    if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
+      max_index = len(node.choices) - 1 if node.choices else -1
+      raise InvalidChoiceError(node_id, choice_index, max_index)
+
   selected_choice = node.choices[choice_index]
+  new_node_id = selected_choice.target or node.get_child_id(choice_index)
 
-  if selected_choice.target:
-    logger.info(f"Returning cached node {selected_choice.target} for choice {choice_index}")
-    target_node = get_node_entity(world_id, selected_choice.target)
-    logger.info(f"Cached node text length: {len(target_node.text)}, preview: {target_node.text[:100]}...")
-    yield target_node.text
-    return
+  async def stream() -> AsyncGenerator[str, None]:
+    # Check for cached result (existing target node)
+    if selected_choice.target:
+      logger.info(f"Returning cached node {selected_choice.target} for choice {choice_index}")
+      target_node = get_node_entity(world_id, selected_choice.target)
+      logger.info(f"Cached node text length: {len(target_node.text)}, preview: {target_node.text[:100]}...")
+      yield target_node.text
+      return
 
-  # Step 2: Fetch world metadata for context
-  world_meta = get_world_entity(world_id)
+    # Step 2: Fetch world metadata for context
+    world_meta = get_world_entity(world_id)
 
-  # Step 3: Build LLMNextNodeDeps
-  llm_world_info = world_meta.to_llm_world_info()
+    # Step 3: Build LLMNextNodeDeps
+    llm_world_info = world_meta.to_llm_world_info()
 
-  prev_story_nodes = get_node_entities(world_id, node.ancestors[-5:])
-  prev_story_nodes_text = ""
-  for i, current_node in enumerate(prev_story_nodes):
-    prev_story_nodes_text += current_node.text
-    if i < len(prev_story_nodes) - 1:
-      # The choice that led to the next node in our list
-      next_node = prev_story_nodes[i + 1]
-      choice_idx = next_node.choice_index
-      if choice_idx is not None and choice_idx < len(current_node.choices):
-        choice_text = current_node.choices[choice_idx].label
-        prev_story_nodes_text += f'\n\nUser chose: "{choice_text}"\n\n'
-    else:
-      # For the last node in our list (which is the current node), the choice is the one just selected
-      prev_story_nodes_text += f'\n\nUser chose: "{selected_choice.label}"\n\n'
+    prev_story_nodes = get_node_entities(world_id, node.ancestors[-5:])
+    prev_story_nodes_text = ""
+    for i, current_node in enumerate(prev_story_nodes):
+      prev_story_nodes_text += current_node.text
+      if i < len(prev_story_nodes) - 1:
+        # The choice that led to the next node in our list
+        next_node = prev_story_nodes[i + 1]
+        choice_idx = next_node.choice_index
+        if choice_idx is not None and choice_idx < len(current_node.choices):
+          choice_text = current_node.choices[choice_idx].label
+          prev_story_nodes_text += f'\n\nUser chose: "{choice_text}"'
+          if current_node.choices[choice_idx].is_custom:
+            prev_story_nodes_text += " *(custom choice)*"
+          prev_story_nodes_text += "\n\n"
+      else:
+        # For the last node in our list (which is the current node), the choice is the one just selected
+        prev_story_nodes_text += f'\n\nUser chose: "{selected_choice.label}"\n\n'
 
-  deps = llm.LLMNextNodeDeps(
-    world_info=llm_world_info,
-    story_summary=node.story_summary or "The story begins.",
-    story_max_nodes=int(world_meta.story_max_nodes or 10),
-    previous_text=prev_story_nodes_text,
-    user_choice=selected_choice.label,
-    world_facts=node.context.world_facts or [],  # type: ignore[arg-type]
-    branch_facts=node.context.branch_facts or [],  # type: ignore[arg-type]
-    narrator_profile=world_meta.narrator_profile or "",
-    story_length=node.depth,
-  )
+    deps = llm.LLMNextNodeDeps(
+      world_info=llm_world_info,
+      story_summary=node.story_summary or "The story begins.",
+      story_max_nodes=int(world_meta.story_max_nodes or 10),
+      previous_text=prev_story_nodes_text,
+      user_choice=selected_choice.label,
+      world_facts=node.context.world_facts or [],  # type: ignore[arg-type]
+      branch_facts=node.context.branch_facts or [],  # type: ignore[arg-type]
+      narrator_profile=world_meta.narrator_profile or "",
+      story_length=node.depth,
+      is_custom_choice=is_custom_choice,
+    )
 
-  # Step 4: Stream next node content via LLM
-  new_node_id = node.get_child_id(choice_index)
-  full_response_buffer = ""
-  last_emitted_index = 0
-  story_started = False
-  total_chunks_yielded = 0
+    # Step 4: Stream next node content via LLM
+    full_response_buffer = ""
+    last_emitted_index = 0
+    story_started = False
+    total_chunks_yielded = 0
 
-  async with llm.get_next_node_agent().run_stream(llm.build_next_node_prompt(deps), deps=deps) as result:
-    async for chunk in result.stream_text(delta=True):
-      full_response_buffer += chunk
+    async with llm.get_next_node_agent().run_stream(llm.build_next_node_prompt(deps), deps=deps) as result:
+      async for chunk in result.stream_text(delta=True):
+        full_response_buffer += chunk
 
-      # Stream story content as it arrives using shared extraction utility
-      story_content = extract_xml_block(full_response_buffer, "story", streaming=True)
-      if story_content is not None:
-        if not story_started:
-          story_started = True
+        # Stream story content as it arrives using shared extraction utility
+        story_content = extract_xml_block(full_response_buffer, "story", streaming=True)
+        if story_content is not None:
+          if not story_started:
+            story_started = True
 
-        if len(story_content) > last_emitted_index:
-          new_text = story_content[last_emitted_index:]
-          total_chunks_yielded += 1
-          yield new_text
-          last_emitted_index = len(story_content)
+          if len(story_content) > last_emitted_index:
+            new_text = story_content[last_emitted_index:]
+            total_chunks_yielded += 1
+            yield new_text
+            last_emitted_index = len(story_content)
 
-  # Step 5: Parse metadata from the full buffer using shared extraction utilities
-  try:
-    metadata = extract_xml_json(full_response_buffer, "metadata", llm.LLMNodeMetadata)
+    # Step 5: Parse metadata from the full buffer using shared extraction utilities
+    try:
+      metadata = extract_xml_json(full_response_buffer, "metadata", llm.LLMNodeMetadata)
 
-    # Extract the final story text from the buffer
-    story_text = extract_xml_block(full_response_buffer, "story") or ""
+      # Extract the final story text from the buffer
+      story_text = extract_xml_block(full_response_buffer, "story") or ""
 
-  except ValueError as e:
-    logger.error(f"LLM failed to output expected XML tags. Full response: {full_response_buffer}")
-    raise ValueError("LLM failed to output metadata tags") from e
-  except Exception as e:
-    logger.error(f"Failed to parse node metadata: {e}")
-    # Fallback or Error handling - we might want to still save what we can or raise
-    return
+    except ValueError as e:
+      logger.error(f"LLM failed to output expected XML tags. Full response: {full_response_buffer}")
+      raise ValueError("LLM failed to output metadata tags") from e
+    except Exception as e:
+      logger.error(f"Failed to parse node metadata: {e}")
+      # Fallback or Error handling - we might want to still save what we can or raise
+      return
 
-  # Step 6: Create new StoryNode entity
-  new_node_dto = StoryNodeDTO(
-    id=new_node_id,
-    world_id=world_id,
-    text=story_text,
-    story_summary=metadata.story_summary,
-    title=metadata.title,
-    choices=[ChoiceDTO(label=choice, target=None) for choice in metadata.choices],
-    processing_status=StoryNodeProcessingStatus.PENDING,
-  )
+    # Step 6: Create new StoryNode entity
+    new_node_dto = StoryNodeDTO(
+      id=new_node_id,
+      world_id=world_id,
+      text=story_text,
+      story_summary=metadata.story_summary,
+      title=metadata.title,
+      choices=[ChoiceDTO(label=choice, target=None) for choice in metadata.choices],
+      processing_status=StoryNodeProcessingStatus.PENDING,
+    )
 
-  # Step 7: Save new node
-  new_node = StoryNode.from_dto(new_node_dto)
-  new_node.save()
+    # Step 7: Save new node
+    new_node = StoryNode.from_dto(new_node_dto)
+    new_node.save()
 
-  # Step 8: Update parent node's choice target
-  node.choices[choice_index].target = new_node_id
+    # Step 8: Update parent node's choice target
+    node.choices[choice_index].target = new_node_id
 
-  # Step 9: Save updated parent
-  node.save()
+    # Step 9: Save updated parent
+    node.save()
 
-  # Step 10: Send node analysis message
-  send_node_analysis_message(world_id, new_node_id)
+    # Step 10: Send node analysis message
+    send_node_analysis_message(world_id, new_node_id)
+
+  return new_node_id, stream()
 
 
 async def process_node(node: StoryNode):

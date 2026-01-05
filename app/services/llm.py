@@ -5,7 +5,7 @@ from pydantic_ai import ModelSettings
 
 from app.core.config import settings
 from app.services.secret_manager import get_secret_value
-from app.services.utils import extract_xml_json
+from app.utils import extract_xml_json
 
 if TYPE_CHECKING:
   from pydantic_ai import Agent, RunContext
@@ -281,6 +281,7 @@ The story can end early at any time without resolution due to the consequences o
 
 ## Story Text
 - 1-2 short paragraphs, max
+- Start the text by playing out the user's choice.
 - Follow the narrator's profile exactly
 - Never introduce unexplained elements. If it's not in previous nodes, branch facts, or world facts, you must explain it. The World Info section is background context the player hasn't seen so be sure to explain any novel concepts or details.
 
@@ -289,6 +290,7 @@ The story can end early at any time without resolution due to the consequences o
 - All choices should feel viable—don't telegraph the "correct" answer
 - Don't shy away from providing "bad" or "dumb" choices. Let the user fail.
 - If this is an ending, provide NO choices
+- Each choice should be formatted as a single action or response ("Go left" or "Ask the guard about the treasure" or "Investigate the library")
 
 ## Output Format
 Respond using these XML tags in order:
@@ -319,6 +321,7 @@ class LLMNextNodeDeps(BaseModel):
   narrator_profile: str = Field(description="The narrator's profile.")
   story_length: int = Field(description="The length of the story so far in nodes.")
   story_max_nodes: int = Field(description="The maximum length of the story in nodes.")
+  is_custom_choice: bool = Field(default=False, description="Whether this is a user-created custom choice.")
 
 
 next_node_agent: Any | None = None
@@ -347,18 +350,34 @@ def build_next_node_prompt(deps: LLMNextNodeDeps) -> str:
   world_facts = "\n".join(f"- {f}" for f in deps.world_facts) if deps.world_facts else "None"
   branch_facts = "\n".join(f"- {f}" for f in deps.branch_facts) if deps.branch_facts else "None"
 
-  return f"""# CONTEXT
+  # Add custom choice instructions if applicable
+  custom_choice_note = ""
+  if deps.is_custom_choice:
+    custom_choice_note = """
+### IMPORTANT: User-Created Choice
+The player has entered a custom action rather than selecting a predefined choice. Handle this carefully:
+- If the action is unrealistic or impossible within the world's rules, narrate the character
+  ATTEMPTING the action but failing or facing consequences
+- If the action reference specific items, locations, or characters that don't exist, don't create them.
+- Do NOT let the player assert outcomes (e.g., "I find the treasure" should not guarantee finding it)
+- The world's internal logic and rules always take precedence over player assertions
+- Creative or unexpected actions that ARE plausible should be rewarded with interesting outcomes
+- Treat impossible actions as the character "trying" to do something, not succeeding at it
+"""
 
-## Story Progress: {progress_pct:.0f}%
+  return f"""# CONTEXT
+## Recent Text (last 5 nodes):
+{deps.previous_text}
+
+## Story Progress: 
+{progress_pct:.0f}%
 
 ## Story Summary:
 {deps.story_summary}
 
-## Recent Text (last 5 nodes):
-{deps.previous_text}
-
 ## Player's Choice:
 {deps.user_choice}
+{custom_choice_note}
 
 ## World Facts:
 {world_facts}
