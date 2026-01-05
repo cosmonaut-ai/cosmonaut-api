@@ -5,6 +5,7 @@ from pydantic_ai import ModelSettings
 
 from app.core.config import settings
 from app.services.secret_manager import get_secret_value
+from app.services.utils import extract_xml_json
 
 if TYPE_CHECKING:
   from pydantic_ai import Agent, RunContext
@@ -90,14 +91,22 @@ Build out these elements:
 - **Story Description**: A short description of the story. (User viewable)
 - **Story Genre**: The genre of the story. (Fantasy, Sci-fi, Horror, Mystery, Literary, etc.) (User viewable)
 
-
 ## Guidelines
-- Use the reasoning field to think through your decisions. (This is for your own reference, not for the player.)
 - Leave room for player agency; don't predetermine the protagonist's personality or key decisions
 - If you are introducing novel concepts or mechanics, explain them in detail. Be sure to explain how they work and how they interact with the world.
 - Mysteries and secrets (if any) should be described in detail here and left for the player to discover.
 - The story title and description should be concise and descriptive.
 - Novelty is not a requirement - sometimes the most interesting stories are the most familiar.
+
+## Output Format
+Respond using these XML tags in order:
+
+<plan>
+[Think through: What makes this concept interesting? What are the central conflicts or tensions? What tone/genre fits best? What mysteries or mechanics need explanation? What endings feel satisfying for this type of story?]
+</plan>
+<world_info>
+{"narrative_context": "...", "characters": [...], "locations": [...], "world_title": "...", "world_description": "...", "world_genre": "...", "potential_endings": [...]}
+</world_info>
 """  # noqa: E501
 
 
@@ -114,7 +123,6 @@ class LLMLocation(BaseModel):
 
 
 class LLMWorldInfo(BaseModel):
-  reasoning: str = Field(default="", description="The reasoning behind the world info.")
   narrative_context: str = Field(description="The setting of the story and the world it is in.")
   characters: list[LLMCharacter] = Field(description="The main characters of the story.")
   locations: list[LLMLocation] = Field(description="The main locations of the story.")
@@ -129,7 +137,7 @@ class LLMWorldInfo(BaseModel):
 world_info_agent: Any | None = None
 
 
-def get_world_info_agent() -> "Agent[None, LLMWorldInfo]":
+def get_world_info_agent() -> "Agent[None, str]":
   global world_info_agent
   if world_info_agent is None:
     from pydantic_ai import Agent
@@ -137,15 +145,22 @@ def get_world_info_agent() -> "Agent[None, LLMWorldInfo]":
     world_info_agent = Agent(
       model=get_gemini_model(settings.GEMINI_MODEL_LARGE),
       system_prompt=GENERATE_WORLD_INFO_PROMPT,
-      output_type=LLMWorldInfo,
+      output_type=str,
     )
   return world_info_agent
 
 
 async def generate_world_info(world_prompt: str) -> LLMWorldInfo:
-  # The world_prompt becomes the User message
+  """Generate world info from a prompt using XML-based planning format.
+
+  The LLM first creates a plan in <plan> tags, then outputs structured
+  world info in <world_info> tags as JSON.
+  """
   result = await get_world_info_agent().run(world_prompt)
-  return result.output
+  raw_output = result.output
+
+  # Extract world_info JSON from XML response
+  return extract_xml_json(raw_output, "world_info", LLMWorldInfo)
 
 
 ##################################################################
