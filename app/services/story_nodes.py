@@ -11,7 +11,6 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
-import re
 import uuid
 from typing import AsyncGenerator
 
@@ -26,6 +25,7 @@ from app.models.entities.story_node import StoryNode, StoryNodeContext
 from app.services.llm import LLMFactExtractionDeps
 from app.services.pinecone import PineconeBranchFact
 from app.services.sqs import send_node_analysis_message
+from app.services.utils import extract_xml_block, extract_xml_json
 from app.services.worlds import get_world_entity
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
@@ -225,42 +225,28 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
     async for chunk in result.stream_text(delta=True):
       full_response_buffer += chunk
 
-      # Look for content between <story> and </story> (or end of buffer if </story> not yet present)
-      # Match everything from <story> to </story> (if present) or end of buffer
-      # We want to match up to </story> if it exists, otherwise to the end
-      if "</story>" in full_response_buffer:
-        story_match = re.search(r"<story>(.*?)</story>", full_response_buffer, re.DOTALL)
-      else:
-        story_match = re.search(r"<story>(.*)", full_response_buffer, re.DOTALL)
-      if story_match:
+      # Stream story content as it arrives using shared extraction utility
+      story_content = extract_xml_block(full_response_buffer, "story", streaming=True)
+      if story_content is not None:
         if not story_started:
           story_started = True
 
-        full_story_so_far = story_match.group(1)
-        if len(full_story_so_far) > last_emitted_index:
-          new_text = full_story_so_far[last_emitted_index:]
+        if len(story_content) > last_emitted_index:
+          new_text = story_content[last_emitted_index:]
           total_chunks_yielded += 1
           yield new_text
-          last_emitted_index = len(full_story_so_far)
+          last_emitted_index = len(story_content)
 
-  # Step 5: Parse metadata from the full buffer using Regex
+  # Step 5: Parse metadata from the full buffer using shared extraction utilities
   try:
-    meta_match = re.search(r"<metadata>(.*?)</metadata>", full_response_buffer, re.DOTALL)
-    if not meta_match:
-      logger.error(f"LLM failed to output metadata tags. Full response: {full_response_buffer}")
-      raise ValueError("LLM failed to output metadata tags")
+    metadata = extract_xml_json(full_response_buffer, "metadata", llm.LLMNodeMetadata)
 
-    metadata_json = meta_match.group(1).strip()
-    # Clean up potential markdown code blocks in metadata
-    metadata_json = re.sub(r"^```(?:json)?\s*", "", metadata_json, flags=re.IGNORECASE)
-    metadata_json = re.sub(r"\s*```$", "", metadata_json)
+    # Extract the final story text from the buffer
+    story_text = extract_xml_block(full_response_buffer, "story") or ""
 
-    metadata = llm.LLMNodeMetadata.model_validate_json(metadata_json)
-
-    # Extract the story text from the buffer as well
-    story_match = re.search(r"<story>(.*?)</story>", full_response_buffer, re.DOTALL)
-    story_text = story_match.group(1).strip() if story_match else ""
-
+  except ValueError as e:
+    logger.error(f"LLM failed to output expected XML tags. Full response: {full_response_buffer}")
+    raise ValueError("LLM failed to output metadata tags") from e
   except Exception as e:
     logger.error(f"Failed to parse node metadata: {e}")
     # Fallback or Error handling - we might want to still save what we can or raise
