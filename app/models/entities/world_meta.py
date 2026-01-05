@@ -5,9 +5,53 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 from pynamodb.attributes import ListAttribute, NumberAttribute, UnicodeAttribute
+from pynamodb.models import Model
 
-from app.models.dtos.world_meta import GenerationStatus, WorldMetaDTO
+from app.models.dtos.world_meta import CharacterDTO, GenerationStatus, LocationDTO, WorldMetaDTO
 from app.models.entities.base import BaseCosmonautModel
+from app.services import llm
+
+
+class Character(Model):
+  name: UnicodeAttribute = UnicodeAttribute()
+  description: UnicodeAttribute = UnicodeAttribute()
+  relationships: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
+
+  def to_dto(self) -> CharacterDTO:
+    return CharacterDTO(
+      name=self.name,
+      description=self.description,
+      relationships=self.relationships or [],  # type: ignore[arg-type]
+    )
+
+  @classmethod
+  def from_dto(cls, dto: CharacterDTO) -> Character:
+    return Character(
+      name=dto.name,
+      description=dto.description,
+      relationships=dto.relationships or [],  # type: ignore[arg-type]
+    )
+
+
+class Location(Model):
+  name: UnicodeAttribute = UnicodeAttribute()
+  description: UnicodeAttribute = UnicodeAttribute()
+  connections: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
+
+  def to_dto(self) -> LocationDTO:
+    return LocationDTO(
+      name=self.name,
+      description=self.description,
+      connections=self.connections or [],  # type: ignore[arg-type]
+    )
+
+  @classmethod
+  def from_dto(cls, dto: LocationDTO) -> Location:
+    return Location(
+      name=dto.name,
+      description=dto.description,
+      connections=dto.connections or [],  # type: ignore[arg-type]
+    )
 
 
 class WorldMeta(BaseCosmonautModel):
@@ -32,7 +76,9 @@ class WorldMeta(BaseCosmonautModel):
 
   # Additional information about the story - what the main storyline is, main characters, etc. LLM
   # generated.
-  setting: UnicodeAttribute = UnicodeAttribute(null=True)
+  narrative_context: UnicodeAttribute = UnicodeAttribute(null=True)
+  characters: ListAttribute[Character] = ListAttribute(of=Character, default=list)
+  locations: ListAttribute[Location] = ListAttribute(of=Location, default=list)
   potential_endings: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
 
   # Prompt defining the narrator's personality and style.
@@ -60,7 +106,9 @@ class WorldMeta(BaseCosmonautModel):
       visibility=self.visibility,
       generation_status=GenerationStatus(self.generation_status),
       world_prompt=self.world_prompt,
-      setting=self.setting,
+      narrative_context=self.narrative_context,
+      characters=[character.to_dto() for character in self.characters],
+      locations=[location.to_dto() for location in self.locations],
       potential_endings=self.potential_endings or [],  # type: ignore[arg-type]
       narrator_profile=self.narrator_profile,
       node_text_length=int(self.node_text_length) if self.node_text_length else None,
@@ -91,7 +139,9 @@ class WorldMeta(BaseCosmonautModel):
       root_node_id=dto.root_node_id,
       visibility=dto.visibility,
       world_prompt=dto.world_prompt,
-      setting=dto.setting,
+      narrative_context=dto.narrative_context,
+      characters=[Character.from_dto(character) for character in dto.characters or []],
+      locations=[Location.from_dto(location) for location in dto.locations or []],
       potential_endings=dto.potential_endings or [],  # type: ignore[arg-type]
       narrator_profile=dto.narrator_profile,
       node_text_length=dto.node_text_length,
@@ -119,3 +169,28 @@ class WorldMeta(BaseCosmonautModel):
   @classmethod
   def gsi1_sk(cls, updated_at: str) -> str:
     return f"WORLD#{updated_at}"
+
+  def to_llm_world_info(self) -> llm.LLMWorldInfo:
+    return llm.LLMWorldInfo(
+      world_title=self.title,
+      world_description=self.description,
+      narrative_context=self.narrative_context,
+      potential_endings=self.potential_endings or [],  # type: ignore[arg-type]
+      characters=[
+        llm.LLMCharacter(
+          name=character.name,
+          description=character.description,
+          relationships=character.relationships or [],  # type: ignore[arg-type]
+        )
+        for character in self.characters
+      ],
+      locations=[
+        llm.LLMLocation(
+          name=location.name,
+          description=location.description,
+          connections=location.connections or [],  # type: ignore[arg-type]
+        )
+        for location in self.locations
+      ],
+      world_genre=self.genre,
+    )

@@ -185,12 +185,7 @@ async def choose(world_id: str, node_id: str, choice_index: int) -> AsyncGenerat
   world_meta = get_world_entity(world_id)
 
   # Step 3: Build LLMNextNodeDeps
-  llm_world_info = llm.LLMWorldInfo(
-    story_title=world_meta.title or "",
-    story_description=world_meta.description or "",
-    setting=world_meta.setting or "",
-    potential_endings=world_meta.potential_endings or [],  # type: ignore[arg-type]
-  )
+  llm_world_info = world_meta.to_llm_world_info()
 
   prev_story_nodes = get_node_entities(world_id, node.ancestors[-5:])
   prev_story_nodes_text = ""
