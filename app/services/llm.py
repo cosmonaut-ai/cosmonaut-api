@@ -31,14 +31,12 @@ def get_gemini_provider() -> "GoogleProvider":
   return provider
 
 
-def get_gemini_model() -> "GoogleModel":
+def get_gemini_model(model_name: str = settings.GEMINI_MODEL_SMALL) -> "GoogleModel":
   global model
   if model is None:
     from pydantic_ai.models.google import GoogleModel
 
-    model = GoogleModel(
-      model_name=settings.GEMINI_MODEL, provider=get_gemini_provider(), settings=ModelSettings(temperature=0.95)
-    )
+    model = GoogleModel(model_name=model_name, provider=get_gemini_provider(), settings=ModelSettings(temperature=0.95))
   return model
 
 
@@ -137,7 +135,7 @@ def get_world_info_agent() -> "Agent[None, LLMWorldInfo]":
     from pydantic_ai import Agent
 
     world_info_agent = Agent(
-      model=get_gemini_model(),
+      model=get_gemini_model(settings.GEMINI_MODEL_LARGE),
       system_prompt=GENERATE_WORLD_INFO_PROMPT,
       output_type=LLMWorldInfo,
     )
