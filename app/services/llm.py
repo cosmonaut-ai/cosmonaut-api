@@ -114,7 +114,7 @@ class LLMLocation(BaseModel):
 
 
 class LLMWorldInfo(BaseModel):
-  reasoning: str = Field(description="The reasoning behind the world info.")
+  reasoning: str = Field(default="", description="The reasoning behind the world info.")
   narrative_context: str = Field(description="The setting of the story and the world it is in.")
   characters: list[LLMCharacter] = Field(description="The main characters of the story.")
   locations: list[LLMLocation] = Field(description="The main locations of the story.")
