@@ -15,6 +15,15 @@ class ChoiceDTO(DTOModel):
 
   label: str
   target: str | None = None
+  is_custom: bool = False
+  creator: str | None = None  # User ID for custom choices
+
+
+class ChooseRequestDTO(DTOModel):
+  """Request body for the choose endpoint."""
+
+  choice_index: int | None = None  # For selecting existing choices
+  custom_choice: str | None = Field(None, max_length=200)  # For free text choices
 
 
 class StoryNodeProcessingStatus(str, Enum):

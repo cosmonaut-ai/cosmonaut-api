@@ -59,7 +59,7 @@ def get_world_entity(world_id: str) -> WorldMeta:
 def list_worlds(user_id: str) -> list[WorldMetaDTO]:
   """Return a discoverable set of worlds (paged feed TBD)."""
   gsi1_pk = WorldMeta.gsi1_pk(user_id)
-  worlds: ResultIterator[WorldMeta] = WorldMeta.GSI1.query(hash_key=gsi1_pk)  # type: ignore[reportUnknownReturnType]
+  worlds: ResultIterator[WorldMeta] = WorldMeta.GSI1.query(hash_key=gsi1_pk, scan_index_forward=False)  # type: ignore[reportUnknownReturnType]
   return [world.to_dto() for world in worlds]
 
 

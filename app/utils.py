@@ -1,6 +1,7 @@
 """Shared utilities for services layer."""
 
 import re
+from datetime import datetime, timezone
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -75,3 +76,52 @@ def has_xml_block(content: str, tag: str) -> bool:
   """
   return f"<{tag}>" in content and f"</{tag}>" in content
 
+
+def number_to_base52(number: int) -> str:
+  """Convert a number to a base-52 string."""
+  if number < 0:
+    raise ValueError("Number must be positive")
+  if number == 0:
+    return "a"
+  result = ""
+  while number > 0:
+    if number % 52 > 25:
+      result = chr((number) % 52 - 26 + ord("A")) + result
+    else:
+      result = chr((number) % 52 + ord("a")) + result
+    number //= 52
+  return result
+
+
+def base52_to_number(base52_string: str) -> int:
+  """Convert a base-52 string to a number."""
+  if not base52_string:
+    return 0
+  number = 0
+  for i, c in enumerate(reversed(base52_string)):
+    if c.isdigit():
+      continue
+    base_value = ord(c) - ord("a") if c.islower() else ord(c) - ord("A") + 26
+    if base_value < 0 or base_value > 51:
+      raise ValueError("Invalid base-52 string")
+    number += base_value * 52**i
+  return number
+
+
+##################################################################
+# D A T E T I M E   U T I L I T I E S
+##################################################################
+
+
+def coerce_datetime(value: str | datetime | None) -> datetime:
+  """Normalize datetime-like inputs into a timezone-aware UTC datetime."""
+  if isinstance(value, datetime):
+    dt = value
+  elif value:
+    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
+  else:
+    dt = datetime.now(timezone.utc)
+
+  if dt.tzinfo is None:
+    dt = dt.replace(tzinfo=timezone.utc)
+  return dt

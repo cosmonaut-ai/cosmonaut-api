@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-
 from pynamodb.attributes import ListAttribute, MapAttribute, NumberAttribute, UnicodeAttribute
 
 from app.models.dtos.world_meta import CharacterDTO, GenerationStatus, LocationDTO, WorldMetaDTO
 from app.models.entities.base import BaseCosmonautModel
 from app.services import llm
+from app.utils import coerce_datetime
 
 
 class Character(MapAttribute):  # type: ignore[type-arg]
@@ -117,17 +116,20 @@ class WorldMeta(BaseCosmonautModel):
       world_image_height=self.world_image_height,
       world_image_size=self.world_image_size,
       story_max_nodes=int(self.story_max_nodes),
+      created_at=self.created_at.isoformat() if self.created_at else None,
+      updated_at=self.updated_at.isoformat() if self.updated_at else None,
     )
 
   @classmethod
   def from_dto(cls, dto: WorldMetaDTO) -> WorldMeta:
     if dto.id is None:
       raise ValueError("ID is required to convert to PynamoDB entity")
+    updated_at_dt = coerce_datetime(dto.updated_at)
     return WorldMeta(
       PK=cls.pk(dto.id),
       SK=cls.sk(),
       GSI1PK=cls.gsi1_pk(dto.author_id) if dto.author_id else None,
-      GSI1SK=cls.gsi1_sk(dto.updated_at) if dto.updated_at else datetime.now(timezone.utc).isoformat(),
+      GSI1SK=cls.gsi1_sk(updated_at_dt.isoformat()),
       id=dto.id,
       generation_status=GenerationStatus(dto.generation_status).value,
       title=dto.title,
@@ -149,6 +151,7 @@ class WorldMeta(BaseCosmonautModel):
       world_image_width=dto.world_image_width,
       world_image_height=dto.world_image_height,
       world_image_size=dto.world_image_size,
+      updated_at=updated_at_dt,
     )
 
   @classmethod
