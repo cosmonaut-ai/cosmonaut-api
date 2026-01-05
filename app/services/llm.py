@@ -89,14 +89,14 @@ Build out these elements:
 - **Potential Endings**: Generate a list of potential endings for the story to guide the narrative towards.
 - **Story Title**: A title for the story, max 5 words. (User viewable)
 - **Story Description**: A short description of the story. (User viewable)
-- **Story Genre**: The genre of the story. (Fantasy, Sci-fi, Horror, Mystery, Literary, etc.) (User viewable)
+- **Story Genre**: The genre of the story. (Literary, Fantasy, Sci-fi, Horror, Mystery, etc.) (User viewable)
 
 ## Guidelines
 - Leave room for player agency; don't predetermine the protagonist's personality or key decisions
 - If you are introducing novel concepts or mechanics, explain them in detail. Be sure to explain how they work and how they interact with the world.
 - Mysteries and secrets (if any) should be described in detail here and left for the player to discover.
 - The story title and description should be concise and descriptive.
-- Novelty is not a requirement - sometimes the most interesting stories are the most familiar.
+- Unless the user specifies otherwise, the story should be set in the normal, everyday world.
 
 ## Output Format
 Respond using these XML tags in order:
