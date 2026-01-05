@@ -4,15 +4,14 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from pynamodb.attributes import ListAttribute, NumberAttribute, UnicodeAttribute
-from pynamodb.models import Model
+from pynamodb.attributes import ListAttribute, MapAttribute, NumberAttribute, UnicodeAttribute
 
 from app.models.dtos.world_meta import CharacterDTO, GenerationStatus, LocationDTO, WorldMetaDTO
 from app.models.entities.base import BaseCosmonautModel
 from app.services import llm
 
 
-class Character(Model):
+class Character(MapAttribute):  # type: ignore[type-arg]
   name: UnicodeAttribute = UnicodeAttribute()
   description: UnicodeAttribute = UnicodeAttribute()
   relationships: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
@@ -33,7 +32,7 @@ class Character(Model):
     )
 
 
-class Location(Model):
+class Location(MapAttribute):  # type: ignore[type-arg]
   name: UnicodeAttribute = UnicodeAttribute()
   description: UnicodeAttribute = UnicodeAttribute()
   connections: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
