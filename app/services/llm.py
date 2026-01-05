@@ -105,7 +105,19 @@ Respond using these XML tags in order:
 [Think through: What makes this concept interesting? What are the central conflicts or tensions? What tone/genre fits best? What mysteries or mechanics need explanation? What endings feel satisfying for this type of story?]
 </plan>
 <world_info>
-{"narrative_context": "...", "characters": [...], "locations": [...], "world_title": "...", "world_description": "...", "world_genre": "...", "potential_endings": [...]}
+{
+  "narrative_context": "The background, history, and circumstances...",
+  "characters": [
+    {"name": "Character Name", "description": "A short description", "relationships": ["Relationship to other character", "..."]}
+  ],
+  "locations": [
+    {"name": "Location Name", "description": "A short description", "connections": ["Connection to other location", "..."]}
+  ],
+  "world_title": "Title (max 5 words)",
+  "world_description": "A short description of the story",
+  "world_genre": "Fantasy/Sci-fi/Horror/Mystery/Literary/etc.",
+  "potential_endings": ["Ending 1", "Ending 2", "..."]
+}
 </world_info>
 """  # noqa: E501
 
