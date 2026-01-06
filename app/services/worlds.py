@@ -124,6 +124,7 @@ async def generate_lore(world: WorldMeta) -> WorldMeta:
   world.title = llm_world_info.world_title
   world.description = llm_world_info.world_description
   world.genre = llm_world_info.world_genre
+  world.setting = llm_world_info.setting
   world.narrative_context = llm_world_info.narrative_context
   world.characters = [
     Character(

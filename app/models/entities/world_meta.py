@@ -177,26 +177,26 @@ class WorldMeta(BaseCosmonautModel):
 
   def to_llm_world_info(self) -> llm.LLMWorldInfo:
     return llm.LLMWorldInfo(
-      world_title=self.title,
-      world_description=self.description,
-      setting=self.setting,
-      narrative_context=self.narrative_context,
+      world_title=self.title or "",
+      world_description=self.description or "",
+      setting=self.setting or "",
+      narrative_context=self.narrative_context or "",
       potential_endings=self.potential_endings or [],  # type: ignore[arg-type]
       characters=[
         llm.LLMCharacter(
-          name=character.name,
-          description=character.description,
+          name=character.name or "",
+          description=character.description or "",
           relationships=character.relationships or [],  # type: ignore[arg-type]
         )
         for character in self.characters
       ],
       locations=[
         llm.LLMLocation(
-          name=location.name,
-          description=location.description,
+          name=location.name or "",
+          description=location.description or "",
           connections=location.connections or [],  # type: ignore[arg-type]
         )
         for location in self.locations
       ],
-      world_genre=self.genre,
+      world_genre=self.genre or "",
     )
