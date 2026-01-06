@@ -56,6 +56,7 @@ class WorldMetaDTO(DTOModel):
   root_node_id: str | None = None
   visibility: str | None = None
   world_prompt: str | None = None
+  setting: str | None = None
   narrative_context: str | None = None
   characters: list[CharacterDTO] | None = None
   locations: list[LocationDTO] | None = None

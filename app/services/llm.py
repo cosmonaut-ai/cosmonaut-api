@@ -83,6 +83,7 @@ For items marked (User viewable), do not reveal too much about the story.
 
 ## Your Task
 Build out these elements:
+- **Setting**: The setting of the story and the world it is in. What is the time period, location, and overall atmosphere of the story? Base this on the user's prompt - it should be a normal, everyday world unless the user specifies otherwise.
 - **Narrative Context**: The background, history, and circumstances that set up this story. This is the most important element and should be the longest. If there are any novel concepts, mysteries, or mechanics that the user will interact with, explain them in detail here.
 - **Main Characters**: The main characters of the story and their relationships to each other. (0 is fine if the only character is the player.)
 - **Main Locations**: The main locations of the story and their relationships to each other. (At least one location is required)
@@ -96,7 +97,6 @@ Build out these elements:
 - If you are introducing novel concepts or mechanics, explain them in detail. Be sure to explain how they work and how they interact with the world.
 - Mysteries and secrets (if any) should be described in detail here and left for the player to discover.
 - The story title and description should be concise and descriptive.
-- Unless the user specifies otherwise, the story should be set in the normal, everyday world.
 
 ## Output Format
 Respond using these XML tags in order:
@@ -106,6 +106,7 @@ Respond using these XML tags in order:
 </plan>
 <world_info>
 {
+  "setting": "The setting of the story and the world it is in.",
   "narrative_context": "The background, history, and circumstances...",
   "characters": [
     {"name": "Character Name", "description": "A short description", "relationships": ["Relationship to other character", "..."]}
@@ -135,7 +136,8 @@ class LLMLocation(BaseModel):
 
 
 class LLMWorldInfo(BaseModel):
-  narrative_context: str = Field(description="The setting of the story and the world it is in.")
+  setting: str = Field(description="The setting of the story and the world it is in.")
+  narrative_context: str = Field(description="The background, history, and circumstances that set up this story.")
   characters: list[LLMCharacter] = Field(description="The main characters of the story.")
   locations: list[LLMLocation] = Field(description="The main locations of the story.")
   world_title: str = Field(description="A title for the story, max 5 words.")
@@ -269,7 +271,7 @@ GENERATE_NEXT_NODE_PROMPT = """
 You are an interactive storyteller continuing a branching narrative.
 
 ## Core Principles
-- **Consequences are real**: Risky choices carry real risk; clever ones are rewarded. Deaths, failures, and bad endings are not just possible—they're common. Most choices lead to immediate endings.
+- **Consequences are real**: Risky choices carry real risk; clever ones are rewarded. Deaths, failures, and bad endings are not just possible—they're EXTREMELY common. Most choices lead to immediate endings.
 - **Honor the choice**: The player's decision must matter. Don't soften or redirect it.
 
 ## Pacing (by story progress %)
@@ -277,13 +279,13 @@ You are an interactive storyteller continuing a branching narrative.
 - 20-70%: Escalation — raise stakes, reveal conflict
 - 70-90%: Climax — force confrontation, narrow options
 - 90+%: Resolution — close threads, deliver endings
-The story can end early at any time without resolution due to the consequences of the choices.
+This pacing is not a hard requirement, but it is a guideline.
 
 ## Story Text
 - 1-2 short paragraphs, max
 - Start the text by playing out the user's choice.
 - Follow the narrator's profile exactly
-- Never introduce unexplained elements. If it's not in previous nodes, branch facts, or world facts, you must explain it. The World Info section is background context the player hasn't seen so be sure to explain any novel concepts or details.
+- NEVER introduce unexplained elements. If it's not in previous nodes, branch facts, or world facts, you must explain it. The World Info section is background context the player hasn't seen so be sure to explain any novel concepts or details.
 
 ## Choices
 - 2-4 choices that emerge naturally from the scene (no arbitrary "door A vs door B")

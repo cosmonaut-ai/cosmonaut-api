@@ -74,6 +74,7 @@ class WorldMeta(BaseCosmonautModel):
 
   # Additional information about the story - what the main storyline is, main characters, etc. LLM
   # generated.
+  setting: UnicodeAttribute = UnicodeAttribute(null=True)
   narrative_context: UnicodeAttribute = UnicodeAttribute(null=True)
   characters: ListAttribute[Character] = ListAttribute(of=Character, default=list)
   locations: ListAttribute[Location] = ListAttribute(of=Location, default=list)
@@ -104,6 +105,7 @@ class WorldMeta(BaseCosmonautModel):
       visibility=self.visibility,
       generation_status=GenerationStatus(self.generation_status),
       world_prompt=self.world_prompt,
+      setting=self.setting,
       narrative_context=self.narrative_context,
       characters=[character.to_dto() for character in self.characters],
       locations=[location.to_dto() for location in self.locations],
@@ -140,6 +142,7 @@ class WorldMeta(BaseCosmonautModel):
       root_node_id=dto.root_node_id,
       visibility=dto.visibility,
       world_prompt=dto.world_prompt,
+      setting=dto.setting,
       narrative_context=dto.narrative_context,
       characters=[Character.from_dto(character) for character in dto.characters or []],
       locations=[Location.from_dto(location) for location in dto.locations or []],
@@ -176,6 +179,7 @@ class WorldMeta(BaseCosmonautModel):
     return llm.LLMWorldInfo(
       world_title=self.title,
       world_description=self.description,
+      setting=self.setting,
       narrative_context=self.narrative_context,
       potential_endings=self.potential_endings or [],  # type: ignore[arg-type]
       characters=[
