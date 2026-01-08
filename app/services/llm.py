@@ -191,16 +191,16 @@ Create an engaging first scene that:
 - Presents the player with their first meaningful choices
 - Sets up the context for the world and story.
 
-## Choice Design Guidelines
-- Provide 2-4 distinct choices that feel meaningfully different
-- Each choice should emerge naturally from the narrative (no "left door vs. right door" without context)
-- Mix choice types: cautious vs. bold, investigative vs. action-oriented
-- Avoid giving away which choices are "correct"—all should feel viable
+## Story Text
+- Follow the narrator's profile exactly
+- NEVER introduce unexplained elements. If it's not in previous nodes, branch facts, or world facts, you must explain it. The World Info section is background context the player hasn't seen so be sure to explain any novel concepts or details.
+- Avoid using excessive jargon. Unfamiliar terms or excess cliches are distracting and detract from the story.
 
-## Writing Guidelines
-- Address the player as "you" throughout
-- Open in media res when possible—action or intrigue, not lengthy exposition
-- Keep text to 1-2 short paragraphs
+## Choices
+- 2-4 choices that emerge naturally from the scene (no arbitrary "door A vs door B")
+- All choices should feel viable—don't telegraph the "correct" answer
+- Don't shy away from providing "bad" or "dumb" choices. Let the user fail.
+- Each choice should be formatted as a single action or response ("Go left" or "Ask the guard about the treasure" or "Investigate the library")
 """  # noqa: E501
 
 
