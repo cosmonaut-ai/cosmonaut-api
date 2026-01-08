@@ -286,6 +286,7 @@ This pacing is not a hard requirement, but it is a guideline.
 - Start the text by playing out the user's choice.
 - Follow the narrator's profile exactly
 - NEVER introduce unexplained elements. If it's not in previous nodes, branch facts, or world facts, you must explain it. The World Info section is background context the player hasn't seen so be sure to explain any novel concepts or details.
+- Avoid using excessive jargon. Unfamiliar terms or excess cliches are distracting and detract from the story.
 
 ## Choices
 - 2-4 choices that emerge naturally from the scene (no arbitrary "door A vs door B")
