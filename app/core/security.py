@@ -154,6 +154,9 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       "andrew24whitman@gmail.com",
       "N0ah.thomas1739@gmail.com",
       "N0ahthomas1739@gmail.com",
+      "N0ah.thomas1739@gmail.com",
+      "n0ah.thomas1739@gmail.com",
+      "n0ahthomas1739@gmail.com",
       "matthew.lee.cochran.jr@gmail.com",
       "zacendermon@gmail.com",
     ]
