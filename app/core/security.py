@@ -159,6 +159,9 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       "n0ahthomas1739@gmail.com",
       "matthew.lee.cochran.jr@gmail.com",
       "zacendermon@gmail.com",
+      "Hemani.gulzar@gmail.com",
+      "Sujithbaktha2000@gmail.com",
+      "palakmathur@gmail.com",
     ]
     if email not in email_whitelist:
       raise HTTPException(status_code=401, detail="Unauthorized")
