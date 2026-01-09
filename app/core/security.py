@@ -144,26 +144,26 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       groups = [str(g) for g in cast(List[Any], raw_groups)]
 
     # REMOVE IN PRODUCTION
-    email = payload.get("email", "")
+    email: str = payload.get("email", "")
     email_whitelist = [
-      "imatson9119@gmail.com",
-      "emmarestivo@gmail.com",
-      "jsrishere@gmail.com",
-      "jsr.is.here@gmail.com",
-      "fortex405@gmail.com",
-      "andrew24whitman@gmail.com",
-      "N0ah.thomas1739@gmail.com",
-      "N0ahthomas1739@gmail.com",
-      "N0ah.thomas1739@gmail.com",
-      "n0ah.thomas1739@gmail.com",
-      "n0ahthomas1739@gmail.com",
-      "matthew.lee.cochran.jr@gmail.com",
-      "zacendermon@gmail.com",
-      "Hemani.gulzar@gmail.com",
-      "Sujithbaktha2000@gmail.com",
-      "palakmathur@gmail.com",
+      a.lower().replace(".", "")
+      for a in [
+        "imatson9119@gmail.com",
+        "emmarestivo@gmail.com",
+        "jsrishere@gmail.com",
+        "fortex405@gmail.com",
+        "andrew24whitman@gmail.com",
+        "N0ah.thomas1739@gmail.com",
+        "n0ahthomas1739@gmail.com",
+        "matthewlee.cochran.jr@gmail.com",
+        "zacendermon@gmail.com",
+        "Hemanigulzar@gmail.com",
+        "Sujithbaktha2000@gmail.com",
+        "palakmathur@gmail.com",
+      ]
     ]
-    if email not in email_whitelist:
+
+    if email.lower().replace(".", "") not in email_whitelist:
       raise HTTPException(status_code=401, detail="Unauthorized")
     return User(
       id=payload["sub"],
