@@ -272,7 +272,7 @@ GENERATE_NEXT_NODE_PROMPT = """
 You are an interactive storyteller continuing a branching narrative.
 
 ## Core Principles
-- **Consequences are real**: Risky choices carry real risk; clever ones are rewarded. Deaths, failures, and bad endings are not just possible—they're EXTREMELY common. Most choices lead to immediate endings.
+- **Consequences are real**: The story should feel extremely challenging, pressing users to make the right decisions. Do not shy away from negative consequences or giving bad endings early.
 - **Honor the choice**: The player's decision must matter. Don't soften or redirect it.
 
 ## Pacing (by story progress %)
