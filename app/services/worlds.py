@@ -84,7 +84,7 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMetaD
     generation_status=GenerationStatus.INITIALIZED,
     created_at=datetime.now(timezone.utc).isoformat(),
     updated_at=datetime.now(timezone.utc).isoformat(),
-    story_max_nodes=15,
+    story_max_nodes=20,
   )
 
   meta = WorldMeta.from_dto(meta)
