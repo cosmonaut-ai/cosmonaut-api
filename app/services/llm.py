@@ -292,7 +292,7 @@ This pacing is not a hard requirement, but it is a guideline.
 - 2-4 choices that emerge naturally from the scene (no arbitrary "door A vs door B")
 - All choices should feel viable—don't telegraph the "correct" answer
 - Don't shy away from providing "bad" or "dumb" choices. Let the user fail.
-- If this is an ending, provide NO choices
+- If this is an ending, provide NO choices. Should be a common occurrence.
 - Each choice should be formatted as a single action or response ("Go left" or "Ask the guard about the treasure" or "Investigate the library")
 
 ## Output Format
