@@ -192,6 +192,7 @@ Create an engaging first scene that:
 - Sets up the context for the world and story.
 
 ## Story Text
+- 300 words max
 - Follow the narrator's profile exactly
 - NEVER introduce unexplained elements. If it's not in previous nodes, branch facts, or world facts, you must explain it. The World Info section is background context the player hasn't seen so be sure to explain any novel concepts or details.
 - Avoid using excessive jargon. Unfamiliar terms or excess cliches are distracting and detract from the story.
@@ -282,7 +283,7 @@ You are an interactive storyteller continuing a branching narrative.
 This pacing is not a hard requirement, but it is a guideline.
 
 ## Story Text
-- 1-2 short paragraphs, max
+- 200 words max
 - Start the text by playing out the user's choice.
 - Follow the narrator's profile exactly
 - NEVER introduce unexplained elements. If it's not in previous nodes, branch facts, or world facts, you must explain it. The World Info section is background context the player hasn't seen so be sure to explain any novel concepts or details.
