@@ -29,10 +29,19 @@ class ChooseRequestDTO(DTOModel):
 
 
 class StoryNodeProcessingStatus(str, Enum):
-  """Status of the story node processing."""
+  """Status of the story node processing (async fact extraction)."""
 
   PENDING = "pending"
   PROCESSING = "processing"
+  COMPLETED = "completed"
+  FAILED = "failed"
+
+
+class GenerationStatus(str, Enum):
+  """Status of story node text generation."""
+
+  INITIALIZED = "initialized"
+  GENERATING = "generating"
   COMPLETED = "completed"
   FAILED = "failed"
 
@@ -59,4 +68,5 @@ class StoryNodeDTO(DTOModel):
   ancestors: list[str] = Field(default_factory=list)
   created_at: datetime | None = None
   updated_at: datetime | None = None
-  processing_status: StoryNodeProcessingStatus
+  processing_status: StoryNodeProcessingStatus = StoryNodeProcessingStatus.PENDING
+  generation_status: GenerationStatus = GenerationStatus.INITIALIZED

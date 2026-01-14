@@ -9,6 +9,7 @@ from pynamodb.indexes import GlobalSecondaryIndex, IncludeProjection
 
 from app.models.dtos.story_node import (
   ChoiceDTO,
+  GenerationStatus,
   StoryNodeContextDTO,
   StoryNodeDTO,
   StoryNodeProcessingStatus,
@@ -95,11 +96,12 @@ class StoryNode(BaseCosmonautModel):
 
   id: UnicodeAttribute = UnicodeAttribute(attr_name="node_id")
   world_id: UnicodeAttribute = UnicodeAttribute()
-  text: UnicodeAttribute = UnicodeAttribute()
+  text: UnicodeAttribute = UnicodeAttribute(null=True)
   story_summary: UnicodeAttribute = UnicodeAttribute(null=True)
   title: UnicodeAttribute = UnicodeAttribute(null=True, attr_name="node_title")
   choices: ListAttribute[ChoiceMap] = ListAttribute(of=ChoiceMap, default=list, attr_name="node_choices")
   processing_status: UnicodeAttribute = UnicodeAttribute(default="pending")
+  generation_status: UnicodeAttribute = UnicodeAttribute(default="initialized")
 
   context: StoryNodeContext = StoryNodeContext(null=True)
 
@@ -171,6 +173,7 @@ class StoryNode(BaseCosmonautModel):
       ancestors=self.ancestors,
       context=self.context.to_dto() if self.context else None,
       processing_status=StoryNodeProcessingStatus(self.processing_status),
+      generation_status=GenerationStatus(self.generation_status),
     )
 
   @classmethod
@@ -197,6 +200,7 @@ class StoryNode(BaseCosmonautModel):
         for choice in dto.choices
       ],
       processing_status=StoryNodeProcessingStatus(dto.processing_status).value,
+      generation_status=GenerationStatus(dto.generation_status).value,
       context=StoryNodeContext.from_dto(dto.context) if dto.context else None,
     )
 
