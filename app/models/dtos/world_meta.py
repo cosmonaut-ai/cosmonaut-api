@@ -34,10 +34,11 @@ class WorldCreateRequest(BaseModel):
   world_prompt: str = Field(..., description="The prompt for the world.")
 
 
-class WorldShareRequest(BaseModel):
+class WorldUpdateSharingRequest(BaseModel):
   """Payload for sharing a world with a user."""
 
-  shared_with: list[str] = Field(..., description="The list of user IDs to share the world with.")
+  shared_with: list[str] | None = None
+  visibility: WorldVisibility | None = None
 
 
 class CharacterDTO(DTOModel):

@@ -148,3 +148,7 @@ def _build_system_prompt(ctx: RunContext[NextNodeDeps]) -> str:  # pyright: igno
 def get_next_node_agent() -> Agent[NextNodeDeps, str]:
   """Get the next node agent for streaming."""
   return _agent
+
+
+# Re-export for backward compatibility
+LLMNextNodeDeps = NextNodeDeps

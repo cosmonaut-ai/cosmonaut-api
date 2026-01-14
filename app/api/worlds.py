@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 
 import app.services.worlds as world_service
 from app.core.security import User, get_current_user
-from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO, WorldShareRequest
+from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO, WorldUpdateSharingRequest
 from app.services.worlds import WorldNotFoundError, get_world_entity
 
 router = APIRouter(prefix="/worlds", tags=["worlds"])
@@ -118,12 +118,12 @@ async def delete_world(
 
 
 @router.post(
-  "/{world_id}/share",
+  "/{world_id}/sharing",
   response_model=WorldMetaDTO,
   summary="Share a world with a user",
 )
-async def share_world(
-  payload: WorldShareRequest,
+async def update_sharing(
+  payload: WorldUpdateSharingRequest,
   world_id: str = Path(..., description="Identifier for the world"),
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
@@ -140,5 +140,10 @@ async def share_world(
       detail=f"You are not authorized to share world {world_id}",
     )
 
-  world = world_service.share_world(world_id, payload.shared_with)
+  world_dto = WorldMetaDTO(
+    visibility=payload.visibility,
+    shared_with=payload.shared_with,
+  )
+
+  world = world_service.update_world(world_id, world_dto)
   return world.to_dto()
