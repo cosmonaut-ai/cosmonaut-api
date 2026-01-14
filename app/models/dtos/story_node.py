@@ -14,7 +14,9 @@ class ChoiceDTO(DTOModel):
   """A choice option in a story node."""
 
   label: str
+  outcome: str | None = None
   target: str | None = None
+  is_created: bool = False
   is_custom: bool = False
   creator: str | None = None  # User ID for custom choices
 

@@ -4,9 +4,8 @@ from __future__ import annotations
 
 from pynamodb.attributes import ListAttribute, MapAttribute, NumberAttribute, UnicodeAttribute
 
-from app.models.dtos.world_meta import CharacterDTO, GenerationStatus, LocationDTO, WorldMetaDTO
+from app.models.dtos.world_meta import CharacterDTO, GenerationStatus, LocationDTO, WorldMetaDTO, WorldVisibility
 from app.models.entities.base import BaseCosmonautModel
-from app.services import llm
 from app.utils import coerce_datetime
 
 
@@ -87,6 +86,8 @@ class WorldMeta(BaseCosmonautModel):
   node_text_length: NumberAttribute = NumberAttribute(null=True)
   story_max_nodes: NumberAttribute = NumberAttribute(default=10)
 
+  shared_with: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
+
   world_image_url: UnicodeAttribute = UnicodeAttribute(null=True)
   world_image_alt_text: UnicodeAttribute = UnicodeAttribute(null=True)
   world_image_width: UnicodeAttribute = UnicodeAttribute(null=True)
@@ -102,7 +103,7 @@ class WorldMeta(BaseCosmonautModel):
       score=self.score,
       author_id=self.author_id,
       root_node_id=self.root_node_id,
-      visibility=self.visibility,
+      visibility=WorldVisibility(self.visibility),
       generation_status=GenerationStatus(self.generation_status),
       world_prompt=self.world_prompt,
       setting=self.setting,
@@ -112,6 +113,7 @@ class WorldMeta(BaseCosmonautModel):
       potential_endings=self.potential_endings or [],  # type: ignore[arg-type]
       narrator_profile=self.narrator_profile,
       node_text_length=int(self.node_text_length) if self.node_text_length else None,
+      shared_with=self.shared_with or [],  # type: ignore[arg-type]
       world_image_url=self.world_image_url,
       world_image_alt_text=self.world_image_alt_text,
       world_image_width=self.world_image_width,
@@ -140,7 +142,7 @@ class WorldMeta(BaseCosmonautModel):
       score=dto.score,
       author_id=dto.author_id,
       root_node_id=dto.root_node_id,
-      visibility=dto.visibility,
+      visibility=WorldVisibility(dto.visibility).value,
       world_prompt=dto.world_prompt,
       setting=dto.setting,
       narrative_context=dto.narrative_context,
@@ -149,6 +151,7 @@ class WorldMeta(BaseCosmonautModel):
       potential_endings=dto.potential_endings or [],  # type: ignore[arg-type]
       narrator_profile=dto.narrator_profile,
       node_text_length=dto.node_text_length,
+      shared_with=dto.shared_with or [],  # type: ignore[arg-type]
       world_image_url=dto.world_image_url,
       world_image_alt_text=dto.world_image_alt_text,
       world_image_width=dto.world_image_width,
@@ -156,6 +159,12 @@ class WorldMeta(BaseCosmonautModel):
       world_image_size=dto.world_image_size,
       updated_at=updated_at_dt,
     )
+
+  def can_user_read(self, user_id: str) -> bool:
+    return self.visibility == WorldVisibility.PUBLIC or self.author_id == user_id or user_id in self.shared_with
+
+  def can_user_write(self, user_id: str) -> bool:
+    return self.author_id == user_id
 
   @classmethod
   def pk(cls, id: str) -> str:
@@ -174,29 +183,3 @@ class WorldMeta(BaseCosmonautModel):
   @classmethod
   def gsi1_sk(cls, updated_at: str) -> str:
     return f"WORLD#{updated_at}"
-
-  def to_llm_world_info(self) -> llm.LLMWorldInfo:
-    return llm.LLMWorldInfo(
-      world_title=self.title or "",
-      world_description=self.description or "",
-      setting=self.setting or "",
-      narrative_context=self.narrative_context or "",
-      potential_endings=self.potential_endings or [],  # type: ignore[arg-type]
-      characters=[
-        llm.LLMCharacter(
-          name=character.name or "",
-          description=character.description or "",
-          relationships=character.relationships or [],  # type: ignore[arg-type]
-        )
-        for character in self.characters
-      ],
-      locations=[
-        llm.LLMLocation(
-          name=location.name or "",
-          description=location.description or "",
-          connections=location.connections or [],  # type: ignore[arg-type]
-        )
-        for location in self.locations
-      ],
-      world_genre=self.genre or "",
-    )
