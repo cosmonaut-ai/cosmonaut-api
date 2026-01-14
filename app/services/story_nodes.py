@@ -20,7 +20,7 @@ from pynamodb.pagination import ResultIterator
 import app.services.llm as llm
 import app.services.pinecone as pinecone
 from app.core.config import settings
-from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO, StoryNodeProcessingStatus
+from app.models.dtos.story_node import GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
 from app.services.pinecone import PineconeBranchFact
 from app.services.sqs import send_node_analysis_message
@@ -62,6 +62,17 @@ class InvalidChoiceError(NodeServiceError):
     self.node_id = node_id
     self.choice_index = choice_index
     self.max_index = max_index
+
+
+class InvalidGenerationStatusError(NodeServiceError):
+  """Raised when trying to generate text for a node with invalid generation status."""
+
+  def __init__(self, node_id: str, current_status: GenerationStatus, allowed_statuses: list[GenerationStatus]):
+    allowed = ", ".join(s.value for s in allowed_statuses)
+    super().__init__(f"Cannot generate text for node {node_id} with status {current_status.value}. Allowed: {allowed}")
+    self.node_id = node_id
+    self.current_status = current_status
+    self.allowed_statuses = allowed_statuses
 
 
 # =============================================================================
@@ -303,8 +314,11 @@ async def choose(
   choice_index: int | None = None,
   custom_choice: str | None = None,
   user_id: str | None = None,
-) -> tuple[str, AsyncGenerator[str, None]]:
-  """Choose a story node based on a user's choice and stream the text.
+) -> StoryNode:
+  """Choose a story node option and initialize the next node without generating text.
+
+  If the node already exists, returns the existing node.
+  If the node doesn't exist, creates a new node with INITIALIZED generation status.
 
   Args:
     world_id: The world identifier
@@ -314,7 +328,7 @@ async def choose(
     user_id: User ID for tracking custom choice creator
 
   Returns:
-    Tuple of (new_node_id, async_generator_of_text_chunks)
+    The initialized or existing story node
   """
   logger.info(f"Choosing node {node_id} with choice_index={choice_index}, custom_choice={custom_choice}")
 
@@ -325,18 +339,84 @@ async def choose(
   selected_choice = node.choices[choice_index]
   new_node_id = selected_choice.target or node.get_child_id(choice_index)
 
-  async def stream() -> AsyncGenerator[str, None]:
-    # Return cached node if exists
-    if selected_choice.is_created:
-      logger.info(f"Returning cached node {new_node_id} for choice {choice_index}")
-      target_node = get_node_entity(world_id, new_node_id)
-      logger.info(f"Cached node text length: {len(target_node.text)}, preview: {target_node.text[:100]}...")
-      yield target_node.text
-      return
+  # Return existing node if already created
+  if selected_choice.is_created:
+    logger.info(f"Returning existing node {new_node_id} for choice {choice_index}")
+    return get_node_entity(world_id, new_node_id)
+
+  # Create new initialized node (without text)
+  new_node_dto = StoryNodeDTO(
+    id=new_node_id,
+    world_id=world_id,
+    text=None,
+    story_summary=None,
+    title=None,
+    choices=[],
+    processing_status=StoryNodeProcessingStatus.PENDING,
+    generation_status=GenerationStatus.INITIALIZED,
+  )
+  new_node = StoryNode.from_dto(new_node_dto)
+  new_node.save()
+
+  logger.info(f"Initialized new node {new_node_id} with generation_status=INITIALIZED")
+  return new_node
+
+
+# =============================================================================
+# Generate Text Function
+# =============================================================================
+
+
+async def generate_text(
+  world_id: str,
+  node_id: str,
+) -> AsyncGenerator[str, None]:
+  """Generate story text for an initialized or failed node.
+
+  Args:
+    world_id: The world identifier
+    node_id: The node identifier to generate text for
+
+  Yields:
+    Text chunks as they are generated
+
+  Raises:
+    NodeNotFoundError: If the node doesn't exist
+    InvalidGenerationStatusError: If the node is not in INITIALIZED or FAILED status
+  """
+  logger.info(f"Generating text for node {node_id}")
+
+  node = get_node_entity(world_id, node_id)
+  current_status = GenerationStatus(node.generation_status)
+
+  # Validate generation status
+  allowed_statuses = [GenerationStatus.INITIALIZED, GenerationStatus.FAILED]
+  if current_status not in allowed_statuses:
+    raise InvalidGenerationStatusError(node_id, current_status, allowed_statuses)
+
+  # If text already exists (e.g., COMPLETED status somehow called), return it
+  if current_status == GenerationStatus.COMPLETED and node.text:
+    yield node.text
+    return
+
+  # Update status to GENERATING
+  node.generation_status = GenerationStatus.GENERATING.value
+  node.save()
+
+  try:
+    # Get parent node for context
+    if not node.parent_id:
+      raise NodeNotFoundError(world_id, node_id)
+
+    parent_node = get_node_entity(world_id, node.parent_id)
+    if node.choice_index is None or node.choice_index >= len(parent_node.choices):
+      raise InvalidChoiceError(node_id, node.choice_index or -1, len(parent_node.choices) - 1)
+
+    selected_choice = parent_node.choices[node.choice_index]
 
     # Build context and stream new node
     world_meta = get_world_entity(world_id)
-    deps = _build_next_node_deps(node, world_meta, selected_choice)
+    deps = _build_next_node_deps(parent_node, world_meta, selected_choice)
 
     story_text = ""
     metadata: llm.LLMNodeMetadata | None = None
@@ -350,27 +430,32 @@ async def choose(
 
     if metadata is None:
       logger.error("Failed to parse node metadata")
+      node.generation_status = GenerationStatus.FAILED.value
+      node.save()
       return
 
-    # Save new node and update parent
-    new_node_dto = StoryNodeDTO(
-      id=new_node_id,
-      world_id=world_id,
-      text=story_text,
-      story_summary=metadata.story_summary,
-      title=metadata.title,
-      choices=[
-        ChoiceDTO(label=choice.label, outcome=choice.outcome, target=StoryNode.get_child_id_static(node.id, i))
-        for i, choice in enumerate(metadata.choices)
-      ],
-      processing_status=StoryNodeProcessingStatus.PENDING,
-    )
-    new_node = StoryNode.from_dto(new_node_dto)
-    new_node.save()
+    # Update node with generated content
+    node.text = story_text
+    node.story_summary = metadata.story_summary
+    node.title = metadata.title
+    node.choices = [
+      ChoiceMap(
+        label=choice.label,
+        outcome=choice.outcome,
+        target=StoryNode.get_child_id_static(node_id, i),
+      )
+      for i, choice in enumerate(metadata.choices)
+    ]
+    node.generation_status = GenerationStatus.COMPLETED.value
+    node.save()
 
-    send_node_analysis_message(world_id, new_node_id)
+    send_node_analysis_message(world_id, node_id)
 
-  return new_node_id, stream()
+  except Exception as e:
+    logger.error(f"Error generating text for node {node_id}: {e}")
+    node.generation_status = GenerationStatus.FAILED.value
+    node.save()
+    raise
 
 
 # =============================================================================
