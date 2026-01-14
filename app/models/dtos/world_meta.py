@@ -20,13 +20,24 @@ class GenerationStatus(str, Enum):
   FAILED = "failed"
 
 
+class WorldVisibility(str, Enum):
+  """Visibility of the world."""
+
+  PRIVATE = "private"
+  PUBLIC = "public"
+
+
 class WorldCreateRequest(BaseModel):
   """Payload for creating a new world."""
 
-  visibility: str = "private"
+  visibility: WorldVisibility = WorldVisibility.PRIVATE
   world_prompt: str = Field(..., description="The prompt for the world.")
-  narrator_profile: str | None = None
-  node_text_length: int | None = None
+
+
+class WorldShareRequest(BaseModel):
+  """Payload for sharing a world with a user."""
+
+  shared_with: list[str] = Field(..., description="The list of user IDs to share the world with.")
 
 
 class CharacterDTO(DTOModel):
@@ -54,7 +65,8 @@ class WorldMetaDTO(DTOModel):
   generation_status: GenerationStatus | None = None
   author_id: str | None = None
   root_node_id: str | None = None
-  visibility: str | None = None
+  visibility: WorldVisibility | None = None
+  shared_with: list[str] | None = None
   world_prompt: str | None = None
   setting: str | None = None
   narrative_context: str | None = None

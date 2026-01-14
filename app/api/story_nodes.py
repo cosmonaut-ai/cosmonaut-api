@@ -9,7 +9,7 @@ import app.services.story_nodes as node_service
 from app.core.security import User, get_current_user
 from app.models.dtos.story_node import ChooseRequestDTO, StoryNodeDTO
 from app.services.story_nodes import InvalidChoiceError, NodeNotFoundError
-from app.services.worlds import WorldNotFoundError
+from app.services.worlds import WorldNotFoundError, get_world_entity
 
 router = APIRouter(prefix="/worlds", tags=["story-nodes"])
 
@@ -22,9 +22,23 @@ router = APIRouter(prefix="/worlds", tags=["story-nodes"])
 )
 async def list_nodes(
   world_id: str = Path(..., description="Identifier for the world"),
+  current_user: User = Depends(get_current_user),
 ) -> list[StoryNodeDTO]:
   """Return all story nodes for a given world."""
-  return node_service.list_nodes(world_id)
+  # Check authorization
+  try:
+    world = get_world_entity(world_id)
+  except WorldNotFoundError as e:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+  if not world.can_user_read(current_user.id):
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail=f"You are not authorized to access world {world_id}",
+    )
+
+  nodes = node_service.list_nodes(world_id)
+  return [node.to_dto() for node in nodes]
 
 
 @router.get(
@@ -35,10 +49,24 @@ async def list_nodes(
 async def get_node(
   world_id: str = Path(..., description="Identifier for the world"),
   node_id: str = Path(..., description="Identifier for the node"),
+  current_user: User = Depends(get_current_user),
 ) -> StoryNodeDTO:
   """Retrieve a single story node by its identifier."""
+  # Check authorization
   try:
-    return node_service.get_node(world_id, node_id)
+    world = get_world_entity(world_id)
+  except WorldNotFoundError as e:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+  if not world.can_user_read(current_user.id):
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail=f"You are not authorized to access world {world_id}",
+    )
+
+  try:
+    node = node_service.get_node(world_id, node_id)
+    return node.to_dto()
   except NodeNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
@@ -76,6 +104,18 @@ async def choose(
       detail="Exactly one of 'choice_index' or 'custom_choice' must be provided",
     )
 
+  # Check authorization
+  try:
+    world = get_world_entity(world_id)
+  except WorldNotFoundError as e:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+  if not world.can_user_read(current_user.id):
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail=f"You are not authorized to access world {world_id}",
+    )
+
   try:
     new_node_id, stream = await node_service.choose(
       world_id,
@@ -85,8 +125,6 @@ async def choose(
       user_id=current_user.id,
     )
   except NodeNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-  except WorldNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
   except InvalidChoiceError as e:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e

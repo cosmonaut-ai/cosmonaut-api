@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import cached_property
 
-from pynamodb.attributes import ListAttribute, MapAttribute, UnicodeAttribute
+from pynamodb.attributes import BooleanAttribute, ListAttribute, MapAttribute, UnicodeAttribute
 from pynamodb.indexes import GlobalSecondaryIndex, IncludeProjection
 
 from app.models.dtos.story_node import (
@@ -30,14 +30,18 @@ class GSI2Model(GlobalSecondaryIndex):  # type: ignore[type-arg]
 class ChoiceMap(MapAttribute[str, UnicodeAttribute]):
   label: UnicodeAttribute = UnicodeAttribute()
   target: UnicodeAttribute = UnicodeAttribute(null=True)
-  is_custom: UnicodeAttribute = UnicodeAttribute(null=True)
+  is_created: BooleanAttribute = BooleanAttribute(default=False)
+  outcome: UnicodeAttribute = UnicodeAttribute(null=True)
+  is_custom: BooleanAttribute = BooleanAttribute(default=False)
   creator: UnicodeAttribute = UnicodeAttribute(null=True)
 
   def to_dto(self) -> ChoiceDTO:
     return ChoiceDTO(
       label=self.label,
       target=self.target,
-      is_custom=self.is_custom == "true" if self.is_custom else False,
+      is_created=self.is_created,
+      outcome=self.outcome,
+      is_custom=self.is_custom,
       creator=self.creator,
     )
 
@@ -141,6 +145,10 @@ class StoryNode(BaseCosmonautModel):
 
   def get_child_id(self, choice_index: int) -> str:
     """Get the ID of the child node for a given choice index."""
+    return StoryNode.get_child_id_static(self.id, choice_index)
+
+  @staticmethod
+  def get_child_id_static(parent_id: str, choice_index: int) -> str:
     if choice_index < 0:
       raise ValueError("Choice index must be non-negative")
     base52_index = number_to_base52(choice_index)
@@ -149,7 +157,7 @@ class StoryNode(BaseCosmonautModel):
       final_string = f"{len(base52_index)}{base52_index}"
     else:
       final_string = base52_index
-    return f"{self.id}{final_string}"
+    return f"{parent_id}{final_string}"
 
   def to_dto(self) -> StoryNodeDTO:
     return StoryNodeDTO(
