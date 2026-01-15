@@ -201,7 +201,6 @@ async def _validate_and_prepare_choice(
       label=custom_choice,
       target=node.get_child_id(choice_index),
       is_custom=True,
-      is_created=True,
       creator=user_id,
     )
     node.choices.append(new_choice)
@@ -213,7 +212,6 @@ async def _validate_and_prepare_choice(
     if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
       max_index = len(node.choices) - 1 if node.choices else -1
       raise InvalidChoiceError(node_id, choice_index, max_index)
-    node.choices[choice_index].is_created = True
     node.save()
     logger.info(f"Updated choice at index {choice_index} to created: {custom_choice}")
 
@@ -380,7 +378,10 @@ async def choose(
   # Return existing node if already created
   if selected_choice.is_created:
     logger.info(f"Returning existing node {new_node_id} for choice {choice_index}")
-    return get_node_entity(world_id, new_node_id)
+    try:
+      return get_node_entity(world_id, new_node_id)
+    except NodeNotFoundError:
+      logger.error(f"New node {new_node_id} not found even though parent choice is created. Continuing.")
 
   # Create new initialized node (without text)
   new_node_dto = StoryNodeDTO(
@@ -395,6 +396,8 @@ async def choose(
   )
   new_node = StoryNode.from_dto(new_node_dto)
   new_node.save()
+  node.choices[choice_index].is_created = True
+  node.save()
 
   logger.info(f"Initialized new node {new_node_id} with generation_status=INITIALIZED")
   return new_node
