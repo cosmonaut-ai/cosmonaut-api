@@ -18,7 +18,7 @@ from app.services.llm.agents.next_node import (
 from app.services.llm.agents.root_node import (
   LLMRootNodeDeps,
   RootNodeDeps,
-  generate_start_node,
+  get_root_node_agent,
 )
 from app.services.llm.agents.world_info import generate_world_info
 from app.services.llm.models import (
@@ -52,7 +52,7 @@ __all__ = [
   # Root Node
   "LLMRootNodeDeps",
   "RootNodeDeps",
-  "generate_start_node",
+  "get_root_node_agent",
   # Next Node
   "LLMNextNodeDeps",
   "NextNodeDeps",

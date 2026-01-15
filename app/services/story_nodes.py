@@ -303,6 +303,44 @@ async def _stream_next_node(
     raise ValueError("LLM failed to output metadata tags") from e
 
 
+async def _stream_root_node(
+  deps: llm.RootNodeDeps,
+) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None], None]:
+  """Stream root node content via LLM.
+
+  Similar to _stream_next_node but uses the root node agent with different prompts.
+
+  Yields:
+    Tuple of (chunk_text, full_buffer, metadata_if_complete)
+  """
+  full_response_buffer = ""
+  last_emitted_index = 0
+  story_started = False
+
+  # Deps are injected into system prompt; user message is simple
+  async with llm.get_root_node_agent().run_stream("Generate the first story node.", deps=deps) as result:
+    async for chunk in result.stream_text(delta=True):
+      full_response_buffer += chunk
+
+      story_content = extract_xml_block(full_response_buffer, "story", streaming=True)
+      if story_content is not None:
+        if not story_started:
+          story_started = True
+
+        if len(story_content) > last_emitted_index:
+          new_text = story_content[last_emitted_index:]
+          yield new_text, full_response_buffer, None
+          last_emitted_index = len(story_content)
+
+  # Parse metadata after stream completes
+  try:
+    metadata = extract_xml_json(full_response_buffer, "metadata", llm.LLMNodeMetadata)
+    yield "", full_response_buffer, metadata
+  except ValueError as e:
+    logger.error(f"LLM failed to output expected XML tags. Full response: {full_response_buffer}")
+    raise ValueError("LLM failed to output metadata tags") from e
+
+
 # =============================================================================
 # Main Choose Function
 # =============================================================================
@@ -373,6 +411,9 @@ async def generate_text(
 ) -> AsyncGenerator[str, None]:
   """Generate story text for an initialized or failed node.
 
+  For root nodes (node_id == "0"), uses the root node agent.
+  For child nodes, uses the next node agent with parent context.
+
   Args:
     world_id: The world identifier
     node_id: The node identifier to generate text for
@@ -404,24 +445,33 @@ async def generate_text(
   node.save()
 
   try:
-    # Get parent node for context
-    if not node.parent_id:
-      raise NodeNotFoundError(world_id, node_id)
-
-    parent_node = get_node_entity(world_id, node.parent_id)
-    if node.choice_index is None or node.choice_index >= len(parent_node.choices):
-      raise InvalidChoiceError(node_id, node.choice_index or -1, len(parent_node.choices) - 1)
-
-    selected_choice = parent_node.choices[node.choice_index]
-
-    # Build context and stream new node
     world_meta = get_world_entity(world_id)
-    deps = _build_next_node_deps(parent_node, world_meta, selected_choice)
 
+    # Select appropriate stream generator based on node type
+    if node.parent_id is None:
+      # Root node: use root node agent
+      logger.info(f"Generating root node text for world {world_id}")
+      llm_world_info = world_meta_to_llm_world_info(world_meta)
+      root_deps = llm.RootNodeDeps(
+        world_info=llm_world_info,
+        narrator_profile=world_meta.narrator_profile or "",
+      )
+      stream = _stream_root_node(root_deps)
+    else:
+      # Child node: use next node agent with parent context
+      parent_node = get_node_entity(world_id, node.parent_id)
+      if node.choice_index is None or node.choice_index >= len(parent_node.choices):
+        raise InvalidChoiceError(node_id, node.choice_index or -1, len(parent_node.choices) - 1)
+
+      selected_choice = parent_node.choices[node.choice_index]
+      next_deps = _build_next_node_deps(parent_node, world_meta, selected_choice)
+      stream = _stream_next_node(next_deps)
+
+    # Stream content and collect metadata
     story_text = ""
     metadata: llm.LLMNodeMetadata | None = None
 
-    async for chunk, full_buffer, meta in _stream_next_node(deps):
+    async for chunk, full_buffer, meta in stream:
       if chunk:
         yield chunk
       if meta:

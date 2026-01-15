@@ -11,7 +11,7 @@ from app.models.dtos.story_node import StoryNodeProcessingStatus
 from app.models.dtos.world_meta import GenerationStatus
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
-from app.services import sqs, story_nodes, worlds
+from app.services import story_nodes, worlds
 
 # Concurrency cap for processing messages in parallel within a Lambda invocation.
 BATCH_CONCURRENCY = 5
@@ -141,19 +141,11 @@ async def _generate_world(payload: GenerateWorldPayload):
     world.save()
     await worlds.generate_narrator_profile(world)
 
-    # 3. Generate Start Node
-    logger.info("Generating Start Node...")
-    world.generation_status = GenerationStatus.GENERATING_START_NODE
-    world.save()
-    story_node = await worlds.generate_start_node(world)
+    # 3. Initialize Root Node (without text generation)
+    # Text will be generated when the client calls /generate-text
+    logger.info("Initializing Root Node...")
+    worlds.initialize_root_node(world)
 
-    try:
-      sqs.send_node_analysis_message(world.id, story_node.id)
-    except Exception as e:
-      logger.exception(f"Error sending node analysis message for {story_node.id} in world {world.id}: {e}")
-      story_node.processing_status = StoryNodeProcessingStatus.FAILED
-      story_node.save()
-      raise
     world.generation_status = GenerationStatus.COMPLETED
     logger.info(f"World {world_id} generation complete.")
 

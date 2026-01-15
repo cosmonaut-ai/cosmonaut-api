@@ -14,7 +14,6 @@ class GenerationStatus(str, Enum):
 
   INITIALIZED = "initialized"
   GENERATING_LORE = "generating_lore"
-  GENERATING_START_NODE = "generating_start_node"
   GENERATING_NARRATOR_PROFILE = "generating_narrator_profile"
   COMPLETED = "completed"
   FAILED = "failed"
