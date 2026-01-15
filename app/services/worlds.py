@@ -20,7 +20,13 @@ from pynamodb.pagination import ResultIterator
 import app.services.llm as llm
 import app.services.pinecone as pinecone
 from app.core.config import settings
-from app.models.dtos.story_node import StoryNodeDTO, StoryNodeProcessingStatus
+from app.models.dtos.story_node import (
+  GenerationStatus as NodeGenerationStatus,
+)
+from app.models.dtos.story_node import (
+  StoryNodeDTO,
+  StoryNodeProcessingStatus,
+)
 from app.models.dtos.world_meta import (
   CharacterDTO,
   GenerationStatus,
@@ -29,7 +35,7 @@ from app.models.dtos.world_meta import (
   WorldMetaDTO,
   WorldVisibility,
 )
-from app.models.entities.story_node import ChoiceMap, StoryNode
+from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import Character, Location, WorldMeta
 from app.services.sqs import send_world_generation_message
 
@@ -244,41 +250,28 @@ async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
   return world
 
 
-async def generate_start_node(world: WorldMeta) -> StoryNode:
-  """Generate the first story node for a world."""
+def initialize_root_node(world: WorldMeta) -> StoryNode:
+  """Initialize the root story node for a world without generating text.
 
-  llm_world_info = world_meta_to_llm_world_info(world)
-
-  deps = llm.RootNodeDeps(
-    world_info=llm_world_info,
-    narrator_profile=world.narrator_profile or "",
-  )
-
-  generated_node = await llm.generate_start_node(deps)
+  The node is created with generation_status=INITIALIZED. The client
+  should call the /generate-text endpoint to stream the story content.
+  """
   root_node_id = "0"
   story_node_dto = StoryNodeDTO(
     id=root_node_id,
     world_id=world.id,
-    text=generated_node.text,
-    story_summary=generated_node.story_summary,
-    title=generated_node.title,
-    processing_status=StoryNodeProcessingStatus.PENDING,  # type: ignore[arg-type]
+    text=None,
+    story_summary=None,
+    title=None,
+    choices=[],
+    processing_status=StoryNodeProcessingStatus.PENDING,
+    generation_status=NodeGenerationStatus.INITIALIZED,
   )
   story_node = StoryNode.from_dto(story_node_dto)
-  for i, choice in enumerate(generated_node.choices):
-    story_node.choices.append(
-      ChoiceMap(
-        label=choice.label,
-        target=story_node.get_child_id(i),
-        outcome=choice.outcome,
-        is_created=False,
-        is_custom=False,
-        creator=None,
-      )
-    )
   story_node.save()
+
   world.root_node_id = story_node.id
   world.save()
-  logger.info(f"Root node {root_node_id} generated for world {world.id}")
+  logger.info(f"Root node {root_node_id} initialized for world {world.id}")
 
   return story_node

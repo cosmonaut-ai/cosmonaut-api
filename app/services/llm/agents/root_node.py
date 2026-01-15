@@ -1,13 +1,13 @@
 """Root node generation agent.
 
-Generates the first story node for a world.
-Uses structured output with deps properly injected into system prompt.
+Generates the first story node for a world with streaming support.
+Uses XML output format for incremental content extraction.
 """
 
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
-from app.services.llm.models import LLMStoryNode, LLMWorldInfo
+from app.services.llm.models import LLMWorldInfo
 from app.services.llm.provider import get_gemini_model
 from app.services.llm.utils import format_model_with_descriptions
 
@@ -31,9 +31,22 @@ Create an engaging first scene that:
 - 2-4 choices that emerge naturally from the scene (no arbitrary "door A vs door B")
 - All choices should feel viable—don't telegraph the "correct" answer
 - Don't shy away from providing "bad" or "dumb" choices. Let the user fail.
-- Each choice must have:
+- Each choice must be an object with:
   - `label`: A single action or response ("Go left" or "Ask the guard about the treasure" or "Investigate the library")
   - `outcome`: A brief description of what happens if this choice is selected (1-2 sentences)
+
+## Output Format
+Respond using these XML tags in order:
+
+<plan>
+[Brief reasoning: what is the hook? What tension is introduced? What world elements are being established?]
+</plan>
+<story>
+[The narrative text, 1-3 paragraphs, addressing player as "you"]
+</story>
+<metadata>
+{"choices": [{"label": "...", "outcome": "..."}, ...], "story_summary": "...", "title": "..."}
+</metadata>
 """  # noqa: E501
 
 
@@ -44,21 +57,21 @@ class RootNodeDeps(BaseModel):
   narrator_profile: str = Field(description="The narrator's profile.")
 
 
-# Module-level agent instantiation
-_agent: Agent[RootNodeDeps, LLMStoryNode] = Agent(
+# Module-level agent instantiation (streaming with XML output)
+_agent: Agent[RootNodeDeps, str] = Agent(
   model=get_gemini_model(),
   deps_type=RootNodeDeps,
-  output_type=LLMStoryNode,
+  output_type=str,
 )
 
 
 @_agent.system_prompt
 def _build_system_prompt(ctx: RunContext[RootNodeDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
-  """Inject world context and narrator profile into system prompt."""
+  """Build system prompt for streaming root node generation."""
   return f"""{SYSTEM_PROMPT}
 
 ---
-WORLD CONTEXT:
+WORLD CONTEXT (background—player hasn't seen this):
 {format_model_with_descriptions(ctx.deps.world_info)}
 
 ---
@@ -67,13 +80,9 @@ NARRATOR PROFILE:
 """
 
 
-async def generate_start_node(deps: RootNodeDeps) -> LLMStoryNode:
-  """Generate the first story node for a world."""
-  result = await _agent.run(
-    "Generate the first story node.",
-    deps=deps,
-  )
-  return result.output
+def get_root_node_agent() -> Agent[RootNodeDeps, str]:
+  """Get the root node agent for streaming."""
+  return _agent
 
 
 # Re-export for backward compatibility
