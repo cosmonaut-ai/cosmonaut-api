@@ -436,7 +436,11 @@ async def generate_text(
   # Validate generation status
   allowed_statuses = [GenerationStatus.INITIALIZED, GenerationStatus.FAILED]
   if current_status not in allowed_statuses:
-    raise InvalidGenerationStatusError(node_id, current_status, allowed_statuses)
+    # Wait for five
+    await asyncio.sleep(5)
+    node_refreshed = get_node_entity(world_id, node_id)
+    if node_refreshed.generation_status not in allowed_statuses:
+      raise InvalidGenerationStatusError(node_id, GenerationStatus(node_refreshed.generation_status), allowed_statuses)
 
   # If text already exists (e.g., COMPLETED status somehow called), return it
   if current_status == GenerationStatus.COMPLETED and node.text:
