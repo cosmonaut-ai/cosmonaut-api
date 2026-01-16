@@ -161,17 +161,13 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
         "Sujithbaktha2000@gmail.com",
         "palakmathur@gmail.com",
         "andy@ricchuiti",
+        "kkiranjot8@gmail.com",
       ]
     ]
 
     if email.lower().replace(".", "") not in email_whitelist:
       raise HTTPException(status_code=401, detail="Unauthorized")
-    return User(
-      id="812b8590-60b1-700e-f309-7ed4672868a9",
-      email="matthewlee.cochran.jr@gmail.com",
-      username="Matthew Cochran",
-      groups=["Owner"],
-    )
+    
     return User(
       id=payload["sub"],
       email=payload.get("email", ""),
