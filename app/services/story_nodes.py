@@ -80,7 +80,7 @@ class InvalidGenerationStatusError(NodeServiceError):
 # =============================================================================
 
 
-def _get_world_facts(world_id: str, node_text: str, top_k: int = 20) -> list[pinecone.PineconeWorldFact]:
+def _get_world_facts(world_id: str, node_text: str, top_k: int = 50) -> list[pinecone.PineconeWorldFact]:
   """Get the world facts for a given node."""
   return [
     pinecone.PineconeWorldFact.model_validate({**x.fields, "id": x._id})
@@ -96,7 +96,7 @@ def _get_world_facts(world_id: str, node_text: str, top_k: int = 20) -> list[pin
 
 
 def _get_branch_facts(
-  world_id: str, node_text: str, ancestors: list[str], top_k: int = 20
+  world_id: str, node_text: str, ancestors: list[str], top_k: int = 50
 ) -> list[pinecone.PineconeBranchFact]:
   """Get the branch facts for a given node."""
   results: list[PineconeBranchFact] = [
@@ -247,7 +247,7 @@ def _build_next_node_deps(
 ) -> llm.NextNodeDeps:
   """Build the dependencies for next node generation."""
   llm_world_info = world_meta_to_llm_world_info(world_meta)
-  prev_story_nodes = get_node_entities(node.world_id, node.ancestors[-5:])
+  prev_story_nodes = get_node_entities(node.world_id, node.ancestors[-10:])
   prev_story_nodes_text = _build_previous_text(prev_story_nodes, selected_choice.label)
 
   return llm.NextNodeDeps(
