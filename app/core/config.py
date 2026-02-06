@@ -42,6 +42,9 @@ class Settings(BaseSettings):
   CLOUDFRONT_KEY_PAIR_ID: str = Field(default="", description="CloudFront key pair ID.")
   COOKIE_DOMAIN: str = Field(default=".cosmonaut-ai.com", description="Cookie domain.")
 
+  IMAGES_S3_BUCKET: str = Field(default="", description="S3 bucket for generated images.")
+  IMAGES_CDN_DOMAIN: str = Field(default="", description="CloudFront domain for serving images.")
+
   GOOGLE_CLIENT_SECRET_PARAM: str = Field(default="", description="Parameter store path for the Google client secret.")
   GEMINI_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Gemini API key.")
   PINECONE_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Pinecone API key.")
