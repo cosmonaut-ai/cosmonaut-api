@@ -10,7 +10,7 @@ if TYPE_CHECKING:
   from mypy_boto3_sqs.client import SQSClient
 
 from app.core.config import settings
-from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldPayload
+from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload
 
 logger = logging.getLogger(__name__)
 
@@ -50,3 +50,8 @@ def send_node_analysis_message(world_id: str, node_id: str):
 def send_world_generation_message(world_id: str):
   send_message(settings.SLOW_WORKER_QUEUE_URL, GenerateWorldPayload(world_id=world_id).model_dump())
   logger.info(f"Sent world generation message for {world_id}")
+
+
+def send_world_image_generation_message(world_id: str):
+  send_message(settings.SLOW_WORKER_QUEUE_URL, GenerateWorldImagePayload(world_id=world_id).model_dump())
+  logger.info(f"Sent world image generation message for {world_id}")

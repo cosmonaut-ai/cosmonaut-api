@@ -12,7 +12,8 @@ from app.models.dtos.story_node import StoryNodeProcessingStatus
 from app.models.dtos.world_meta import GenerationStatus
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
-from app.services import story_nodes, worlds
+from app.services import images, story_nodes, worlds
+from app.services.sqs import send_world_image_generation_message
 
 # Concurrency cap for processing messages in parallel within a Lambda invocation.
 BATCH_CONCURRENCY = 5
@@ -87,11 +88,7 @@ async def _process_task(payload: SQSPayload):
       await _generate_world(payload)
 
     case GenerateWorldImagePayload():
-      world_id = payload.world_id
-      # SLOW LANE TASK (~15s)
-      # Placeholder for DALL-E generation
-      logger.info(f"Generating image for world {world_id} (Not Implemented)")
-      # await images.generate_image(node_id)
+      await _generate_world_image(payload)
 
 
 async def _analyze_node(payload: AnalyzeNodePayload):
@@ -159,9 +156,32 @@ async def _generate_world(payload: GenerateWorldPayload):
     world.generation_status = GenerationStatus.COMPLETED
     logger.info(f"World {world_id} generation complete.")
 
+    # 4. Enqueue image generation (fire-and-forget, non-blocking)
+    send_world_image_generation_message(world_id)
+
   except Exception as e:
     logger.exception(f"Error generating world {world_id}: {e}")
     world.generation_status = GenerationStatus.FAILED
     raise
   finally:
     world.save()
+
+
+async def _generate_world_image(payload: GenerateWorldImagePayload):
+  world_id = payload.world_id
+  if not world_id:
+    raise ValueError("Missing world_id for generate_world_image")
+
+  world: WorldMeta = worlds.get_world_entity(world_id)
+
+  # Idempotency: skip if image already exists
+  if world.world_image_url:
+    logger.info(f"World {world_id} already has an image, skipping.")
+    return
+
+  try:
+    await images.generate_world_image(world)
+    logger.info(f"World {world_id} image generation complete.")
+  except Exception as e:
+    logger.exception(f"Error generating image for world {world_id}: {e}")
+    raise

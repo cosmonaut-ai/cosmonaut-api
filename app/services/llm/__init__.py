@@ -9,6 +9,7 @@ from app.services.llm.agents.fact_extraction import (
   LLMFactExtractionDeps,
   generate_facts_async,
 )
+from app.services.llm.agents.image_prompt import generate_image_prompt
 from app.services.llm.agents.narrator import generate_narrator_profile
 from app.services.llm.agents.next_node import (
   LLMNextNodeDeps,
@@ -63,4 +64,6 @@ __all__ = [
   "generate_facts_async",
   # Narrator
   "generate_narrator_profile",
+  # Image Prompt
+  "generate_image_prompt",
 ]
