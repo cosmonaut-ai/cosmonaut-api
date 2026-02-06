@@ -166,9 +166,9 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       ]
     ]
 
-    if email.lower().replace(".", "") not in email_whitelist:
-      raise HTTPException(status_code=401, detail="Unauthorized")
-    
+    # if email.lower().replace(".", "") not in email_whitelist:
+    #   raise HTTPException(status_code=401, detail="Unauthorized")
+
     return User(
       id=payload["sub"],
       email=payload.get("email", ""),
