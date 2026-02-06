@@ -21,7 +21,7 @@ from app.services.worlds import world_meta_to_llm_world_info
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
-IMAGEN_MODEL = "imagen-3.0-generate-002"
+IMAGEN_MODEL = "imagen-4.0-generate-001"
 IMAGE_SIZE = "1024x1024"
 S3_KEY_TEMPLATE = "worlds/{world_id}/cover.png"
 
