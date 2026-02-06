@@ -12,6 +12,7 @@ dependencies = [
     "pynamodb",
     "pydantic",
     "pydantic-settings",
+    "pydantic-ai-slim[retries]",
     "tenacity",
     "pinecone>=8.0.0",
     "google-genai>=1.56.0",

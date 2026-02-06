@@ -8,7 +8,12 @@ from fastapi.responses import StreamingResponse
 import app.services.story_nodes as node_service
 from app.core.security import User, get_current_user
 from app.models.dtos.story_node import ChooseRequestDTO, GenerationStatus, StoryNodeDTO
-from app.services.story_nodes import InvalidChoiceError, InvalidGenerationStatusError, NodeNotFoundError
+from app.services.story_nodes import (
+  InvalidChoiceError,
+  InvalidGenerationStatusError,
+  InvalidProcessingStatusError,
+  NodeNotFoundError,
+)
 from app.services.worlds import WorldNotFoundError, get_world_entity
 
 router = APIRouter(prefix="/worlds", tags=["story-nodes"])
@@ -214,3 +219,40 @@ async def generate_text(
       "X-Accel-Buffering": "no",  # Disable buffering in nginx/proxies
     },
   )
+
+
+@router.post(
+  "/{world_id}/nodes/{node_id}/retry-processing",
+  response_model=StoryNodeDTO,
+  summary="Retry processing for a failed node",
+)
+async def retry_processing(
+  world_id: str = Path(..., description="Identifier for the world"),
+  node_id: str = Path(..., description="Identifier for the node to retry processing for"),
+  current_user: User = Depends(get_current_user),
+) -> StoryNodeDTO:
+  """Re-enqueue a node whose processing (fact extraction) failed.
+
+  Resets processing_status from FAILED back to PENDING and sends a new
+  analysis message to the worker queue. Only nodes with
+  processing_status=FAILED can be retried.
+  """
+  # Check authorization
+  try:
+    world = get_world_entity(world_id)
+  except WorldNotFoundError as e:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+  if not world.can_user_read(current_user.id):
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail=f"You are not authorized to access world {world_id}",
+    )
+
+  try:
+    node = node_service.retry_processing(world_id, node_id)
+    return node.to_dto()
+  except NodeNotFoundError as e:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+  except InvalidProcessingStatusError as e:
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
