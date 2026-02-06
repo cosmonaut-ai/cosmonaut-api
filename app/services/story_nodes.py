@@ -15,6 +15,7 @@ import uuid
 from typing import TYPE_CHECKING, AsyncGenerator
 
 from aws_lambda_powertools import Logger
+from pynamodb.exceptions import UpdateError
 from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
@@ -168,6 +169,53 @@ def get_node_entities(world_id: str, node_ids: list[str]) -> list[StoryNode]:
 
 
 # =============================================================================
+# Async Polling Helpers
+# =============================================================================
+
+_BACKOFF_INTERVALS = [0.5, 1, 2, 4, 8, 15]
+"""Progressive backoff intervals (seconds) used for polling DynamoDB status."""
+
+
+async def _wait_for_node_processing(
+  world_id: str,
+  node_id: str,
+  max_wait_seconds: float = 30,
+) -> StoryNode:
+  """Wait for a node to reach COMPLETED processing status with exponential backoff.
+
+  Used when generating a child node to ensure the parent has been fully processed
+  (facts extracted, context populated) before building dependencies.
+
+  Args:
+    world_id: The world identifier.
+    node_id: The node identifier to wait on.
+    max_wait_seconds: Maximum total seconds to wait before raising.
+
+  Returns:
+    The refreshed StoryNode with COMPLETED processing status.
+
+  Raises:
+    NodeProcessingError: If the node doesn't reach COMPLETED within the timeout.
+  """
+  elapsed = 0.0
+  for interval in _BACKOFF_INTERVALS:
+    node = get_node_entity(world_id, node_id)
+    if node.processing_status == StoryNodeProcessingStatus.COMPLETED:
+      return node
+    if elapsed + interval > max_wait_seconds:
+      break
+    await asyncio.sleep(interval)
+    elapsed += interval
+
+  # Final check after exhausting backoff schedule
+  node = get_node_entity(world_id, node_id)
+  if node.processing_status == StoryNodeProcessingStatus.COMPLETED:
+    return node
+
+  raise NodeProcessingError(node_id)
+
+
+# =============================================================================
 # Choose Flow - Helper Functions
 # =============================================================================
 
@@ -186,14 +234,12 @@ async def _validate_and_prepare_choice(
   """
 
   # Wait for the current node to be processed before making a choice;
-  # we need context from fact extraction.
+  # we need context from fact extraction. Uses exponential backoff to
+  # avoid both unnecessary waiting and premature timeout.
   if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
-    await asyncio.sleep(5)
-    node_refreshed = get_node_entity(node.world_id, node_id)
-    if node_refreshed.processing_status != StoryNodeProcessingStatus.COMPLETED:
-      raise NodeProcessingError(node_id)
-    # Update node reference
-    node.processing_status = node_refreshed.processing_status
+    refreshed = await _wait_for_node_processing(node.world_id, node_id)
+    node.processing_status = refreshed.processing_status
+    node.context = refreshed.context
 
   if custom_choice is not None:
     choice_index = len(node.choices)
@@ -250,6 +296,11 @@ def _build_next_node_deps(
   prev_story_nodes = get_node_entities(node.world_id, node.ancestors[-5:])
   prev_story_nodes_text = _build_previous_text(prev_story_nodes, selected_choice.label)
 
+  # Safely access context attributes; context may be None if the parent node
+  # hasn't been processed yet (e.g., SQS worker hasn't completed analysis).
+  world_facts: list[str] = (node.context.world_facts if node.context else None) or []  # type: ignore[assignment]
+  branch_facts: list[str] = (node.context.branch_facts if node.context else None) or []  # type: ignore[assignment]
+
   return llm.NextNodeDeps(
     world_info=llm_world_info,
     story_summary=node.story_summary or "The story begins.",
@@ -257,8 +308,8 @@ def _build_next_node_deps(
     previous_text=prev_story_nodes_text,
     user_choice=selected_choice.label,
     choice_outcome=selected_choice.outcome,
-    world_facts=node.context.world_facts or [],  # type: ignore[arg-type]
-    branch_facts=node.context.branch_facts or [],  # type: ignore[arg-type]
+    world_facts=world_facts,
+    branch_facts=branch_facts,
     narrator_profile=world_meta.narrator_profile or "",
     story_length=node.depth,
     is_custom_choice=selected_choice.is_custom,
@@ -431,25 +482,29 @@ async def generate_text(
   logger.info(f"Generating text for node {node_id}")
 
   node = get_node_entity(world_id, node_id)
-  current_status = GenerationStatus(node.generation_status)
 
-  # Validate generation status
-  allowed_statuses = [GenerationStatus.INITIALIZED, GenerationStatus.FAILED]
-  if current_status not in allowed_statuses:
-    # Wait for five
-    await asyncio.sleep(5)
-    node_refreshed = get_node_entity(world_id, node_id)
-    if node_refreshed.generation_status not in allowed_statuses:
-      raise InvalidGenerationStatusError(node_id, GenerationStatus(node_refreshed.generation_status), allowed_statuses)
-
-  # If text already exists (e.g., COMPLETED status somehow called), return it
-  if current_status == GenerationStatus.COMPLETED and node.text:
+  # If already completed and has text, return it idempotently
+  if GenerationStatus(node.generation_status) == GenerationStatus.COMPLETED and node.text:
     yield node.text
     return
 
-  # Update status to GENERATING
-  node.generation_status = GenerationStatus.GENERATING.value
-  node.save()
+  # Atomically transition: INITIALIZED|FAILED -> GENERATING.
+  # DynamoDB conditional write ensures only one concurrent request can win this
+  # transition, preventing duplicate generation and race conditions.
+  allowed_statuses = [GenerationStatus.INITIALIZED, GenerationStatus.FAILED]
+  try:
+    node.update(
+      actions=[StoryNode.generation_status.set(GenerationStatus.GENERATING.value)],
+      condition=StoryNode.generation_status.is_in(*[s.value for s in allowed_statuses]),
+    )
+  except UpdateError:
+    # Another request already transitioned the status; re-read to determine state
+    node = get_node_entity(world_id, node_id)
+    current_status = GenerationStatus(node.generation_status)
+    if current_status == GenerationStatus.COMPLETED and node.text:
+      yield node.text
+      return
+    raise InvalidGenerationStatusError(node_id, current_status, allowed_statuses)
 
   try:
     world_meta = get_world_entity(world_id)
@@ -465,8 +520,11 @@ async def generate_text(
       )
       stream = _stream_root_node(root_deps)
     else:
-      # Child node: use next node agent with parent context
-      parent_node = get_node_entity(world_id, node.parent_id)
+      # Child node: use next node agent with parent context.
+      # Wait for the parent node to be fully processed (facts extracted, context
+      # populated) before building deps. This prevents the race condition where
+      # generate_text is called before the SQS worker finishes analyzing the parent.
+      parent_node = await _wait_for_node_processing(world_id, node.parent_id)
       if node.choice_index is None or node.choice_index >= len(parent_node.choices):
         raise InvalidChoiceError(node_id, node.choice_index or -1, len(parent_node.choices) - 1)
 
