@@ -4,6 +4,7 @@ from typing import Any, Callable, Dict, Iterable, List, cast
 from aws_lambda_powertools import Logger, Tracer
 from aws_lambda_powertools.utilities.data_classes import SQSEvent, event_source  # type: ignore[import-untyped]
 from pydantic import TypeAdapter
+from pynamodb.exceptions import UpdateError
 
 from app.core.config import settings
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
@@ -102,10 +103,19 @@ async def _analyze_node(payload: AnalyzeNodePayload):
     raise ValueError("Missing world_id or node_id for analyze_node")
 
   node: StoryNode = story_nodes.get_node_entity(world_id, node_id)
-  if node.processing_status in [StoryNodeProcessingStatus.COMPLETED, StoryNodeProcessingStatus.PROCESSING]:
+
+  # Atomically transition: PENDING -> PROCESSING.
+  # Conditional write ensures exactly one worker processes a given node, even
+  # if duplicate SQS messages are delivered or multiple workers read PENDING.
+  try:
+    node.update(
+      actions=[StoryNode.processing_status.set(StoryNodeProcessingStatus.PROCESSING.value)],
+      condition=StoryNode.processing_status.is_in(StoryNodeProcessingStatus.PENDING.value),
+    )
+  except UpdateError:
+    logger.info(f"Node {node_id} already being processed or completed, skipping.")
     return
-  node.processing_status = StoryNodeProcessingStatus.PROCESSING
-  node.save()
+
   try:
     await story_nodes.process_node(node)
     node.processing_status = StoryNodeProcessingStatus.COMPLETED
