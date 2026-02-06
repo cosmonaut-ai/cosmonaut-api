@@ -76,6 +76,18 @@ class InvalidGenerationStatusError(NodeServiceError):
     self.allowed_statuses = allowed_statuses
 
 
+class InvalidProcessingStatusError(NodeServiceError):
+  """Raised when trying to retry processing for a node that is not in FAILED status."""
+
+  def __init__(self, node_id: str, current_status: StoryNodeProcessingStatus):
+    super().__init__(
+      f"Cannot retry processing for node {node_id} with status {current_status.value}. "
+      f"Only nodes with status '{StoryNodeProcessingStatus.FAILED.value}' can be retried."
+    )
+    self.node_id = node_id
+    self.current_status = current_status
+
+
 # =============================================================================
 # Pinecone Query Helpers
 # =============================================================================
@@ -652,3 +664,34 @@ async def process_node(node: StoryNode) -> None:
         for fact in facts.branch_facts
       ]
     )
+
+
+def retry_processing(world_id: str, node_id: str) -> StoryNode:
+  """Re-enqueue a failed node for processing (fact extraction + Pinecone upsert).
+
+  Resets processing_status from FAILED back to PENDING and sends a new
+  analysis message to the fast worker queue.
+
+  Args:
+    world_id: The world identifier.
+    node_id: The node identifier to retry.
+
+  Returns:
+    The updated StoryNode with processing_status=PENDING.
+
+  Raises:
+    NodeNotFoundError: If the node does not exist.
+    InvalidProcessingStatusError: If the node is not in FAILED processing status.
+  """
+  node = get_node_entity(world_id, node_id)
+
+  if StoryNodeProcessingStatus(node.processing_status) != StoryNodeProcessingStatus.FAILED:
+    raise InvalidProcessingStatusError(node_id, StoryNodeProcessingStatus(node.processing_status))
+
+  node.processing_status = StoryNodeProcessingStatus.PENDING
+  node.save()
+
+  send_node_analysis_message(world_id, node_id)
+  logger.info(f"Re-enqueued failed node {node_id} in world {world_id} for processing")
+
+  return node
