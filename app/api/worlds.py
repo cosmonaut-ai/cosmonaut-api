@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 import app.services.worlds as world_service
 from app.core.security import User, get_current_user
 from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO, WorldUpdateSharingRequest
+from app.services.usage import QuotaExceededError
 from app.services.worlds import WorldNotFoundError, get_world_entity
 
 router = APIRouter(prefix="/worlds", tags=["worlds"])
@@ -69,7 +70,10 @@ async def get_world(
 )
 async def create_world(payload: WorldCreateRequest, user: User = Depends(get_current_user)) -> WorldMetaDTO:
   """Create a new world."""
-  world = world_service.create_world(payload, user.id)
+  try:
+    world = world_service.create_world(payload, user.id)
+  except QuotaExceededError as e:
+    raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)) from e
   return world.to_dto()
 
 

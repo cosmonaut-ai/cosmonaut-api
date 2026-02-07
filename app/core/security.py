@@ -23,6 +23,8 @@ class User(BaseModel):
   email: str
   username: str
   groups: List[str] = []
+  tier: str = "FREE"
+  stripe_customer_id: str | None = None
 
   @property
   def is_admin(self) -> bool:
@@ -62,6 +64,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       email="imatson9119@gmail.com",
       username="CosmonautDev",
       groups=["Owner"],
+      tier="COSMONAUT",
     )
 
   # 2. Require token for production
@@ -143,37 +146,13 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
     if isinstance(raw_groups, list):
       groups = [str(g) for g in cast(List[Any], raw_groups)]
 
-    # REMOVE IN PRODUCTION
-    email: str = payload.get("email", "")
-    email_whitelist = [
-      a.lower().replace(".", "")
-      for a in [
-        "imatson9119@gmail.com",
-        "emmarestivo@gmail.com",
-        "jsrishere@gmail.com",
-        "fortex405@gmail.com",
-        "andrew24whitman@gmail.com",
-        "N0ah.thomas1739@gmail.com",
-        "n0ahthomas1739@gmail.com",
-        "matthewlee.cochran.jr@gmail.com",
-        "zacendermon@gmail.com",
-        "Hemanigulzar@gmail.com",
-        "Sujithbaktha2000@gmail.com",
-        "palakmathur@gmail.com",
-        "andy@ricchuiti",
-        "kkiranjot8@gmail.com",
-        "savwerkhoven@gmail.com",
-      ]
-    ]
-
-    # if email.lower().replace(".", "") not in email_whitelist:
-    #   raise HTTPException(status_code=401, detail="Unauthorized")
-
     return User(
       id=payload["sub"],
       email=payload.get("email", ""),
       username=payload.get("cognito:username", ""),
       groups=groups,
+      tier=payload.get("custom:tier", "FREE"),
+      stripe_customer_id=payload.get("custom:stripe_customer_id"),
     )
 
   except jwt.ExpiredSignatureError:
