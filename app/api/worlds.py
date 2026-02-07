@@ -8,8 +8,9 @@ from fastapi import APIRouter, Depends, HTTPException, Path, status
 
 import app.services.worlds as world_service
 from app.core.security import User, get_current_user
-from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO
-from app.services.worlds import WorldNotFoundError
+from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO, WorldUpdateSharingRequest
+from app.services.usage import QuotaExceededError
+from app.services.worlds import WorldNotFoundError, get_world_entity
 
 router = APIRouter(prefix="/worlds", tags=["worlds"])
 
@@ -25,12 +26,13 @@ def _raise_not_implemented() -> NoReturn:
   raise _NOT_IMPLEMENTED
 
 
-@router.get("", response_model=list[WorldMetaDTO], summary="List available worlds")
+@router.get("/", response_model=list[WorldMetaDTO], summary="List available worlds")
 async def list_worlds(user: User = Depends(get_current_user)) -> list[WorldMetaDTO]:
   """Return a discoverable set of worlds (paged feed TBD)."""
-
+  print(f"Listing worlds for user {user.id}")
   try:
-    return world_service.list_worlds(user.id)
+    worlds = world_service.list_worlds(user.id)
+    return [world.to_dto() for world in worlds]
   except NotImplementedError:
     _raise_not_implemented()
 
@@ -42,25 +44,37 @@ async def list_worlds(user: User = Depends(get_current_user)) -> list[WorldMetaD
 )
 async def get_world(
   world_id: str = Path(..., description="Identifier for the world"),
+  user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Retrieve a single world by its identifier."""
+  # Check authorization
   try:
-    return world_service.get_world(world_id)
+    world = world_service.get_world(world_id)
   except WorldNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
+  if not world.can_user_read(user.id):
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail=f"You are not authorized to access world {world_id}",
+    )
+
+  return world.to_dto()
+
 
 @router.post(
-  "/init",
-  status_code=status.HTTP_201_CREATED,
+  "/",
+  status_code=status.HTTP_200_OK,
   response_model=WorldMetaDTO,
   summary="Initialize a new world",
 )
-async def initialize_world(
-  payload: WorldCreateRequest, user: User = Depends(get_current_user)
-) -> WorldMetaDTO:
-  """Initialize a new world scaffold; actual persistence wiring is pending."""
-  return world_service.create_world(payload, user.id)
+async def create_world(payload: WorldCreateRequest, user: User = Depends(get_current_user)) -> WorldMetaDTO:
+  """Create a new world."""
+  try:
+    world = world_service.create_world(payload, user.id)
+  except QuotaExceededError as e:
+    raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)) from e
+  return world.to_dto()
 
 
 @router.patch(
@@ -74,7 +88,8 @@ async def update_world(
 ) -> WorldMetaDTO:
   """Apply partial updates to an existing world."""
   try:
-    return world_service.update_world(world_id, payload.model_dump(exclude_unset=True))
+    world = world_service.update_world(world_id, payload)
+    return world.to_dto()
   except NotImplementedError:
     _raise_not_implemented()
   except WorldNotFoundError as e:
@@ -86,40 +101,53 @@ async def update_world(
   status_code=status.HTTP_204_NO_CONTENT,
   summary="Delete a world",
 )
-async def delete_world(world_id: str = Path(..., description="Identifier for the world")) -> None:
+async def delete_world(
+  world_id: str = Path(..., description="Identifier for the world"), user: User = Depends(get_current_user)
+) -> None:
   """Delete a world and any associated state (implementation pending)."""
 
+  # Check authorization
   try:
-    world_service.delete_world(world_id)
+    world = get_world_entity(world_id)
   except WorldNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+  if not world.can_user_write(user.id):
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail=f"You are not authorized to delete world {world_id}",
+    )
+
+  world_service.delete_world(world_id)
 
 
 @router.post(
-  "/{world_id}/generate-lore",
+  "/{world_id}/sharing",
   response_model=WorldMetaDTO,
-  summary="Generate lore for a world",
+  summary="Share a world with a user",
 )
-async def generate_lore(
+async def update_sharing(
+  payload: WorldUpdateSharingRequest,
   world_id: str = Path(..., description="Identifier for the world"),
+  user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
-  """Generate lore for a world."""
+  """Share a world with a user."""
+  # Check authorization
   try:
-    return world_service.generate_lore(world_id)
+    world = get_world_entity(world_id)
   except WorldNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
+  if not world.can_user_write(user.id):
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail=f"You are not authorized to share world {world_id}",
+    )
 
-@router.post(
-  "/{world_id}/generate-start-node",
-  response_model=WorldMetaDTO,
-  summary="Generate the first story node for a world",
-)
-async def generate_start_node(
-  world_id: str = Path(..., description="Identifier for the world"),
-) -> WorldMetaDTO:
-  """Generate the first story node for a world."""
-  try:
-    return await world_service.generate_start_node(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+  world_dto = WorldMetaDTO(
+    visibility=payload.visibility,
+    shared_with=payload.shared_with,
+  )
+
+  world = world_service.update_world(world_id, world_dto)
+  return world.to_dto()

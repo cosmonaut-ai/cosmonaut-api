@@ -4,26 +4,79 @@ Keep FastAPI routers thin by centralizing world-related workflows here.
 This module should not depend on FastAPI types.
 
 Architecture:
-- Internal methods work with entities (WorldMeta) for efficient service composition
-- Public methods convert entities to DTOs for API layer consumption
+- All methods work with entities (WorldMeta) for efficient service composition
+- API layer converts entities to DTOs for external consumption
 """
 
 from __future__ import annotations
 
-import asyncio
 import uuid
-from collections.abc import Mapping
 from datetime import datetime, timezone
+from typing import Any, Callable
 
+from aws_lambda_powertools import Logger
 from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
-from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO
-from app.models.dtos.world_meta import GenerationStatus, WorldCreateRequest, WorldMetaDTO
+from app.core.config import settings
+from app.models.dtos.story_node import (
+  GenerationStatus as NodeGenerationStatus,
+)
+from app.models.dtos.story_node import (
+  StoryNodeDTO,
+  StoryNodeProcessingStatus,
+)
+from app.models.dtos.world_meta import (
+  CharacterDTO,
+  GenerationStatus,
+  LocationDTO,
+  WorldCreateRequest,
+  WorldMetaDTO,
+  WorldVisibility,
+)
 from app.models.entities.story_node import StoryNode
-from app.models.entities.world_meta import WorldMeta
-from app.services.llm import LLMStoryNode
+from app.models.entities.world_meta import Character, Location, WorldMeta
+from app.services.sqs import send_world_generation_message
+from app.services.usage import check_and_increment
+
+logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
+
+
+# =============================================================================
+# Entity to LLM Model Conversion
+# =============================================================================
+
+
+def world_meta_to_llm_world_info(world: WorldMeta) -> llm.LLMWorldInfo:
+  """Convert a WorldMeta entity to LLMWorldInfo for LLM agents.
+
+  This removes the circular dependency between the entity and the llm module.
+  """
+  return llm.LLMWorldInfo(
+    title=world.title or "",
+    description=world.description or "",
+    setting=world.setting or "",
+    backstory=world.narrative_context or "",
+    endings=world.potential_endings or [],  # type: ignore[arg-type]
+    characters=[
+      llm.LLMCharacter(
+        name=character.name or "",
+        description=character.description or "",
+        relationships=character.relationships or [],  # type: ignore[arg-type]
+      )
+      for character in world.characters
+    ],
+    locations=[
+      llm.LLMLocation(
+        name=location.name or "",
+        description=location.description or "",
+        connections=location.connections or [],  # type: ignore[arg-type]
+      )
+      for location in world.locations
+    ],
+    genre=world.genre or "",
+  )
 
 
 class WorldServiceError(Exception):
@@ -52,50 +105,100 @@ def get_world_entity(world_id: str) -> WorldMeta:
     raise WorldNotFoundError(world_id) from e
 
 
-def list_worlds(user_id: str) -> list[WorldMetaDTO]:
+def list_worlds(user_id: str) -> list[WorldMeta]:
   """Return a discoverable set of worlds (paged feed TBD)."""
   gsi1_pk = WorldMeta.gsi1_pk(user_id)
-  worlds: ResultIterator[WorldMeta] = WorldMeta.GSI1.query(hash_key=gsi1_pk)  # type: ignore[reportUnknownReturnType]
-  return [world.to_dto() for world in worlds]
+  worlds: ResultIterator[WorldMeta] = WorldMeta.GSI1.query(hash_key=gsi1_pk, scan_index_forward=False)  # type: ignore[reportUnknownReturnType]
+  return list(worlds)
 
 
-def get_world(world_id: str) -> WorldMetaDTO:
+def get_world(world_id: str) -> WorldMeta:
   """Fetch a single world by identifier."""
-  world_meta = get_world_entity(world_id)
-  return world_meta.to_dto()
+  return get_world_entity(world_id)
 
 
-def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMetaDTO:
+def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
   """Create a new world metadata record.
 
   Expects a mapping aligned with the `WorldMeta` attributes.
+  Raises ``QuotaExceededError`` if the user has reached their tier's world limit.
   """
+
+  # Enforce quota before creating the world
+  check_and_increment(user_id, "worlds")
 
   world_id = str(uuid.uuid4())
 
-  meta = WorldMetaDTO(
+  meta_dto = WorldMetaDTO(
     id=world_id,
     author_id=user_id,
-    **create_request.model_dump(exclude_unset=True),
-    generation_status=GenerationStatus.GENERATING_LORE,
+    visibility=create_request.visibility,
+    world_prompt=create_request.world_prompt,
+    generation_status=GenerationStatus.INITIALIZED,
     created_at=datetime.now(timezone.utc).isoformat(),
     updated_at=datetime.now(timezone.utc).isoformat(),
+    story_max_nodes=20,
   )
 
-  meta = WorldMeta.from_dto(meta)
+  meta = WorldMeta.from_dto(meta_dto)
 
   meta.save()
-  return meta.to_dto()
+  send_world_generation_message(world_id)
+  return meta
 
 
-def update_world(world_id: str, payload: Mapping[str, object]) -> WorldMetaDTO:
+def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
   """Apply partial updates to an existing world.
 
-  NOTE: Intentionally scaffolded. We'll likely implement this using PynamoDB
-  `update()` or an optimistic-write pattern with `updated_at`.
+  Only fields explicitly provided (non-None) in the payload are updated.
+  Immutable fields (id, author_id, created_at, updated_at) are ignored.
   """
+  world = get_world_entity(world_id)
 
-  raise NotImplementedError("World updates are not implemented yet.")
+  # Fields that should never be updated via this endpoint
+  immutable_fields = {"id", "author_id", "created_at", "updated_at"}
+
+  # Field converters: maps DTO field name to a converter function
+  def convert_visibility(v: WorldVisibility) -> str:
+    return WorldVisibility(v).value
+
+  def convert_generation_status(v: GenerationStatus) -> str:
+    return GenerationStatus(v).value
+
+  def convert_characters(v: list[CharacterDTO]) -> list[Character]:
+    return [Character.from_dto(c) for c in v]
+
+  def convert_locations(v: list[LocationDTO]) -> list[Location]:
+    return [Location.from_dto(loc) for loc in v]
+
+  converters: dict[str, Callable[[Any], Any]] = {
+    "visibility": convert_visibility,
+    "generation_status": convert_generation_status,
+    "characters": convert_characters,
+    "locations": convert_locations,
+  }
+
+  # Iterate over all payload fields and apply non-None, non-immutable updates
+  for field_name in WorldMetaDTO.model_fields:
+    if field_name in immutable_fields:
+      continue
+    value = getattr(payload, field_name)
+    if value is not None:
+      converter = converters.get(field_name)
+      converted_value = converter(value) if converter else value
+      # PynamoDB ListAttribute accepts regular lists, but type checker doesn't know
+      if field_name in ("potential_endings", "shared_with"):
+        setattr(world, field_name, converted_value)  # type: ignore[arg-type]
+      else:
+        setattr(world, field_name, converted_value)
+
+  # Always update timestamp and GSI1SK
+  world.updated_at = datetime.now(timezone.utc)
+  if world.author_id:
+    world.GSI1SK = WorldMeta.gsi1_sk(world.updated_at.isoformat())
+
+  world.save()
+  return world
 
 
 def delete_world(world_id: str) -> None:
@@ -111,131 +214,69 @@ def delete_world(world_id: str) -> None:
   pinecone.delete_records(filter={"world_id": world_id})
 
 
-def generate_lore(world_id: str) -> WorldMetaDTO:
+async def generate_lore(world: WorldMeta) -> WorldMeta:
   """Generate lore for a world (LLM integration TBD)."""
 
-  # Reuse internal entity fetch to avoid unnecessary conversions
-  meta = get_world_entity(world_id)
-  if meta.generation_status != GenerationStatus.GENERATING_LORE:
-    raise WorldServiceError(f"World {world_id} is not in the GENERATING_LORE state")
+  llm_world_info: llm.LLMWorldInfo = await llm.generate_world_info(world.world_prompt)
+  world.title = llm_world_info.title
+  world.description = llm_world_info.description
+  world.genre = llm_world_info.genre
+  world.setting = llm_world_info.setting
+  world.narrative_context = llm_world_info.backstory
+  world.characters = [
+    Character(
+      name=character.name,
+      description=character.description,
+      relationships=character.relationships,
+    )
+    for character in llm_world_info.characters
+  ]
+  world.locations = [
+    Location(
+      name=location.name,
+      description=location.description,
+      connections=location.connections,
+    )
+    for location in llm_world_info.locations
+  ]
+  world.potential_endings = llm_world_info.endings or []  # type: ignore[arg-type]
 
-  meta.generation_status = GenerationStatus.GENERATING_NARRATOR_PROFILE
-  llm_world_info: llm.LLMWorldInfo = llm.generate_world_info(meta.world_prompt)
-  meta.title = llm_world_info.story_title
-  meta.description = llm_world_info.story_description
-  meta.setting = llm_world_info.setting
-  meta.potential_endings = llm_world_info.potential_endings or []  # type: ignore[arg-type]
-  meta.save()
-
-  return meta.to_dto()
+  return world
 
 
-def generate_narrator_profile(world_id: str) -> WorldMetaDTO:
+async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
   """Generate a narrator profile for a world."""
 
-  meta: WorldMeta = get_world_entity(world_id)
-  if meta.generation_status != GenerationStatus.GENERATING_NARRATOR_PROFILE:
-    raise WorldServiceError(f"World {world_id} is not in the GENERATING_NARRATOR_PROFILE state")
-
-  if meta.narrator_profile:
-    return meta.to_dto()
-  llm_world_info = llm.LLMWorldInfo(
-    story_title=meta.title,
-    story_description=meta.description,
-    setting=meta.setting,
-    potential_endings=meta.potential_endings or [],  # type: ignore[arg-type]
-  )
-  narrator_profile = llm.generate_narrator_profile(llm_world_info)
-  meta.narrator_profile = narrator_profile.narrator_profile
-  meta.generation_status = GenerationStatus.GENERATING_START_NODE
-  meta.save()
-  return meta.to_dto()
+  if world.narrator_profile:
+    return world
+  llm_world_info = world_meta_to_llm_world_info(world)
+  narrator_profile = await llm.generate_narrator_profile(llm_world_info)
+  world.narrator_profile = narrator_profile.narrator_profile
+  return world
 
 
-async def generate_start_node(world_id: str) -> WorldMetaDTO:
-  """Generate the first story node for a world."""
+def initialize_root_node(world: WorldMeta) -> StoryNode:
+  """Initialize the root story node for a world without generating text.
 
-  meta = get_world_entity(world_id)
-  if meta.generation_status != GenerationStatus.GENERATING_START_NODE:
-    raise WorldServiceError(f"World {world_id} is not in the GENERATING_START_NODE state")
-
-  llm_world_info = llm.LLMWorldInfo(
-    story_title=meta.title,
-    story_description=meta.description,
-    setting=meta.setting,
-    potential_endings=meta.potential_endings or [],  # type: ignore[arg-type]
-  )
-
-  deps = llm.LLMRootNodeDeps(
-    world_info=llm_world_info,
-    narrator_profile=meta.narrator_profile or "",
-  )
-
-  generated_node: LLMStoryNode = llm.generate_start_node(deps)
-  fact_deps = llm.LLMFactExtractionDeps(
-    text=generated_node.text,
-    user_choice=None,
-  )
-  facts_task = asyncio.create_task(llm.generate_facts_async(fact_deps))
-
+  The node is created with generation_status=INITIALIZED. The client
+  should call the /generate-text endpoint to stream the story content.
+  """
   root_node_id = "0"
   story_node_dto = StoryNodeDTO(
     id=root_node_id,
-    world_id=meta.id,
-    text=generated_node.text,
-    story_summary=generated_node.story_summary,
-    title=generated_node.title,
-    choices=[ChoiceDTO(label=choice, target=None) for choice in generated_node.choices],
-    parent_id=None,
-    ancestors=[],
+    world_id=world.id,
+    text=None,
+    story_summary=None,
+    title=None,
+    choices=[],
+    processing_status=StoryNodeProcessingStatus.PENDING,
+    generation_status=NodeGenerationStatus.INITIALIZED,
   )
   story_node = StoryNode.from_dto(story_node_dto)
   story_node.save()
-  meta.root_node_id = story_node.id
-  meta.generation_status = GenerationStatus.COMPLETED
-  meta_dto = meta.to_dto()
-  meta.save()
 
-  # Step 10: Await fact extraction before returning
-  facts: llm.LLMFactExtraction = await facts_task
+  world.root_node_id = story_node.id
+  world.save()
+  logger.info(f"Root node {root_node_id} initialized for world {world.id}")
 
-  pinecone.upsert_records(
-    [
-      pinecone.PineconeRecord.model_validate(
-        {
-          "id": root_node_id,
-          "text": generated_node.text,
-          "entity_type": pinecone.EntityType.NODE_TEXT,
-          "world_id": world_id,
-        }
-      )
-    ]
-  )
-  if facts.world_facts or facts.branch_facts:
-    pinecone.upsert_records(
-      [
-        pinecone.PineconeRecord.model_validate(
-          {
-            "id": str(uuid.uuid4()),
-            "text": fact,
-            "entity_type": pinecone.EntityType.WORLD_FACT,
-            "world_id": world_id,
-          }
-        )
-        for fact in facts.world_facts
-      ]
-      + [
-        pinecone.PineconeRecord.model_validate(
-          {
-            "id": str(uuid.uuid4()),
-            "text": fact,
-            "entity_type": pinecone.EntityType.BRANCH_FACT,
-            "world_id": world_id,
-            "origin_node_id": root_node_id,
-          }
-        )
-        for fact in facts.branch_facts
-      ]
-    )
-
-  return meta_dto
+  return story_node

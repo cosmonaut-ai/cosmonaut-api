@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from functools import cached_property
 
-from pynamodb.attributes import ListAttribute, MapAttribute, UnicodeAttribute
+from pynamodb.attributes import BooleanAttribute, ListAttribute, MapAttribute, UnicodeAttribute
 from pynamodb.indexes import GlobalSecondaryIndex, IncludeProjection
 
 from app.models.dtos.story_node import (
   ChoiceDTO,
+  GenerationStatus,
   StoryNodeContextDTO,
   StoryNodeDTO,
   StoryNodeProcessingStatus,
 )
 from app.models.entities.base import BaseCosmonautModel
+from app.utils import base52_to_number, number_to_base52
 
 
 class GSI2Model(GlobalSecondaryIndex):  # type: ignore[type-arg]
@@ -29,9 +31,20 @@ class GSI2Model(GlobalSecondaryIndex):  # type: ignore[type-arg]
 class ChoiceMap(MapAttribute[str, UnicodeAttribute]):
   label: UnicodeAttribute = UnicodeAttribute()
   target: UnicodeAttribute = UnicodeAttribute(null=True)
+  is_created: BooleanAttribute = BooleanAttribute(default=False)
+  outcome: UnicodeAttribute = UnicodeAttribute(null=True)
+  is_custom: BooleanAttribute = BooleanAttribute(default=False)
+  creator: UnicodeAttribute = UnicodeAttribute(null=True)
 
   def to_dto(self) -> ChoiceDTO:
-    return ChoiceDTO(label=self.label, target=self.target)
+    return ChoiceDTO(
+      label=self.label,
+      target=self.target,
+      is_created=self.is_created,
+      outcome=self.outcome,
+      is_custom=self.is_custom,
+      creator=self.creator,
+    )
 
 
 class StoryNodeContext(MapAttribute[str, UnicodeAttribute]):
@@ -43,14 +56,12 @@ class StoryNodeContext(MapAttribute[str, UnicodeAttribute]):
   world_facts: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list, null=True)
   branch_facts: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list, null=True)
   similar_nodes: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list, null=True)
-  previous_text: UnicodeAttribute = UnicodeAttribute(null=True)
 
   def to_dto(self) -> StoryNodeContextDTO:
     return StoryNodeContextDTO(
       world_facts=self.world_facts,  # type: ignore[arg-type]
       branch_facts=self.branch_facts,  # type: ignore[arg-type]
       similar_nodes=self.similar_nodes,  # type: ignore[arg-type]
-      previous_text=self.previous_text,
     )
 
   @classmethod
@@ -59,7 +70,6 @@ class StoryNodeContext(MapAttribute[str, UnicodeAttribute]):
       world_facts=dto.world_facts,  # type: ignore[arg-type]
       branch_facts=dto.branch_facts,  # type: ignore[arg-type]
       similar_nodes=dto.similar_nodes,  # type: ignore[arg-type]
-      previous_text=dto.previous_text,
     )
 
 
@@ -86,11 +96,12 @@ class StoryNode(BaseCosmonautModel):
 
   id: UnicodeAttribute = UnicodeAttribute(attr_name="node_id")
   world_id: UnicodeAttribute = UnicodeAttribute()
-  text: UnicodeAttribute = UnicodeAttribute()
+  text: UnicodeAttribute = UnicodeAttribute(null=True)
   story_summary: UnicodeAttribute = UnicodeAttribute(null=True)
   title: UnicodeAttribute = UnicodeAttribute(null=True, attr_name="node_title")
   choices: ListAttribute[ChoiceMap] = ListAttribute(of=ChoiceMap, default=list, attr_name="node_choices")
   processing_status: UnicodeAttribute = UnicodeAttribute(default="pending")
+  generation_status: UnicodeAttribute = UnicodeAttribute(default="initialized")
 
   context: StoryNodeContext = StoryNodeContext(null=True)
 
@@ -116,39 +127,39 @@ class StoryNode(BaseCosmonautModel):
     return ancestors
 
   @cached_property
+  def depth(self) -> int:
+    """Get the depth of the node."""
+    return len(self.ancestors)
+
+  @cached_property
   def parent_id(self) -> str | None:
     """Get the parent ID of the node."""
     if len(self.ancestors) > 1:
       return self.ancestors[-2]
     return None
 
-  @staticmethod
-  def _number_to_base52(number: int) -> str:
-    """Convert a number to a base-52 string."""
-    if number < 0:
-      raise ValueError("Number must be positive")
-    if number == 0:
-      return "a"
-    result = ""
-    while number > 0:
-      if number % 52 > 25:
-        result = chr((number) % 52 - 26 + ord("A")) + result
-      else:
-        result = chr((number) % 52 + ord("a")) + result
-      number //= 52
-    return result
+  @cached_property
+  def choice_index(self) -> int | None:
+    """Get the index of the choice that led to this node."""
+    if not self.parent_id:
+      return None
+    return base52_to_number(self.id[len(self.parent_id) :])
 
   def get_child_id(self, choice_index: int) -> str:
     """Get the ID of the child node for a given choice index."""
+    return StoryNode.get_child_id_static(self.id, choice_index)
+
+  @staticmethod
+  def get_child_id_static(parent_id: str, choice_index: int) -> str:
     if choice_index < 0:
       raise ValueError("Choice index must be non-negative")
-    base52_index = self._number_to_base52(choice_index)
+    base52_index = number_to_base52(choice_index)
     final_string = ""
     if len(base52_index) > 1:
       final_string = f"{len(base52_index)}{base52_index}"
     else:
       final_string = base52_index
-    return f"{self.id}{final_string}"
+    return f"{parent_id}{final_string}"
 
   def to_dto(self) -> StoryNodeDTO:
     return StoryNodeDTO(
@@ -162,6 +173,7 @@ class StoryNode(BaseCosmonautModel):
       ancestors=self.ancestors,
       context=self.context.to_dto() if self.context else None,
       processing_status=StoryNodeProcessingStatus(self.processing_status),
+      generation_status=GenerationStatus(self.generation_status),
     )
 
   @classmethod
@@ -178,8 +190,17 @@ class StoryNode(BaseCosmonautModel):
       text=dto.text,
       story_summary=dto.story_summary,
       title=dto.title,
-      choices=[ChoiceMap(label=choice.label, target=choice.target) for choice in dto.choices],
+      choices=[
+        ChoiceMap(
+          label=choice.label,
+          target=choice.target,
+          is_custom="true" if choice.is_custom else None,
+          creator=choice.creator,
+        )
+        for choice in dto.choices
+      ],
       processing_status=StoryNodeProcessingStatus(dto.processing_status).value,
+      generation_status=GenerationStatus(dto.generation_status).value,
       context=StoryNodeContext.from_dto(dto.context) if dto.context else None,
     )
 

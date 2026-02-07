@@ -14,18 +14,42 @@ class GenerationStatus(str, Enum):
 
   INITIALIZED = "initialized"
   GENERATING_LORE = "generating_lore"
-  GENERATING_START_NODE = "generating_start_node"
   GENERATING_NARRATOR_PROFILE = "generating_narrator_profile"
   COMPLETED = "completed"
+  FAILED = "failed"
+
+
+class WorldVisibility(str, Enum):
+  """Visibility of the world."""
+
+  PRIVATE = "private"
+  PUBLIC = "public"
 
 
 class WorldCreateRequest(BaseModel):
   """Payload for creating a new world."""
 
-  visibility: str = "private"
+  visibility: WorldVisibility = WorldVisibility.PRIVATE
   world_prompt: str = Field(..., description="The prompt for the world.")
-  narrator_profile: str | None = None
-  node_text_length: int | None = None
+
+
+class WorldUpdateSharingRequest(BaseModel):
+  """Payload for sharing a world with a user."""
+
+  shared_with: list[str] | None = None
+  visibility: WorldVisibility | None = None
+
+
+class CharacterDTO(DTOModel):
+  name: str | None = None
+  description: str | None = None
+  relationships: list[str] | None = None
+
+
+class LocationDTO(DTOModel):
+  name: str | None = None
+  description: str | None = None
+  connections: list[str] | None = None
 
 
 class WorldMetaDTO(DTOModel):
@@ -41,12 +65,17 @@ class WorldMetaDTO(DTOModel):
   generation_status: GenerationStatus | None = None
   author_id: str | None = None
   root_node_id: str | None = None
-  visibility: str | None = None
+  visibility: WorldVisibility | None = None
+  shared_with: list[str] | None = None
   world_prompt: str | None = None
   setting: str | None = None
+  narrative_context: str | None = None
+  characters: list[CharacterDTO] | None = None
+  locations: list[LocationDTO] | None = None
   potential_endings: list[str] | None = None
   narrator_profile: str | None = None
   node_text_length: int | None = None
+  story_max_nodes: int | None = None
   world_image_url: str | None = None
   world_image_alt_text: str | None = None
   world_image_width: str | None = None

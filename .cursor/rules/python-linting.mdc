@@ -1,0 +1,33 @@
+---
+description: Python linting and type-checking workflow for cosmonaut-api
+globs: "**/*.py"
+alwaysApply: false
+---
+
+# Python Linting & Type Checking
+
+## Required checks after editing Python files
+
+Run **both** linters after substantive edits:
+
+```bash
+# Ruff (style + imports) – fast, run first
+uv run ruff check <files>
+
+# basedpyright (strict type checking) – uses pyrightconfig.json at repo root
+uv run --with basedpyright basedpyright <files>
+```
+
+## Fix common basedpyright issues
+
+- **reportUnknownVariableType**: Use `from typing import Any, cast` and `cast(dict[str, Any], value)` to narrow unknown dict values from external APIs (e.g. Stripe).
+- **reportArgumentType**: Avoid `**kwargs` with `dict[str, str]` into typed SDK methods; use explicit keyword arguments instead.
+- **reportUnusedFunction / reportUnusedImport**: Remove dead code; don't leave unused helpers.
+- **reportMissingTypeArgument**: Always parameterize generics: `dict[str, Any]` not `dict`.
+
+## Project conventions
+
+- Line length: 120 (set in `pyproject.toml` under `[tool.ruff]`)
+- Indent width: 2 spaces
+- Target: Python 3.13
+- Type checking mode: strict (see `pyrightconfig.json`)
