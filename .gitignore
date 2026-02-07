@@ -207,3 +207,7 @@ marimo/_lsp/
 __marimo__/
 .DS_Store
 .vscode
+
+# CI/CD generated files
+client-config.json
+extension_layer/

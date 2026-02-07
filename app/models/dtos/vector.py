@@ -19,9 +19,7 @@ class VectorUpsertItem(DTOModel):
 
   id: str
   values: list[float] = Field(default_factory=list, description="Embedding values.")
-  metadata: dict[str, object] | None = Field(
-    default=None, description="Optional metadata to persist with the vector."
-  )
+  metadata: dict[str, object] | None = Field(default=None, description="Optional metadata to persist with the vector.")
   namespace: str | None = Field(default=None, description="Overrides default namespace.")
 
 
@@ -63,15 +61,11 @@ class VectorDeleteRequest(DTOModel):
   """Delete vectors by id or namespace."""
 
   ids: list[str] | None = Field(default=None, description="IDs to delete.")
-  delete_all: bool = Field(
-    default=False, description="Delete all vectors in the namespace when true."
-  )
+  delete_all: bool = Field(default=False, description="Delete all vectors in the namespace when true.")
   namespace: str | None = Field(default=None, description="Namespace to target.")
 
 
 class VectorDeleteResponse(DTOModel):
   """Delete response metadata."""
 
-  deleted_count: int | None = Field(
-    default=None, description="Number of vectors removed when available."
-  )
+  deleted_count: int | None = Field(default=None, description="Number of vectors removed when available.")

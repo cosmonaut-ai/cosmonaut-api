@@ -1,0 +1,117 @@
+name: Deploy to AWS
+
+on:
+  push:
+    branches:
+      - main # Pushes to Prod
+      - develop # Pushes to Dev (Change this if you use a different branch name)
+  workflow_dispatch: # Allows manual triggering from GitHub UI
+
+permissions:
+  id-token: write # Required for requesting the JWT for OIDC
+  contents: read # Required for checkout
+
+env:
+  AWS_REGION: us-east-2
+  # The base name of your ECR repo and Lambdas (suffixes are added dynamically)
+  ECR_REPO_BASE: cosmonaut
+  LAMBDA_BASE: cosmonaut
+
+jobs:
+  deploy:
+    name: Build & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      # 1. Determine Environment (Dev vs Prod)
+      - name: Set Environment Variables
+        id: set-env
+        run: |
+          if [[ "${{ github.ref }}" == "refs/heads/main" ]]; then
+            echo "ENV_NAME=prod" >> $GITHUB_ENV
+            echo "Environment is PROD"
+          else
+            echo "ENV_NAME=dev" >> $GITHUB_ENV
+            echo "Environment is DEV"
+          fi
+
+      # 2. Copy environment-specific Google client config
+      - name: Copy Google Client Config
+        run: |
+          cp .gvertex/google-client-config-${{ env.ENV_NAME }}.json client-config.json
+          echo "Copied .gvertex/google-client-config-${{ env.ENV_NAME }}.json to client-config.json"
+
+      # 3. Authenticate with AWS (OIDC)
+      - name: Configure AWS Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+        # 4. Login to ECR
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+        with:
+          registries: '467508858251'
+
+      # 5. Download AWS Lambda Extension (Parameters & Secrets)
+      # We download the extension layer directly because AWS does not provide it as a public container image.
+      - name: Download AWS Lambda Extension
+        run: |
+          mkdir -p extension_layer
+          URL=$(aws lambda get-layer-version-by-arn \
+            --arn arn:aws:lambda:us-east-2:590474943231:layer:AWS-Parameters-and-Secrets-Lambda-Extension-Arm64:25 \
+            --query 'Content.Location' --output text)
+          curl -L -o extension.zip "$URL"
+          unzip -o extension.zip -d extension_layer
+          rm extension.zip
+
+        # 6. Set up Docker Buildx (use docker-container driver for multi-platform builds)
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 7. Build and Push Docker Image
+      - name: Build, Tag, and Push Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/arm64
+          provenance: false
+          sbom: false
+          tags: |
+            467508858251.dkr.ecr.us-east-2.amazonaws.com/${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo:${{ github.sha }}
+            467508858251.dkr.ecr.us-east-2.amazonaws.com/${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Set Image URI
+        run: |
+          echo "IMAGE_URI=467508858251.dkr.ecr.us-east-2.amazonaws.com/${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo:${{ github.sha }}" >> $GITHUB_ENV
+
+      # 8. Update All 3 Lambda Functions
+      - name: Update Lambda Code
+        env:
+          # Construct function names: cosmonaut-dev-api, cosmonaut-dev-worker-fast, etc.
+          FUNC_API: ${{ env.LAMBDA_BASE }}-${{ env.ENV_NAME }}-api
+          FUNC_FAST: ${{ env.LAMBDA_BASE }}-${{ env.ENV_NAME }}-worker-fast
+          FUNC_SLOW: ${{ env.LAMBDA_BASE }}-${{ env.ENV_NAME }}-worker-slow
+          FUNC_STREAMING: ${{ env.LAMBDA_BASE }}-${{ env.ENV_NAME }}-api-streaming
+        run: |
+          echo "Updating API Lambda: $FUNC_API"
+          aws lambda update-function-code --function-name $FUNC_API --image-uri $IMAGE_URI > /dev/null
+
+          echo "Updating Fast Worker Lambda: $FUNC_FAST"
+          aws lambda update-function-code --function-name $FUNC_FAST --image-uri $IMAGE_URI > /dev/null
+
+          echo "Updating Slow Worker Lambda: $FUNC_SLOW"
+          aws lambda update-function-code --function-name $FUNC_SLOW --image-uri $IMAGE_URI > /dev/null
+
+          echo "Updating Streaming Lambda: $FUNC_STREAMING"
+          aws lambda update-function-code --function-name $FUNC_STREAMING --image-uri $IMAGE_URI > /dev/null
+
+          echo "✅ Deployment Complete!"

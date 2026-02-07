@@ -10,9 +10,10 @@ from aws_lambda_powertools import Logger, Metrics, Tracer
 from aws_lambda_powertools.metrics import MetricUnit
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from mangum import Mangum
 
+from app.api.auth import router as auth_router
 from app.api.story_nodes import router as story_nodes_router
+from app.api.webhooks import router as webhooks_router
 from app.api.worlds import router as worlds_router
 from app.core.config import settings
 from app.core.security import get_current_user
@@ -30,13 +31,12 @@ app.add_middleware(
   allow_credentials=True,
   allow_methods=["*"],
   allow_headers=["*"],
+  expose_headers=["X-New-Node-Id"],
 )
 
 
 @app.middleware("http")
-async def inject_logger_context(
-  request: Request, call_next: Callable[[Request], Awaitable[Response]]
-) -> Response:
+async def inject_logger_context(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
   """Attach a request identifier to structured logs for correlation."""
 
   request_id = request.headers.get("x-request-id") or str(uuid4())
@@ -59,8 +59,9 @@ async def health():
 
 app.include_router(worlds_router, dependencies=[Depends(get_current_user)])
 app.include_router(story_nodes_router, dependencies=[Depends(get_current_user)])
+app.include_router(auth_router, dependencies=[Depends(get_current_user)])
 
-
-handler = Mangum(app)
+# Webhook router – no auth (Stripe signature verification instead)
+app.include_router(webhooks_router)
 
 nest_asyncio.apply()

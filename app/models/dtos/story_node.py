@@ -14,13 +14,34 @@ class ChoiceDTO(DTOModel):
   """A choice option in a story node."""
 
   label: str
+  outcome: str | None = None
   target: str | None = None
+  is_created: bool = False
+  is_custom: bool = False
+  creator: str | None = None  # User ID for custom choices
+
+
+class ChooseRequestDTO(DTOModel):
+  """Request body for the choose endpoint."""
+
+  choice_index: int | None = None  # For selecting existing choices
+  custom_choice: str | None = Field(None, max_length=200)  # For free text choices
 
 
 class StoryNodeProcessingStatus(str, Enum):
-  """Status of the story node processing."""
+  """Status of the story node processing (async fact extraction)."""
 
   PENDING = "pending"
+  PROCESSING = "processing"
+  COMPLETED = "completed"
+  FAILED = "failed"
+
+
+class GenerationStatus(str, Enum):
+  """Status of story node text generation."""
+
+  INITIALIZED = "initialized"
+  GENERATING = "generating"
   COMPLETED = "completed"
   FAILED = "failed"
 
@@ -31,7 +52,6 @@ class StoryNodeContextDTO(DTOModel):
   world_facts: list[str]
   branch_facts: list[str]
   similar_nodes: list[str]
-  previous_text: str | None = None
 
 
 class StoryNodeDTO(DTOModel):
@@ -48,4 +68,5 @@ class StoryNodeDTO(DTOModel):
   ancestors: list[str] = Field(default_factory=list)
   created_at: datetime | None = None
   updated_at: datetime | None = None
-  processing_status: StoryNodeProcessingStatus
+  processing_status: StoryNodeProcessingStatus = StoryNodeProcessingStatus.PENDING
+  generation_status: GenerationStatus = GenerationStatus.INITIALIZED

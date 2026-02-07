@@ -8,22 +8,26 @@ dependencies = [
     "aws-lambda-powertools[all]",
     "boto3",
     "fastapi",
-    "mangum",
     "pinecone-client",
     "pynamodb",
     "pydantic",
     "pydantic-settings",
+    "pydantic-ai-slim[retries]",
     "tenacity",
     "pinecone>=8.0.0",
     "google-genai>=1.56.0",
     "pydantic-ai>=1.37.0",
     "pyjwt[crypto]>=2.10.1",
     "nest-asyncio>=1.6.0",
+    "cryptography>=46.0.3",
+    "uvicorn>=0.38.0",
+    "stripe>=11.0.0",
 ]
 
 
 [dependency-groups]
 dev = [
+    "boto3-stubs[all]>=1.42.18",
     "httpx",
     "pytest",
     "uvicorn>=0.38.0",
