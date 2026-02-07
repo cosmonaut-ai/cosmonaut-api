@@ -14,6 +14,7 @@ from app.services.story_nodes import (
   InvalidProcessingStatusError,
   NodeNotFoundError,
 )
+from app.services.usage import QuotaExceededError
 from app.services.worlds import WorldNotFoundError, get_world_entity
 
 router = APIRouter(prefix="/worlds", tags=["story-nodes"])
@@ -188,7 +189,7 @@ async def generate_text(
     """Wrap the story node stream in SSE format for better Lambda/Mangum compatibility."""
     try:
       first_chunk = True
-      async for chunk in node_service.generate_text(world_id, node_id):
+      async for chunk in node_service.generate_text(world_id, node_id, user_id=current_user.id):
         # Only strip leading whitespace from the very first chunk to avoid breaking SSE format
         # Preserve all other whitespace including newlines for proper paragraph formatting
         if first_chunk:
@@ -202,6 +203,8 @@ async def generate_text(
           yield f"data: {chunk_escaped}\n\n"
       # Send a done event to signal completion
       yield "data: [DONE]\n\n"
+    except QuotaExceededError as e:
+      yield f"event: error\ndata: {str(e)}\n\n"
     except NodeNotFoundError as e:
       yield f"event: error\ndata: {str(e)}\n\n"
     except WorldNotFoundError as e:

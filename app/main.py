@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
 from app.api.story_nodes import router as story_nodes_router
+from app.api.webhooks import router as webhooks_router
 from app.api.worlds import router as worlds_router
 from app.core.config import settings
 from app.core.security import get_current_user
@@ -59,5 +60,8 @@ async def health():
 app.include_router(worlds_router, dependencies=[Depends(get_current_user)])
 app.include_router(story_nodes_router, dependencies=[Depends(get_current_user)])
 app.include_router(auth_router, dependencies=[Depends(get_current_user)])
+
+# Webhook router – no auth (Stripe signature verification instead)
+app.include_router(webhooks_router)
 
 nest_asyncio.apply()

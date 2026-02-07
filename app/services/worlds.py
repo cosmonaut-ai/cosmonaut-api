@@ -38,6 +38,7 @@ from app.models.dtos.world_meta import (
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import Character, Location, WorldMeta
 from app.services.sqs import send_world_generation_message
+from app.services.usage import check_and_increment
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
@@ -120,7 +121,11 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
   """Create a new world metadata record.
 
   Expects a mapping aligned with the `WorldMeta` attributes.
+  Raises ``QuotaExceededError`` if the user has reached their tier's world limit.
   """
+
+  # Enforce quota before creating the world
+  check_and_increment(user_id, "worlds")
 
   world_id = str(uuid.uuid4())
 

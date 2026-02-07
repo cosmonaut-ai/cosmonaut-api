@@ -9,6 +9,9 @@
   "reportGeneralTypeIssues": true,
   "reportAny": false,
 
+  "venvPath": ".",
+  "venv": ".venv",
+
   "exclude": ["**/__pycache__", "build", "dist", ".venv", "tests"],
 
   "extraPaths": ["src", "."]

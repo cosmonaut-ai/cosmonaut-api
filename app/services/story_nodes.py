@@ -25,6 +25,7 @@ from app.models.dtos.story_node import GenerationStatus, StoryNodeDTO, StoryNode
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
 from app.services.pinecone import PineconeBranchFact
 from app.services.sqs import send_node_analysis_message
+from app.services.usage import check_and_increment
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
 from app.utils import extract_xml_block, extract_xml_json
 
@@ -474,6 +475,7 @@ async def choose(
 async def generate_text(
   world_id: str,
   node_id: str,
+  user_id: str | None = None,
 ) -> AsyncGenerator[str, None]:
   """Generate story text for an initialized or failed node.
 
@@ -483,6 +485,7 @@ async def generate_text(
   Args:
     world_id: The world identifier
     node_id: The node identifier to generate text for
+    user_id: The authenticated user's ID (used for node quota enforcement)
 
   Yields:
     Text chunks as they are generated
@@ -490,6 +493,7 @@ async def generate_text(
   Raises:
     NodeNotFoundError: If the node doesn't exist
     InvalidGenerationStatusError: If the node is not in INITIALIZED or FAILED status
+    QuotaExceededError: If the user has reached their tier's node limit
   """
   logger.info(f"Generating text for node {node_id}")
 
@@ -499,6 +503,10 @@ async def generate_text(
   if GenerationStatus(node.generation_status) == GenerationStatus.COMPLETED and node.text:
     yield node.text
     return
+
+  # Enforce node quota before committing to generation
+  if user_id:
+    check_and_increment(user_id, "nodes")
 
   # Atomically transition: INITIALIZED|FAILED -> GENERATING.
   # DynamoDB conditional write ensures only one concurrent request can win this

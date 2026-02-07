@@ -49,5 +49,37 @@ class Settings(BaseSettings):
   GEMINI_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Gemini API key.")
   PINECONE_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Pinecone API key.")
 
+  # Stripe
+  STRIPE_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Stripe API key.")
+  STRIPE_WEBHOOK_SECRET_PARAM: str = Field(
+    default="", description="Parameter store path for the Stripe webhook secret."
+  )
+  STRIPE_PRICE_EXPLORER: str = Field(default="", description="Stripe Price ID for the Explorer tier.")
+  STRIPE_PRICE_COSMONAUT: str = Field(default="", description="Stripe Price ID for the Cosmonaut tier.")
+  STRIPE_PORTAL_CONFIG_ID: str = Field(default="", description="Stripe Customer Portal configuration ID.")
+
 
 settings: Settings = Settings()
+
+# ---------------------------------------------------------------------------
+# Tier limits (not environment-dependent; kept outside Settings)
+# ---------------------------------------------------------------------------
+TIER_LIMITS: dict[str, dict[str, int]] = {
+  "FREE": {"worlds": 3, "nodes": 30, "reset_days": 7},
+  "EXPLORER": {"worlds": 20, "nodes": 500, "reset_days": 30},
+  "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30},
+}
+
+# Reverse lookup: Stripe Price ID -> tier name (populated from settings at import time)
+PRICE_TO_TIER: dict[str, str] = {}
+
+
+def _build_price_to_tier() -> None:
+  """Populate PRICE_TO_TIER from settings once values are available."""
+  if settings.STRIPE_PRICE_EXPLORER:
+    PRICE_TO_TIER[settings.STRIPE_PRICE_EXPLORER] = "EXPLORER"
+  if settings.STRIPE_PRICE_COSMONAUT:
+    PRICE_TO_TIER[settings.STRIPE_PRICE_COSMONAUT] = "COSMONAUT"
+
+
+_build_price_to_tier()

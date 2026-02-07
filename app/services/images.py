@@ -9,7 +9,7 @@ from __future__ import annotations
 from functools import lru_cache
 
 from aws_lambda_powertools import Logger
-from google import genai
+from google.genai import Client as GenAIClient
 from google.genai import types
 
 import app.services.llm as llm
@@ -27,9 +27,9 @@ S3_KEY_TEMPLATE = "worlds/{world_id}/cover.png"
 
 
 @lru_cache
-def _get_genai_client() -> genai.Client:
+def _get_genai_client() -> GenAIClient:
   """Lazy singleton for the Google GenAI client."""
-  return genai.Client(api_key=get_secret_value(settings.GEMINI_API_KEY_PARAM))
+  return GenAIClient(api_key=get_secret_value(settings.GEMINI_API_KEY_PARAM))
 
 
 async def generate_world_image(world: WorldMeta) -> WorldMeta:
@@ -66,7 +66,11 @@ async def generate_world_image(world: WorldMeta) -> WorldMeta:
   if not response.generated_images:
     raise RuntimeError(f"Imagen returned no images for world {world.id}")
 
-  image_bytes: bytes = response.generated_images[0].image.image_bytes
+  generated_image = response.generated_images[0]
+  if generated_image.image is None or generated_image.image.image_bytes is None:
+    raise RuntimeError(f"Imagen returned an image with no data for world {world.id}")
+
+  image_bytes: bytes = generated_image.image.image_bytes
 
   # 3. Upload to S3
   s3_key = S3_KEY_TEMPLATE.format(world_id=world.id)
