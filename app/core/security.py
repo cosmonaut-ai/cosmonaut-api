@@ -146,7 +146,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
     if isinstance(raw_groups, list):
       groups = [str(g) for g in cast(List[Any], raw_groups)]
 
-    return User(
+    user = User(
       id=payload["sub"],
       email=payload.get("email", ""),
       username=payload.get("cognito:username", ""),
@@ -154,6 +154,13 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       tier=payload.get("custom:tier", "FREE"),
       stripe_customer_id=payload.get("custom:stripe_customer_id"),
     )
+
+    # Dev environment email allowlist — reject users not on the list.
+    if settings.ENV == "dev" and user.email not in settings.DEV_ALLOWED_EMAILS:
+      logger.warning(f"Dev access denied for email: {user.email}")
+      raise HTTPException(status_code=403, detail="Access denied: email not authorized for the dev environment")
+
+    return user
 
   except jwt.ExpiredSignatureError:
     logger.warning("Token has expired")
