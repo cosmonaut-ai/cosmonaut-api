@@ -7,6 +7,7 @@ Uses structured output (no XML parsing needed for non-streaming).
 from pydantic_ai import Agent
 
 from app.core.config import settings
+from app.services.llm.agents.prompts import NARRATIVE_CONSTRAINTS
 from app.services.llm.models import LLMWorldInfo
 from app.services.llm.provider import get_gemini_model
 from app.utils import extract_xml_json
@@ -27,7 +28,7 @@ Build out these elements:
 - **Story Title**: A title for the story, max 5 words. (User viewable)
 - **Story Description**: A short description of the story. (User viewable)
 - **Story Genre**: The genre of the story. (Literary, Fantasy, Sci-fi, Horror, Mystery, etc.) (User viewable)
-- **Potential Endings**: Generate a list of potential endings for the story to guide the narrative towards.
+- **Potential Endings**: Generate a list of potential endings for the story to guide the narrative towards. Include a mix of positive, negative, and bittersweet outcomes. Not every ending should be a victory — meaningful failure is equally important.
 
 ## Guidelines
 - Leave room for player agency; don't predetermine the protagonist's personality or key decisions
@@ -62,7 +63,7 @@ Respond using these XML tags in order:
 # Module-level agent instantiation
 _agent: Agent[None, str] = Agent(
   model=get_gemini_model(settings.GEMINI_MODEL_LARGE),
-  system_prompt=SYSTEM_PROMPT,
+  system_prompt=SYSTEM_PROMPT + NARRATIVE_CONSTRAINTS,
   output_type=str,
 )
 
