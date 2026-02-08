@@ -18,7 +18,13 @@ from fastapi import APIRouter, HTTPException, Request, status
 from app.core.config import PRICE_TO_TIER, settings
 from app.services.cognito import update_user_tier
 from app.services.secret_manager import get_secret_value
-from app.services.usage import clear_pending_cancellation, reset_period, set_pending_cancellation, update_tier
+from app.services.usage import (
+  clear_pending_cancellation,
+  reset_period,
+  set_pending_cancellation,
+  update_subscription_status,
+  update_tier,
+)
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
@@ -118,7 +124,11 @@ def _handle_invoice_paid(event: stripe.Event) -> None:
 
 
 def _handle_subscription_updated(event: stripe.Event) -> None:
-  """Plan change or pending cancellation."""
+  """Handle all subscription state transitions from Stripe.
+
+  Covers: scheduled cancellation (cancel_at / cancel_at_period_end),
+  cancellation reversal, plan change, past_due, unpaid, and paused.
+  """
   subscription = event["data"]["object"]
   user_id = _user_id_from_subscription(subscription)
   if not user_id:
@@ -127,23 +137,75 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
 
   sub_status = subscription.get("status", "")
   cancel_at_period_end = subscription.get("cancel_at_period_end", False)
+  cancel_at = subscription.get("cancel_at")  # Unix timestamp or None
 
-  if sub_status == "active" and cancel_at_period_end:
-    # User has scheduled cancellation at period end
-    period_end_ts = subscription.get("current_period_end")
-    cancel_dt = datetime.fromtimestamp(period_end_ts, tz=timezone.utc) if period_end_ts else datetime.now(timezone.utc)
+  # Persist raw Stripe status for frontend visibility
+  update_subscription_status(user_id, sub_status)
+
+  # -- Active with scheduled cancellation (cancel_at OR cancel_at_period_end) --
+  if sub_status == "active" and (cancel_at_period_end or cancel_at):
+    if cancel_at:
+      cancel_dt = datetime.fromtimestamp(cancel_at, tz=timezone.utc)
+    else:
+      period_end_ts = subscription.get("current_period_end")
+      cancel_dt = (
+        datetime.fromtimestamp(period_end_ts, tz=timezone.utc) if period_end_ts else datetime.now(timezone.utc)
+      )
     set_pending_cancellation(user_id, cancel_dt)
-    logger.info(f"Subscription marked for cancellation at period end: user={user_id}")
+    logger.info(f"Subscription cancellation scheduled: user={user_id} cancel_at={cancel_dt.isoformat()}")
     return
 
+  # -- Active with no cancellation scheduled (plan change or cancellation reversal) --
   if sub_status == "active":
-    # Plan change (upgrade/downgrade between tiers)
+    # Always clear pending cancellation – safe no-op when not pending.
+    # Handles the case where a user un-cancels via the billing portal.
+    clear_pending_cancellation(user_id)
+
     new_tier = _resolve_tier_from_subscription(subscription)
     if new_tier:
       customer_id = str(subscription.get("customer", ""))
       update_tier(user_id, new_tier, stripe_customer_id=customer_id)
       update_user_tier(user_id, new_tier)
       logger.info(f"Subscription plan changed: user={user_id} new_tier={new_tier}")
+    return
+
+  # -- Past due (payment failed, Stripe retrying) --
+  if sub_status == "past_due":
+    logger.warning(f"Subscription past due: user={user_id}")
+    return
+
+  # -- Unpaid (all retries exhausted) --
+  if sub_status == "unpaid":
+    update_tier(user_id, "FREE")
+    update_user_tier(user_id, "FREE")
+    logger.warning(f"Subscription unpaid, downgraded to FREE: user={user_id}")
+    return
+
+  # -- Paused --
+  if sub_status == "paused":
+    logger.info(f"Subscription paused: user={user_id}")
+    return
+
+  # -- Catch-all for unexpected statuses (incomplete, incomplete_expired, trialing, etc.) --
+  logger.warning(f"Unhandled subscription status '{sub_status}' for user={user_id}")
+
+
+def _handle_invoice_payment_failed(event: stripe.Event) -> None:
+  """Payment attempt failed – mark subscription as past_due for frontend visibility."""
+  invoice = event["data"]["object"]
+  subscription_id = invoice.get("subscription")
+  if not subscription_id:
+    return
+
+  stripe.api_key = _get_stripe_api_key()
+  sub = stripe.Subscription.retrieve(subscription_id)
+  user_id = _user_id_from_subscription(sub)
+  if not user_id:
+    logger.warning(f"invoice.payment_failed: no user_id in subscription {subscription_id} metadata")
+    return
+
+  update_subscription_status(user_id, "past_due")
+  logger.warning(f"Invoice payment failed: user={user_id} sub={subscription_id}")
 
 
 def _handle_subscription_deleted(event: stripe.Event) -> None:
@@ -166,6 +228,7 @@ def _handle_subscription_deleted(event: stripe.Event) -> None:
 _EVENT_HANDLERS: dict[str, Callable[[stripe.Event], None]] = {
   "checkout.session.completed": _handle_checkout_completed,
   "invoice.payment_succeeded": _handle_invoice_paid,
+  "invoice.payment_failed": _handle_invoice_payment_failed,
   "customer.subscription.updated": _handle_subscription_updated,
   "customer.subscription.deleted": _handle_subscription_deleted,
 }

@@ -115,6 +115,16 @@ def check_and_increment(user_id: str, metric: Literal["worlds", "nodes"]) -> Non
     raise QuotaExceededError(metric, limit_value) from exc
 
 
+def update_subscription_status(user_id: str, subscription_status: str) -> UserUsage:
+  """Persist the raw Stripe subscription status for frontend visibility."""
+  usage = get_or_create_usage(user_id)
+  usage.subscription_status = subscription_status
+  usage.updated_at = datetime.now(timezone.utc)
+  usage.save()
+  logger.info(f"Updated subscription_status for user {user_id} to {subscription_status}")
+  return usage
+
+
 def update_tier(
   user_id: str,
   tier: str,
@@ -136,6 +146,7 @@ def update_tier(
   usage.period_end = _new_period_end(tier)
   usage.pending_cancellation = False
   usage.cancellation_date = None  # type: ignore[assignment]
+  usage.subscription_status = "active" if tier != "FREE" else None  # type: ignore[assignment]
   usage.updated_at = now
   usage.save()
 
@@ -144,10 +155,11 @@ def update_tier(
 
 
 def set_pending_cancellation(user_id: str, cancellation_date: datetime) -> UserUsage:
-  """Mark a subscription as pending cancellation at the end of the billing period."""
+  """Mark a subscription as pending cancellation (cancel_at or cancel_at_period_end)."""
   usage = get_or_create_usage(user_id)
   usage.pending_cancellation = True
   usage.cancellation_date = cancellation_date
+  usage.subscription_status = "active"
   usage.updated_at = datetime.now(timezone.utc)
   usage.save()
   logger.info(f"Set pending cancellation for user {user_id} (ends {cancellation_date.isoformat()})")
@@ -155,11 +167,12 @@ def set_pending_cancellation(user_id: str, cancellation_date: datetime) -> UserU
 
 
 def clear_pending_cancellation(user_id: str) -> UserUsage:
-  """Clear pending cancellation state (e.g. after a successful renewal)."""
+  """Clear pending cancellation state (e.g. after a successful renewal or un-cancel)."""
   usage = get_or_create_usage(user_id)
   if usage.pending_cancellation:
     usage.pending_cancellation = False
     usage.cancellation_date = None  # type: ignore[assignment]
+    usage.subscription_status = "active"
     usage.updated_at = datetime.now(timezone.utc)
     usage.save()
     logger.info(f"Cleared pending cancellation for user {user_id}")
@@ -177,6 +190,7 @@ def reset_period(user_id: str) -> UserUsage:
   usage.period_end = _new_period_end(tier)
   usage.pending_cancellation = False
   usage.cancellation_date = None  # type: ignore[assignment]
+  usage.subscription_status = "active"
   usage.updated_at = now
   usage.save()
 
