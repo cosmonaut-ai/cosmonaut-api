@@ -60,7 +60,7 @@ class Settings(BaseSettings):
 
   # Dev access control
   DEV_ALLOWED_EMAILS: list[str] = Field(
-    default=["imatson9119@gmail.com"],
+    default=["imatson9119@gmail.com", "ian@cosmonaut-ai.com"],
     description="Email allowlist for the dev environment. Only these emails may access the API when ENV=dev.",
   )
 
@@ -71,9 +71,9 @@ settings: Settings = Settings()
 # Tier limits (not environment-dependent; kept outside Settings)
 # ---------------------------------------------------------------------------
 TIER_LIMITS: dict[str, dict[str, int]] = {
-  "FREE": {"worlds": 3, "nodes": 30, "reset_days": 7},
-  "EXPLORER": {"worlds": 20, "nodes": 500, "reset_days": 30},
-  "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30},
+  "FREE": {"worlds": 3, "nodes": 30, "reset_days": 7, "saved_worlds": 5},
+  "EXPLORER": {"worlds": 20, "nodes": 500, "reset_days": 30, "saved_worlds": 50},
+  "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30, "saved_worlds": 100},
 }
 
 # Reverse lookup: Stripe Price ID -> tier name (populated from settings at import time)

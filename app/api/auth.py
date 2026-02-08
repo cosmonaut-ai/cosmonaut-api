@@ -10,6 +10,7 @@ from app.core.config import TIER_LIMITS, settings
 from app.core.security import User, get_current_user
 from app.services.secret_manager import get_secret_value
 from app.services.usage import get_or_create_usage
+from app.services.worlds import count_user_worlds
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -41,6 +42,8 @@ class UsageResponse(BaseModel):
   nodes_limit: int
   worlds_created: int
   worlds_limit: int
+  worlds_stored: int
+  worlds_stored_limit: int
   period_end: str | None
   pending_cancellation: bool
   cancellation_date: str | None
@@ -96,6 +99,8 @@ async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResp
     nodes_limit=limits["nodes"],
     worlds_created=int(usage.worlds_created or 0),
     worlds_limit=limits["worlds"],
+    worlds_stored=count_user_worlds(current_user.id),
+    worlds_stored_limit=limits["saved_worlds"],
     period_end=usage.period_end.isoformat() if usage.period_end else None,
     pending_cancellation=bool(usage.pending_cancellation),
     cancellation_date=usage.cancellation_date.isoformat() if usage.cancellation_date else None,
