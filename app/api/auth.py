@@ -45,6 +45,8 @@ class UsageResponse(BaseModel):
   pending_cancellation: bool
   cancellation_date: str | None
   subscription_status: str | None
+  pending_tier: str | None
+  pending_tier_date: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -98,6 +100,8 @@ async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResp
     pending_cancellation=bool(usage.pending_cancellation),
     cancellation_date=usage.cancellation_date.isoformat() if usage.cancellation_date else None,
     subscription_status=str(usage.subscription_status) if usage.subscription_status else None,
+    pending_tier=str(usage.pending_tier) if usage.pending_tier else None,
+    pending_tier_date=usage.pending_tier_date.isoformat() if usage.pending_tier_date else None,
   )
 
 
