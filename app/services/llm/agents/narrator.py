@@ -6,6 +6,7 @@ Uses structured output with deps properly injected into system prompt.
 
 from pydantic_ai import Agent, RunContext
 
+from app.services.llm.agents.prompts import NARRATIVE_CONSTRAINTS
 from app.services.llm.models import LLMNarratorProfile, LLMWorldInfo
 from app.services.llm.provider import get_gemini_model
 from app.services.llm.utils import format_model_with_descriptions
@@ -50,6 +51,7 @@ _agent: Agent[LLMWorldInfo, LLMNarratorProfile] = Agent(
 def _build_system_prompt(ctx: RunContext[LLMWorldInfo]) -> str:  # pyright: ignore[reportUnusedFunction]
   """Inject world info into system prompt."""
   return f"""{SYSTEM_PROMPT}
+{NARRATIVE_CONSTRAINTS}
 
 # WORLD INFO:
 {format_model_with_descriptions(ctx.deps)}
