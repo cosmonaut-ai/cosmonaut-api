@@ -25,6 +25,27 @@ def _get_cognito_client() -> CognitoIdentityProviderClient:
   return _cognito_client
 
 
+def _resolve_cognito_username(client: CognitoIdentityProviderClient, user_id: str) -> str | None:
+  """Resolve the Cognito username for a given ``sub`` (user ID).
+
+  The ``admin_update_user_attributes`` API requires the actual Cognito
+  username, which may differ from the ``sub`` UUID (e.g. when the user
+  signed up with an email/alias or via a federated identity provider).
+  """
+  try:
+    response = client.list_users(
+      UserPoolId=settings.COGNITO_USER_POOL_ID,
+      Filter=f'sub = "{user_id}"',
+      Limit=1,
+    )
+    users = response.get("Users", [])
+    if users:
+      return users[0].get("Username")
+  except Exception:
+    logger.exception(f"Failed to look up Cognito username for sub {user_id}")
+  return None
+
+
 def update_user_tier(user_id: str, tier: str) -> None:
   """Update the ``custom:tier`` attribute on a Cognito user.
 
@@ -36,10 +57,18 @@ def update_user_tier(user_id: str, tier: str) -> None:
     return
 
   client = _get_cognito_client()
+
+  # The user_id is the Cognito ``sub`` UUID.  admin_update_user_attributes
+  # requires the actual Cognito username, so look it up first.
+  username = _resolve_cognito_username(client, user_id)
+  if not username:
+    logger.warning(f"Could not resolve Cognito username for sub {user_id}; skipping tier sync")
+    return
+
   try:
     client.admin_update_user_attributes(
       UserPoolId=settings.COGNITO_USER_POOL_ID,
-      Username=user_id,
+      Username=username,
       UserAttributes=[{"Name": "custom:tier", "Value": tier}],
     )
     logger.info(f"Synced Cognito custom:tier={tier} for user {user_id}")

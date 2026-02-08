@@ -248,9 +248,14 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
       )
       set_pending_plan_change(user_id, pending_tier, effective_dt)
       logger.info(f"Scheduled plan change: user={user_id} pending_tier={pending_tier} at={effective_dt.isoformat()}")
-    else:
-      # No schedule or pending_update – clear any previously stored pending plan change
-      clear_pending_plan_change(user_id)
+      # Don't fall through to update_tier – the subscription items haven't
+      # changed yet (the change is scheduled for end-of-period).  Calling
+      # update_tier here would wipe out the pending plan change we just saved
+      # and unnecessarily reset usage counters.
+      return
+
+    # No schedule or pending_update – clear any previously stored pending plan change
+    clear_pending_plan_change(user_id)
 
     new_tier = _resolve_tier_from_subscription(subscription)
     if new_tier:
