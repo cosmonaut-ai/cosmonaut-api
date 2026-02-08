@@ -44,6 +44,7 @@ class UsageResponse(BaseModel):
   period_end: str | None
   pending_cancellation: bool
   cancellation_date: str | None
+  subscription_status: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +97,7 @@ async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResp
     period_end=usage.period_end.isoformat() if usage.period_end else None,
     pending_cancellation=bool(usage.pending_cancellation),
     cancellation_date=usage.cancellation_date.isoformat() if usage.cancellation_date else None,
+    subscription_status=str(usage.subscription_status) if usage.subscription_status else None,
   )
 
 
