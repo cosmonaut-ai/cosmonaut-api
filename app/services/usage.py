@@ -146,6 +146,8 @@ def update_tier(
   usage.period_end = _new_period_end(tier)
   usage.pending_cancellation = False
   usage.cancellation_date = None  # type: ignore[assignment]
+  usage.pending_tier = None  # type: ignore[assignment]
+  usage.pending_tier_date = None  # type: ignore[assignment]
   usage.subscription_status = "active" if tier != "FREE" else None  # type: ignore[assignment]
   usage.updated_at = now
   usage.save()
@@ -179,6 +181,29 @@ def clear_pending_cancellation(user_id: str) -> UserUsage:
   return usage
 
 
+def set_pending_plan_change(user_id: str, pending_tier: str, effective_date: datetime) -> UserUsage:
+  """Record a scheduled plan change (e.g. downgrade at end of billing period)."""
+  usage = get_or_create_usage(user_id)
+  usage.pending_tier = pending_tier
+  usage.pending_tier_date = effective_date
+  usage.updated_at = datetime.now(timezone.utc)
+  usage.save()
+  logger.info(f"Set pending plan change for user {user_id}: {pending_tier} on {effective_date.isoformat()}")
+  return usage
+
+
+def clear_pending_plan_change(user_id: str) -> UserUsage:
+  """Clear pending plan change state (e.g. change was applied or cancelled)."""
+  usage = get_or_create_usage(user_id)
+  if usage.pending_tier:
+    usage.pending_tier = None  # type: ignore[assignment]
+    usage.pending_tier_date = None  # type: ignore[assignment]
+    usage.updated_at = datetime.now(timezone.utc)
+    usage.save()
+    logger.info(f"Cleared pending plan change for user {user_id}")
+  return usage
+
+
 def reset_period(user_id: str) -> UserUsage:
   """Reset usage counters and extend the billing period (e.g. on renewal)."""
   usage = get_or_create_usage(user_id)
@@ -190,6 +215,8 @@ def reset_period(user_id: str) -> UserUsage:
   usage.period_end = _new_period_end(tier)
   usage.pending_cancellation = False
   usage.cancellation_date = None  # type: ignore[assignment]
+  usage.pending_tier = None  # type: ignore[assignment]
+  usage.pending_tier_date = None  # type: ignore[assignment]
   usage.subscription_status = "active"
   usage.updated_at = now
   usage.save()

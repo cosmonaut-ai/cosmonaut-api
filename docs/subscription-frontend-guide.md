@@ -29,15 +29,17 @@ Returns the authenticated user's current tier, usage counters, limits, and cance
 
 ```json
 {
-  "tier": "EXPLORER",
+  "tier": "COSMONAUT",
   "nodes_used": 142,
-  "nodes_limit": 500,
+  "nodes_limit": 2000,
   "worlds_created": 5,
-  "worlds_limit": 20,
+  "worlds_limit": 100,
   "period_end": "2026-03-07T00:00:00+00:00",
   "pending_cancellation": false,
   "cancellation_date": null,
-  "subscription_status": "active"
+  "subscription_status": "active",
+  "pending_tier": "EXPLORER",
+  "pending_tier_date": "2026-03-07T00:00:00+00:00"
 }
 ```
 
@@ -54,6 +56,8 @@ Returns the authenticated user's current tier, usage counters, limits, and cance
 | `pending_cancellation` | `bool` | `true` when the user has cancelled but the subscription hasn't ended yet |
 | `cancellation_date` | `string \| null` | ISO 8601 datetime of when the subscription will actually end (only set when `pending_cancellation` is `true`) |
 | `subscription_status` | `string \| null` | Raw Stripe subscription status: `"active"`, `"past_due"`, `"unpaid"`, `"paused"`, or `null` for FREE-tier users who have never subscribed |
+| `pending_tier` | `string \| null` | The tier the subscription will change to at the end of the billing period (e.g. `"EXPLORER"` when downgrading from COSMONAUT). `null` when no plan change is scheduled. |
+| `pending_tier_date` | `string \| null` | ISO 8601 datetime of when the pending plan change takes effect. Only set when `pending_tier` is non-null. |
 
 **Notes:**
 - If the user has never been seen before, the backend automatically creates a FREE-tier record on first call.
@@ -254,12 +258,24 @@ All retries fail → Stripe either:
       → backend downgrades to FREE
 ```
 
-### Plan change (via Billing Portal)
+### Plan change -- immediate (via Billing Portal)
 
 ```
-User changes plan in portal → Stripe updates subscription
+User upgrades plan in portal → Stripe updates subscription immediately
 → webhook fires → backend updates tier, resets counters, syncs Cognito
 → GET /auth/usage reflects new tier on next call
+```
+
+### Plan change -- scheduled at end of period (downgrade via Billing Portal)
+
+```
+User downgrades plan in portal → Stripe sets pending_update on subscription
+→ webhook fires → backend sets pending_tier and pending_tier_date
+→ GET /auth/usage shows pending_tier="EXPLORER", pending_tier_date="2026-03-07..."
+→ frontend displays: "Your plan will change to Explorer on {pending_tier_date}"
+→ user keeps current tier and limits until pending_tier_date
+→ when period ends, Stripe applies the change → webhook fires with new tier
+→ backend updates tier, resets counters, clears pending_tier
 ```
 
 ---
@@ -297,6 +313,13 @@ When `GET /auth/usage` returns `pending_cancellation: true`, display messaging l
 > "Your EXPLORER plan will end on {cancellation_date}. You'll be downgraded to the Free plan after that."
 
 With a CTA to manage their subscription (via `POST /auth/billing-portal`) where they can reactivate.
+
+### Showing scheduled plan changes (downgrades)
+
+When `GET /auth/usage` returns `pending_tier` as non-null, display messaging like:
+> "Your plan will change to {pending_tier} on {pending_tier_date}."
+
+With a CTA to manage their subscription (via `POST /auth/billing-portal`) where they can revert the change.
 
 ### Showing payment issues
 

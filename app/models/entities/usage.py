@@ -31,6 +31,10 @@ class UserUsage(BaseCosmonautModel):
   pending_cancellation: BooleanAttribute = BooleanAttribute(default=False)
   cancellation_date: UTCDateTimeAttribute = UTCDateTimeAttribute(null=True)
 
+  # Pending plan change (e.g. scheduled downgrade from COSMONAUT to EXPLORER at period end)
+  pending_tier: UnicodeAttribute = UnicodeAttribute(null=True)
+  pending_tier_date: UTCDateTimeAttribute = UTCDateTimeAttribute(null=True)
+
   # ── Key helpers ──────────────────────────────────────────────────────────
 
   @classmethod

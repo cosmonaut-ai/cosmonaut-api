@@ -20,8 +20,10 @@ from app.services.cognito import update_user_tier
 from app.services.secret_manager import get_secret_value
 from app.services.usage import (
   clear_pending_cancellation,
+  clear_pending_plan_change,
   reset_period,
   set_pending_cancellation,
+  set_pending_plan_change,
   update_subscription_status,
   update_tier,
 )
@@ -70,6 +72,22 @@ def _user_id_from_subscription(subscription: dict[str, Any]) -> str | None:
   metadata = cast(dict[str, Any], raw_metadata)
   user_id_val = metadata.get("user_id")
   return str(user_id_val) if user_id_val is not None else None
+
+
+def _resolve_tier_from_pending_update(pending_update: dict[str, Any]) -> str | None:
+  """Determine the tier name from a Stripe pending_update's subscription_items."""
+  items = pending_update.get("subscription_items")
+  if not items or not isinstance(items, list) or len(items) == 0:
+    return None
+  first_item = cast(dict[str, Any], items[0])
+  price = first_item.get("price")
+  if isinstance(price, dict):
+    price_id = str(cast(dict[str, Any], price).get("id", ""))
+  elif isinstance(price, str):
+    price_id = price
+  else:
+    return None
+  return PRICE_TO_TIER.get(price_id)
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +178,22 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
     # Always clear pending cancellation – safe no-op when not pending.
     # Handles the case where a user un-cancels via the billing portal.
     clear_pending_cancellation(user_id)
+
+    # Check for a scheduled plan change (e.g. downgrade at end of billing period)
+    raw_pending_update: Any = subscription.get("pending_update")
+    if raw_pending_update and isinstance(raw_pending_update, dict):
+      pending_update = cast(dict[str, Any], raw_pending_update)
+      pending_tier = _resolve_tier_from_pending_update(pending_update)
+      if pending_tier:
+        expires_at = pending_update.get("expires_at")
+        effective_dt = (
+          datetime.fromtimestamp(expires_at, tz=timezone.utc) if expires_at else datetime.now(timezone.utc)
+        )
+        set_pending_plan_change(user_id, pending_tier, effective_dt)
+        logger.info(f"Scheduled plan change: user={user_id} pending_tier={pending_tier} at={effective_dt.isoformat()}")
+    else:
+      # No pending_update – clear any previously stored pending plan change
+      clear_pending_plan_change(user_id)
 
     new_tier = _resolve_tier_from_subscription(subscription)
     if new_tier:
