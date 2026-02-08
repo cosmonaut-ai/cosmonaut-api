@@ -36,7 +36,8 @@ Returns the authenticated user's current tier, usage counters, limits, and cance
   "worlds_limit": 20,
   "period_end": "2026-03-07T00:00:00+00:00",
   "pending_cancellation": false,
-  "cancellation_date": null
+  "cancellation_date": null,
+  "subscription_status": "active"
 }
 ```
 
@@ -52,6 +53,7 @@ Returns the authenticated user's current tier, usage counters, limits, and cance
 | `period_end` | `string \| null` | ISO 8601 datetime when the current usage period resets. Counters (`nodes_used`, `worlds_created`) reset to zero at this time. |
 | `pending_cancellation` | `bool` | `true` when the user has cancelled but the subscription hasn't ended yet |
 | `cancellation_date` | `string \| null` | ISO 8601 datetime of when the subscription will actually end (only set when `pending_cancellation` is `true`) |
+| `subscription_status` | `string \| null` | Raw Stripe subscription status: `"active"`, `"past_due"`, `"unpaid"`, `"paused"`, or `null` for FREE-tier users who have never subscribed |
 
 **Notes:**
 - If the user has never been seen before, the backend automatically creates a FREE-tier record on first call.
@@ -128,7 +130,8 @@ Creates a Stripe Billing Portal Session where the user can manage their subscrip
 | `502` | Stripe API error creating the portal session |
 
 **What the user can do in the Billing Portal:**
-- Cancel their subscription (sets `cancel_at_period_end` -- they keep access until the period ends)
+- Cancel their subscription (Stripe may set `cancel_at_period_end` or `cancel_at` depending on portal configuration -- both are handled; the user keeps access until the cancellation date)
+- Un-cancel a pending cancellation (clears `pending_cancellation` and `cancellation_date`)
 - Change plan (upgrade or downgrade between EXPLORER and COSMONAUT)
 - Update payment method
 
@@ -212,21 +215,43 @@ Stripe charges the card → webhook fires → backend resets counters and extend
 ### Cancellation (by user via Billing Portal)
 
 ```
-User clicks "Cancel" in portal → Stripe sets cancel_at_period_end=true
-→ webhook fires → backend sets pending_cancellation=true, cancellation_date
+User clicks "Cancel" in portal → Stripe sets cancel_at_period_end=true or cancel_at
+→ webhook fires → backend sets pending_cancellation=true, cancellation_date,
+  subscription_status="active"
 → GET /auth/usage now shows pending_cancellation=true with cancellation_date
 → user keeps full access until cancellation_date
-→ when period ends, Stripe deletes subscription → webhook fires
+→ when cancellation date arrives, Stripe deletes subscription → webhook fires
 → backend downgrades to FREE, syncs Cognito
+```
+
+Note: Stripe may use either `cancel_at_period_end=true` or `cancel_at=<timestamp>` depending on portal configuration. The backend handles both.
+
+### Cancellation reversal (user un-cancels via Billing Portal)
+
+```
+User clicks "Reactivate" in portal → Stripe clears cancel_at_period_end and cancel_at
+→ webhook fires → backend clears pending_cancellation and cancellation_date
+→ GET /auth/usage shows pending_cancellation=false, subscription_status="active"
+```
+
+### Failed payment (Stripe retrying)
+
+```
+Stripe charges card → payment fails → invoice.payment_failed webhook fires
+→ backend sets subscription_status="past_due"
+→ GET /auth/usage shows subscription_status="past_due"
+→ frontend should display a payment warning banner with link to billing portal
+→ user keeps full access while Stripe retries
 ```
 
 ### Failed payment (after Stripe exhausts retries)
 
 ```
-Stripe retries payment (configurable, ~3 attempts over ~2 weeks)
-→ user keeps access during retry period
-→ all retries fail → Stripe cancels subscription
-→ webhook fires → backend downgrades to FREE
+All retries fail → Stripe either:
+  (a) cancels subscription → customer.subscription.deleted webhook
+      → backend downgrades to FREE
+  (b) marks as "unpaid" → customer.subscription.updated webhook
+      → backend downgrades to FREE
 ```
 
 ### Plan change (via Billing Portal)
@@ -244,7 +269,7 @@ User changes plan in portal → Stripe updates subscription
 `POST /webhooks/stripe` is called by Stripe's servers, not by the frontend. Documented here for completeness.
 
 - No authentication header required (uses Stripe signature verification).
-- Handles: `checkout.session.completed`, `invoice.payment_succeeded`, `customer.subscription.updated`, `customer.subscription.deleted`.
+- Handles: `checkout.session.completed`, `invoice.payment_succeeded`, `invoice.payment_failed`, `customer.subscription.updated`, `customer.subscription.deleted`.
 - Always returns `200 OK` to Stripe (even on internal errors, to prevent Stripe retries for transient failures).
 
 ---
@@ -271,7 +296,24 @@ Listen for `event: error` in the SSE stream from `POST /worlds/{id}/nodes/{id}/g
 When `GET /auth/usage` returns `pending_cancellation: true`, display messaging like:
 > "Your EXPLORER plan will end on {cancellation_date}. You'll be downgraded to the Free plan after that."
 
-With a CTA to re-subscribe (via `POST /auth/checkout`) if they change their mind.
+With a CTA to manage their subscription (via `POST /auth/billing-portal`) where they can reactivate.
+
+### Showing payment issues
+
+When `GET /auth/usage` returns `subscription_status: "past_due"`, display a warning banner like:
+> "There's an issue with your payment. Please update your payment method to avoid losing access."
+
+With a link to the billing portal (`POST /auth/billing-portal`).
+
+### Handling `subscription_status` values
+
+| Status | Meaning | Recommended UI |
+|--------|---------|----------------|
+| `"active"` | Subscription is healthy | Normal UI |
+| `"past_due"` | Payment failed, Stripe is retrying | Yellow warning banner with link to update payment method |
+| `"unpaid"` | All retries exhausted, downgraded to FREE | User is on FREE tier; show re-subscribe prompt |
+| `"paused"` | Subscription paused | Informational banner, link to billing portal |
+| `null` | No subscription (FREE-tier, never subscribed) | Show upgrade prompts |
 
 ### Disabling the billing portal button for free users
 

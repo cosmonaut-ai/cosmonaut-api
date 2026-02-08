@@ -24,7 +24,10 @@ class UserUsage(BaseCosmonautModel):
 
   period_end: UTCDateTimeAttribute = UTCDateTimeAttribute(null=True)
 
-  # Pending cancellation state (set when cancel_at_period_end=true on Stripe)
+  # Stripe subscription status (e.g. "active", "past_due", "unpaid", "paused")
+  subscription_status: UnicodeAttribute = UnicodeAttribute(null=True)
+
+  # Pending cancellation state (set when cancel_at_period_end or cancel_at on Stripe)
   pending_cancellation: BooleanAttribute = BooleanAttribute(default=False)
   cancellation_date: UTCDateTimeAttribute = UTCDateTimeAttribute(null=True)
 
