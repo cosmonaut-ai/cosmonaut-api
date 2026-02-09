@@ -52,6 +52,13 @@ class StorageQuotaExceededError(Exception):
 _METRIC_ATTR = {
   "worlds": "worlds_created",
   "nodes": "nodes_used",
+  "audio": "audio_narrations_used",
+}
+
+_METRIC_LIMIT_KEY = {
+  "worlds": "worlds",
+  "nodes": "nodes",
+  "audio": "audio_limit",
 }
 
 
@@ -82,6 +89,7 @@ def get_or_create_usage(user_id: str) -> UserUsage:
       tier="FREE",
       nodes_used=0,
       worlds_created=0,
+      audio_narrations_used=0,
       period_end=_new_period_end("FREE"),
     )
     usage.save()
@@ -94,6 +102,10 @@ def get_or_create_usage(user_id: str) -> UserUsage:
     tier = str(usage.tier) if usage.tier else "FREE"
     usage.nodes_used = 0
     usage.worlds_created = 0
+    # Skip resetting audio_narrations_used for FREE tier to enforce a lifetime cap.
+    # Paid tiers reset audio usage each billing period.
+    if tier != "FREE":
+      usage.audio_narrations_used = 0
     usage.period_end = _new_period_end(tier)
     usage.updated_at = now
     usage.save()
@@ -123,7 +135,7 @@ def check_storage_quota(user_id: str) -> None:
     raise StorageQuotaExceededError("saved_worlds", saved_worlds_limit, current_count)
 
 
-def check_and_increment(user_id: str, metric: Literal["worlds", "nodes"]) -> None:
+def check_and_increment(user_id: str, metric: Literal["worlds", "nodes", "audio"]) -> None:
   """Atomically increment *metric* if the user is within their tier's quota.
 
   Raises ``QuotaExceededError`` when the limit has been reached.
@@ -135,17 +147,19 @@ def check_and_increment(user_id: str, metric: Literal["worlds", "nodes"]) -> Non
   usage = get_or_create_usage(user_id)
   tier = str(usage.tier) if usage.tier else "FREE"
   limits = TIER_LIMITS.get(tier, TIER_LIMITS["FREE"])
-  limit_value: int = limits[metric]
+  limit_key = _METRIC_LIMIT_KEY[metric]
+  limit_value: int = limits[limit_key]
 
   attr_name = _METRIC_ATTR[metric]
   attr = getattr(UserUsage, attr_name)
 
   try:
     usage.update(
-      actions=[attr.set(attr + 1)],
-      condition=(attr < limit_value),
+      actions=[attr.set((attr | 0) + 1)],
+      condition=((attr < limit_value) | attr.does_not_exist()),
     )
   except UpdateError as exc:
+    logger.error(f"Quota exceeded for {metric} for user {user_id} with limit {limit_value}", exc_info=True)
     raise QuotaExceededError(metric, limit_value) from exc
 
 
@@ -177,6 +191,7 @@ def update_tier(
     usage.stripe_customer_id = stripe_customer_id
   usage.nodes_used = 0
   usage.worlds_created = 0
+  usage.audio_narrations_used = 0
   usage.period_end = _new_period_end(tier)
   usage.pending_cancellation = False
   usage.cancellation_date = None  # type: ignore[assignment]
@@ -246,6 +261,7 @@ def reset_period(user_id: str) -> UserUsage:
 
   usage.nodes_used = 0
   usage.worlds_created = 0
+  usage.audio_narrations_used = 0
   usage.period_end = _new_period_end(tier)
   usage.pending_cancellation = False
   usage.cancellation_date = None  # type: ignore[assignment]

@@ -1,7 +1,7 @@
-"""S3 upload service for generated images.
+"""S3 upload service for static content (images, audio, etc.).
 
 Provides a lazy-initialized S3 client singleton and helpers for uploading
-image bytes to the configured bucket, returning the public CDN URL.
+file bytes to the configured bucket, returning the public CDN URL.
 """
 
 from __future__ import annotations
@@ -28,8 +28,35 @@ def get_s3_client() -> S3Client:
   return s3
 
 
+def upload_file(
+  key: str, data: bytes, content_type: str, cache_control: str = "public, max-age=31536000, immutable"
+) -> str:
+  """Upload bytes to S3 and return the public CDN URL.
+
+  Args:
+    key: The S3 object key (e.g. ``worlds/{world_id}/cover.png``).
+    data: Raw file data.
+    content_type: MIME type for the object (e.g. ``image/png``, ``audio/mpeg``).
+    cache_control: Cache-Control header value. Defaults to long-lived immutable.
+
+  Returns:
+    The full CDN URL for the uploaded file.
+  """
+  get_s3_client().put_object(
+    Bucket=settings.STATIC_CONTENT_S3_BUCKET,
+    Key=key,
+    Body=data,
+    ContentType=content_type,
+    CacheControl=cache_control,
+  )
+  logger.info(f"Uploaded file to s3://{settings.STATIC_CONTENT_S3_BUCKET}/{key}")
+  return f"https://{settings.STATIC_CONTENT_CDN_DOMAIN}/{key}"
+
+
 def upload_image(key: str, image_bytes: bytes, content_type: str = "image/png") -> str:
   """Upload image bytes to S3 and return the public CDN URL.
+
+  Convenience wrapper around :func:`upload_file` for images.
 
   Args:
     key: The S3 object key (e.g. ``worlds/{world_id}/cover.png``).
@@ -39,12 +66,4 @@ def upload_image(key: str, image_bytes: bytes, content_type: str = "image/png") 
   Returns:
     The full CDN URL for the uploaded image.
   """
-  get_s3_client().put_object(
-    Bucket=settings.IMAGES_S3_BUCKET,
-    Key=key,
-    Body=image_bytes,
-    ContentType=content_type,
-    CacheControl="public, max-age=31536000, immutable",
-  )
-  logger.info(f"Uploaded image to s3://{settings.IMAGES_S3_BUCKET}/{key}")
-  return f"https://{settings.IMAGES_CDN_DOMAIN}/{key}"
+  return upload_file(key=key, data=image_bytes, content_type=content_type)

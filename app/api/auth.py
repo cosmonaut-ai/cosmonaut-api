@@ -44,6 +44,8 @@ class UsageResponse(BaseModel):
   worlds_limit: int
   worlds_stored: int
   worlds_stored_limit: int
+  audio_narrations_used: int
+  audio_narrations_limit: int
   period_end: str | None
   pending_cancellation: bool
   cancellation_date: str | None
@@ -101,6 +103,8 @@ async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResp
     worlds_limit=limits["worlds"],
     worlds_stored=count_user_worlds(current_user.id),
     worlds_stored_limit=limits["saved_worlds"],
+    audio_narrations_used=int(usage.audio_narrations_used or 0),
+    audio_narrations_limit=limits["audio_limit"],
     period_end=usage.period_end.isoformat() if usage.period_end else None,
     pending_cancellation=bool(usage.pending_cancellation),
     cancellation_date=usage.cancellation_date.isoformat() if usage.cancellation_date else None,

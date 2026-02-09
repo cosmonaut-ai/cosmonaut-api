@@ -105,6 +105,9 @@ class StoryNode(BaseCosmonautModel):
 
   context: StoryNodeContext = StoryNodeContext(null=True)
 
+  audio_url: UnicodeAttribute = UnicodeAttribute(null=True)
+  audio_voice_id: UnicodeAttribute = UnicodeAttribute(null=True)
+
   @cached_property
   def ancestors(self) -> list[str]:
     """Get the ancestors of the node, in order from root to self."""
@@ -174,6 +177,8 @@ class StoryNode(BaseCosmonautModel):
       context=self.context.to_dto() if self.context else None,
       processing_status=StoryNodeProcessingStatus(self.processing_status),
       generation_status=GenerationStatus(self.generation_status),
+      audio_url=self.audio_url,
+      audio_voice_id=self.audio_voice_id,
     )
 
   @classmethod
@@ -202,6 +207,8 @@ class StoryNode(BaseCosmonautModel):
       processing_status=StoryNodeProcessingStatus(dto.processing_status).value,
       generation_status=GenerationStatus(dto.generation_status).value,
       context=StoryNodeContext.from_dto(dto.context) if dto.context else None,
+      audio_url=dto.audio_url,
+      audio_voice_id=dto.audio_voice_id,
     )
 
   @classmethod
