@@ -67,6 +67,28 @@ METADATA_GUIDELINES = """
   not "A New Beginning").
 """
 
+FAMILY_FRIENDLY_INSTRUCTIONS = """
+## Family-Friendly Mode (STRICT)
+This story MUST be suitable for children (ages 8+). Follow these rules absolutely:
+- NO violence that is graphic, gory, or disturbing. Conflict can exist but
+  should be handled with restraint (e.g., characters can be "captured" or
+  "knocked down" but not killed gruesomely).
+- NO death described in graphic or frightening detail. If a character dies
+  it should be handled gently and off-screen where possible.
+- NO profanity, crude language, slurs, or innuendo of any kind.
+- NO sexual content, romantic tension beyond age-appropriate
+  friendship/crushes, or suggestive themes.
+- NO horror elements, jump scares, psychological terror, or deeply
+  disturbing imagery.
+- NO drug or alcohol use, gambling, or other adult vices.
+- Use clear, approachable language. Prefer shorter sentences and vocabulary
+  accessible to a young reader. Avoid overly complex or literary prose.
+- Tone should be adventurous, wonder-filled, and encouraging. Consequences
+  for bad choices should be educational rather than traumatic.
+- Humor is encouraged. Lighthearted moments help keep the story engaging
+  for younger audiences.
+"""
+
 OUTPUT_FORMAT = """
 ## Output Format
 Respond using these XML tags in order:
