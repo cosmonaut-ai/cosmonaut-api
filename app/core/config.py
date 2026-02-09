@@ -42,12 +42,13 @@ class Settings(BaseSettings):
   CLOUDFRONT_KEY_PAIR_ID: str = Field(default="", description="CloudFront key pair ID.")
   COOKIE_DOMAIN: str = Field(default=".cosmonaut-ai.com", description="Cookie domain.")
 
-  IMAGES_S3_BUCKET: str = Field(default="", description="S3 bucket for generated images.")
-  IMAGES_CDN_DOMAIN: str = Field(default="", description="CloudFront domain for serving images.")
+  STATIC_CONTENT_S3_BUCKET: str = Field(default="", description="S3 bucket for static content (images, audio).")
+  STATIC_CONTENT_CDN_DOMAIN: str = Field(default="", description="CloudFront domain for serving static content.")
 
   GOOGLE_CLIENT_SECRET_PARAM: str = Field(default="", description="Parameter store path for the Google client secret.")
   GEMINI_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Gemini API key.")
   PINECONE_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Pinecone API key.")
+  ELEVENLABS_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the ElevenLabs API key.")
 
   # Stripe
   STRIPE_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Stripe API key.")
@@ -58,6 +59,12 @@ class Settings(BaseSettings):
   STRIPE_PRICE_COSMONAUT: str = Field(default="", description="Stripe Price ID for the Cosmonaut tier.")
   STRIPE_PORTAL_CONFIG_ID: str = Field(default="", description="Stripe Customer Portal configuration ID.")
 
+  # Dev access control
+  DEV_ALLOWED_EMAILS: list[str] = Field(
+    default=["imatson9119@gmail.com", "ian@cosmonaut-ai.com"],
+    description="Email allowlist for the dev environment. Only these emails may access the API when ENV=dev.",
+  )
+
 
 settings: Settings = Settings()
 
@@ -65,9 +72,9 @@ settings: Settings = Settings()
 # Tier limits (not environment-dependent; kept outside Settings)
 # ---------------------------------------------------------------------------
 TIER_LIMITS: dict[str, dict[str, int]] = {
-  "FREE": {"worlds": 3, "nodes": 30, "reset_days": 7},
-  "EXPLORER": {"worlds": 20, "nodes": 500, "reset_days": 30},
-  "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30},
+  "FREE": {"worlds": 3, "nodes": 30, "reset_days": 7, "saved_worlds": 5, "audio_limit": 20},
+  "EXPLORER": {"worlds": 20, "nodes": 500, "reset_days": 30, "saved_worlds": 50, "audio_limit": 60},
+  "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30, "saved_worlds": 100, "audio_limit": 200},
 }
 
 # Reverse lookup: Stripe Price ID -> tier name (populated from settings at import time)

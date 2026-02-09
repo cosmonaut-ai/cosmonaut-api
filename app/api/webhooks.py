@@ -90,6 +90,53 @@ def _resolve_tier_from_pending_update(pending_update: dict[str, Any]) -> str | N
   return PRICE_TO_TIER.get(price_id)
 
 
+def _price_id_from_phase_item(item: dict[str, Any]) -> str:
+  """Extract a price ID from a subscription schedule phase item.
+
+  The ``price`` field may be an expanded object or a plain string ID.
+  """
+  price = item.get("price")
+  if isinstance(price, dict):
+    return str(cast(dict[str, Any], price).get("id", ""))
+  if isinstance(price, str):
+    return price
+  return ""
+
+
+def _resolve_scheduled_plan_change(
+  schedule_id: str,
+) -> tuple[str | None, int | None]:
+  """Retrieve a subscription schedule and return (pending_tier, effective_ts).
+
+  The billing portal schedules end-of-period downgrades as a second phase on
+  a ``SubscriptionSchedule``.  If the schedule has more than one phase and the
+  next phase maps to a known tier, we return that tier and its start timestamp.
+  Returns ``(None, None)`` when there is no actionable pending change.
+  """
+  stripe.api_key = _get_stripe_api_key()
+  try:
+    schedule = stripe.SubscriptionSchedule.retrieve(schedule_id)
+  except stripe.StripeError as exc:
+    logger.warning(f"Failed to retrieve subscription schedule {schedule_id}: {exc}")
+    return None, None
+
+  raw_phases: Any = schedule.get("phases")
+  if not raw_phases or not isinstance(raw_phases, list) or len(raw_phases) < 2:
+    return None, None
+
+  # The next phase is the scheduled change
+  next_phase = cast(dict[str, Any], raw_phases[1])
+  items = next_phase.get("items")
+  if not items or not isinstance(items, list) or len(items) == 0:
+    return None, None
+
+  first_item = cast(dict[str, Any], items[0])
+  price_id = _price_id_from_phase_item(first_item)
+  tier = PRICE_TO_TIER.get(price_id)
+  start_date: int | None = next_phase.get("start_date")
+  return tier, start_date
+
+
 # ---------------------------------------------------------------------------
 # Event handlers
 # ---------------------------------------------------------------------------
@@ -179,21 +226,36 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
     # Handles the case where a user un-cancels via the billing portal.
     clear_pending_cancellation(user_id)
 
-    # Check for a scheduled plan change (e.g. downgrade at end of billing period)
-    raw_pending_update: Any = subscription.get("pending_update")
-    if raw_pending_update and isinstance(raw_pending_update, dict):
-      pending_update = cast(dict[str, Any], raw_pending_update)
-      pending_tier = _resolve_tier_from_pending_update(pending_update)
-      if pending_tier:
-        expires_at = pending_update.get("expires_at")
-        effective_dt = (
-          datetime.fromtimestamp(expires_at, tz=timezone.utc) if expires_at else datetime.now(timezone.utc)
-        )
-        set_pending_plan_change(user_id, pending_tier, effective_dt)
-        logger.info(f"Scheduled plan change: user={user_id} pending_tier={pending_tier} at={effective_dt.isoformat()}")
-    else:
-      # No pending_update – clear any previously stored pending plan change
-      clear_pending_plan_change(user_id)
+    # Check for a scheduled plan change (e.g. downgrade at end of billing period).
+    # The billing portal uses subscription schedules; the API may use pending_update.
+    pending_tier: str | None = None
+    effective_ts: int | None = None
+
+    schedule_id = subscription.get("schedule")
+    if schedule_id and isinstance(schedule_id, str):
+      pending_tier, effective_ts = _resolve_scheduled_plan_change(schedule_id)
+
+    if not pending_tier:
+      raw_pending_update: Any = subscription.get("pending_update")
+      if raw_pending_update and isinstance(raw_pending_update, dict):
+        pending_update = cast(dict[str, Any], raw_pending_update)
+        pending_tier = _resolve_tier_from_pending_update(pending_update)
+        effective_ts = pending_update.get("expires_at")
+
+    if pending_tier:
+      effective_dt = (
+        datetime.fromtimestamp(effective_ts, tz=timezone.utc) if effective_ts else datetime.now(timezone.utc)
+      )
+      set_pending_plan_change(user_id, pending_tier, effective_dt)
+      logger.info(f"Scheduled plan change: user={user_id} pending_tier={pending_tier} at={effective_dt.isoformat()}")
+      # Don't fall through to update_tier – the subscription items haven't
+      # changed yet (the change is scheduled for end-of-period).  Calling
+      # update_tier here would wipe out the pending plan change we just saved
+      # and unnecessarily reset usage counters.
+      return
+
+    # No schedule or pending_update – clear any previously stored pending plan change
+    clear_pending_plan_change(user_id)
 
     new_tier = _resolve_tier_from_subscription(subscription)
     if new_tier:
