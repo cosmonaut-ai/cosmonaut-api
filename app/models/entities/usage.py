@@ -21,6 +21,7 @@ class UserUsage(BaseCosmonautModel):
 
   nodes_used: NumberAttribute = NumberAttribute(default=0)
   worlds_created: NumberAttribute = NumberAttribute(default=0)
+  audio_narrations_used: NumberAttribute = NumberAttribute(default=0)
 
   period_end: UTCDateTimeAttribute = UTCDateTimeAttribute(null=True)
 
