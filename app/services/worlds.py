@@ -38,7 +38,7 @@ from app.models.dtos.world_meta import (
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import Character, Location, WorldMeta
 from app.services.sqs import send_world_generation_message
-from app.services.usage import check_and_increment
+from app.services.usage import check_and_increment, check_storage_quota
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
@@ -105,6 +105,12 @@ def get_world_entity(world_id: str) -> WorldMeta:
     raise WorldNotFoundError(world_id) from e
 
 
+def count_user_worlds(user_id: str) -> int:
+  """Count the total number of worlds owned by a user (GSI1 count query)."""
+  gsi1_pk = WorldMeta.gsi1_pk(user_id)
+  return WorldMeta.GSI1.count(hash_key=gsi1_pk)  # type: ignore[reportUnknownMemberType]
+
+
 def list_worlds(user_id: str) -> list[WorldMeta]:
   """Return a discoverable set of worlds (paged feed TBD)."""
   gsi1_pk = WorldMeta.gsi1_pk(user_id)
@@ -121,10 +127,15 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
   """Create a new world metadata record.
 
   Expects a mapping aligned with the `WorldMeta` attributes.
-  Raises ``QuotaExceededError`` if the user has reached their tier's world limit.
+  Raises ``StorageQuotaExceededError`` if the user has reached their saved-worlds cap.
+  Raises ``QuotaExceededError`` if the user has reached their periodic world-creation limit.
   """
 
-  # Enforce quota before creating the world
+  # 1. Check storage quota (total saved worlds) — checked first so a periodic
+  #    slot isn't consumed when the user is already at storage capacity.
+  check_storage_quota(user_id)
+
+  # 2. Check periodic rate limit (worlds created this billing period)
   check_and_increment(user_id, "worlds")
 
   world_id = str(uuid.uuid4())

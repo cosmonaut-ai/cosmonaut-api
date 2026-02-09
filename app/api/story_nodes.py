@@ -2,20 +2,28 @@
 
 from __future__ import annotations
 
+from aws_lambda_powertools import Logger
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
+from pynamodb.exceptions import UpdateError
 
 import app.services.story_nodes as node_service
+from app.core.config import settings
 from app.core.security import User, get_current_user
 from app.models.dtos.story_node import ChooseRequestDTO, GenerationStatus, StoryNodeDTO
+from app.models.entities.story_node import StoryNode
+from app.services.audio import DEFAULT_VOICE_ID, generate_and_store_audio
 from app.services.story_nodes import (
   InvalidChoiceError,
   InvalidGenerationStatusError,
   InvalidProcessingStatusError,
   NodeNotFoundError,
 )
-from app.services.usage import QuotaExceededError
+from app.services.usage import QuotaExceededError, check_and_increment
 from app.services.worlds import WorldNotFoundError, get_world_entity
+
+logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 router = APIRouter(prefix="/worlds", tags=["story-nodes"])
 
@@ -259,3 +267,104 @@ async def retry_processing(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
   except InvalidProcessingStatusError as e:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+
+
+# ---------------------------------------------------------------------------
+# Audio narration
+# ---------------------------------------------------------------------------
+
+
+class AudioResponse(BaseModel):
+  audio_url: str
+
+
+@router.post(
+  "/{world_id}/nodes/{node_id}/audio",
+  response_model=AudioResponse,
+  summary="Generate TTS audio narration for a story node",
+)
+async def generate_node_audio(
+  world_id: str = Path(..., description="Identifier for the world"),
+  node_id: str = Path(..., description="Identifier for the story node"),
+  current_user: User = Depends(get_current_user),
+) -> AudioResponse:
+  """Generate audio narration for a completed story node.
+
+  The endpoint is **idempotent**: if audio has already been generated for this
+  node the existing URL is returned immediately without consuming quota.
+
+  Workflow:
+    1. Verify the node exists and has completed text generation.
+    2. Return the existing ``audio_url`` if present.
+    3. Check the user's audio narration quota.
+    4. Generate audio via ElevenLabs TTS (Flash 2.5).
+    5. Upload the MP3 to S3 and persist the URL on the node.
+    6. Return the CDN URL.
+  """
+  # -- Auth --
+  try:
+    world = get_world_entity(world_id)
+  except WorldNotFoundError as e:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+  if not world.can_user_read(current_user.id):
+    raise HTTPException(
+      status_code=status.HTTP_403_FORBIDDEN,
+      detail=f"You are not authorized to access world {world_id}",
+    )
+
+  # -- Fetch node --
+  try:
+    node = node_service.get_node(world_id, node_id)
+  except NodeNotFoundError as e:
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+
+  # Node must have completed text generation
+  if GenerationStatus(node.generation_status) != GenerationStatus.COMPLETED:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail=f"Node {node_id} text has not been generated yet",
+    )
+
+  # -- Idempotency: return existing audio if present --
+  if node.audio_url:
+    return AudioResponse(audio_url=str(node.audio_url))
+
+  # -- Quota check --
+  try:
+    check_and_increment(current_user.id, "audio")
+  except QuotaExceededError as e:
+    raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)) from e
+
+  # -- Generate & upload audio --
+  voice_id = DEFAULT_VOICE_ID
+  try:
+    cdn_url = generate_and_store_audio(
+      world_id=world_id,
+      node_id=node_id,
+      text=str(node.text),
+      voice_id=voice_id,
+    )
+  except Exception as e:
+    logger.error(f"Audio generation failed for node {node_id}: {e}", exc_info=True)
+    raise HTTPException(
+      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+      detail="Audio generation failed",
+    ) from e
+
+  # -- Persist audio URL on the node (conditional to prevent race conditions) --
+  try:
+    node.update(
+      actions=[
+        StoryNode.audio_url.set(cdn_url),
+        StoryNode.audio_voice_id.set(voice_id),
+      ],
+      condition=StoryNode.audio_url.does_not_exist(),
+    )
+  except UpdateError:
+    # Another request already set the audio URL — re-fetch and return that.
+    node.refresh()
+    if node.audio_url:
+      return AudioResponse(audio_url=str(node.audio_url))
+
+  return AudioResponse(audio_url=cdn_url)
