@@ -19,7 +19,7 @@ from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
-from app.core.config import settings
+from app.core.config import WORLD_LENGTH_MAX_NODES, settings
 from app.models.dtos.story_node import (
   GenerationStatus as NodeGenerationStatus,
 )
@@ -140,6 +140,8 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
 
   world_id = str(uuid.uuid4())
 
+  max_nodes = WORLD_LENGTH_MAX_NODES[create_request.world_length.value]
+
   meta_dto = WorldMetaDTO(
     id=world_id,
     author_id=user_id,
@@ -148,7 +150,9 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
     generation_status=GenerationStatus.INITIALIZED,
     created_at=datetime.now(timezone.utc).isoformat(),
     updated_at=datetime.now(timezone.utc).isoformat(),
-    story_max_nodes=20,
+    story_max_nodes=max_nodes,
+    world_length=create_request.world_length.value,
+    family_friendly=create_request.family_friendly,
   )
 
   meta = WorldMeta.from_dto(meta_dto)
@@ -228,7 +232,10 @@ def delete_world(world_id: str) -> None:
 async def generate_lore(world: WorldMeta) -> WorldMeta:
   """Generate lore for a world (LLM integration TBD)."""
 
-  llm_world_info: llm.LLMWorldInfo = await llm.generate_world_info(world.world_prompt)
+  is_family_friendly = world.family_friendly == "true"
+  llm_world_info: llm.LLMWorldInfo = await llm.generate_world_info(
+    world.world_prompt, family_friendly=is_family_friendly
+  )
   world.title = llm_world_info.title
   world.description = llm_world_info.description
   world.genre = llm_world_info.genre
@@ -261,7 +268,8 @@ async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
   if world.narrator_profile:
     return world
   llm_world_info = world_meta_to_llm_world_info(world)
-  narrator_profile = await llm.generate_narrator_profile(llm_world_info)
+  is_family_friendly = world.family_friendly == "true"
+  narrator_profile = await llm.generate_narrator_profile(llm_world_info, family_friendly=is_family_friendly)
   world.narrator_profile = narrator_profile.narrator_profile
   return world
 

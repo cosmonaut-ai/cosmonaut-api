@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from pynamodb.attributes import ListAttribute, MapAttribute, NumberAttribute, UnicodeAttribute
 
-from app.models.dtos.world_meta import CharacterDTO, GenerationStatus, LocationDTO, WorldMetaDTO, WorldVisibility
+from app.models.dtos.world_meta import (
+  CharacterDTO,
+  GenerationStatus,
+  LocationDTO,
+  WorldMetaDTO,
+  WorldVisibility,
+)
 from app.models.entities.base import BaseCosmonautModel
 from app.utils import coerce_datetime
 
@@ -86,6 +92,11 @@ class WorldMeta(BaseCosmonautModel):
   node_text_length: NumberAttribute = NumberAttribute(null=True)
   story_max_nodes: NumberAttribute = NumberAttribute(default=10)
 
+  # World length preset ("short", "medium", "long") chosen at creation time.
+  world_length: UnicodeAttribute = UnicodeAttribute(null=True)
+  # When true, LLM prompts are augmented with child-safe content guidelines.
+  family_friendly: UnicodeAttribute = UnicodeAttribute(default="false")
+
   shared_with: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
 
   world_image_url: UnicodeAttribute = UnicodeAttribute(null=True)
@@ -120,6 +131,8 @@ class WorldMeta(BaseCosmonautModel):
       world_image_height=self.world_image_height,
       world_image_size=self.world_image_size,
       story_max_nodes=int(self.story_max_nodes),
+      world_length=self.world_length,
+      family_friendly=self.family_friendly == "true",
       created_at=self.created_at.isoformat() if self.created_at else None,
       updated_at=self.updated_at.isoformat() if self.updated_at else None,
     )
@@ -151,6 +164,9 @@ class WorldMeta(BaseCosmonautModel):
       potential_endings=dto.potential_endings or [],  # type: ignore[arg-type]
       narrator_profile=dto.narrator_profile,
       node_text_length=dto.node_text_length,
+      story_max_nodes=dto.story_max_nodes,
+      world_length=dto.world_length,
+      family_friendly="true" if dto.family_friendly else "false",
       shared_with=dto.shared_with or [],  # type: ignore[arg-type]
       world_image_url=dto.world_image_url,
       world_image_alt_text=dto.world_image_alt_text,
