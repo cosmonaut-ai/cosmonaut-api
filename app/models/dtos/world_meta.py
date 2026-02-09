@@ -26,11 +26,21 @@ class WorldVisibility(str, Enum):
   PUBLIC = "public"
 
 
+class WorldLength(str, Enum):
+  """Length preset for a world's story branches."""
+
+  SHORT = "short"
+  MEDIUM = "medium"
+  LONG = "long"
+
+
 class WorldCreateRequest(BaseModel):
   """Payload for creating a new world."""
 
   visibility: WorldVisibility = WorldVisibility.PRIVATE
   world_prompt: str = Field(..., description="The prompt for the world.")
+  world_length: WorldLength = Field(default=WorldLength.MEDIUM, description="Story length preset (short/medium/long).")
+  family_friendly: bool = Field(default=False, description="If true, story content is made suitable for children.")
 
 
 class WorldUpdateSharingRequest(BaseModel):
@@ -76,6 +86,8 @@ class WorldMetaDTO(DTOModel):
   narrator_profile: str | None = None
   node_text_length: int | None = None
   story_max_nodes: int | None = None
+  world_length: str | None = None
+  family_friendly: bool | None = None
   world_image_url: str | None = None
   world_image_alt_text: str | None = None
   world_image_width: str | None = None

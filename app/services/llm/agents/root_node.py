@@ -9,6 +9,7 @@ from pydantic_ai import Agent, RunContext
 
 from app.services.llm.agents.prompts import (
   CHOICE_GUIDELINES,
+  FAMILY_FRIENDLY_INSTRUCTIONS,
   METADATA_GUIDELINES,
   NARRATIVE_CONSTRAINTS,
   OUTPUT_FORMAT,
@@ -57,6 +58,7 @@ class RootNodeDeps(BaseModel):
 
   world_info: LLMWorldInfo
   narrator_profile: str = Field(description="The narrator's profile.")
+  family_friendly: bool = Field(default=False, description="Whether to enforce family-friendly content guidelines.")
 
 
 # Module-level agent instantiation (streaming with XML output)
@@ -70,7 +72,9 @@ _agent: Agent[RootNodeDeps, str] = Agent(
 @_agent.system_prompt
 def _build_system_prompt(ctx: RunContext[RootNodeDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
   """Build system prompt for streaming root node generation."""
+  family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if ctx.deps.family_friendly else ""
   return f"""{SYSTEM_PROMPT}
+{family_friendly_note}
 
 ---
 WORLD CONTEXT (background—player hasn't seen this):

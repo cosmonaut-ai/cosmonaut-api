@@ -10,6 +10,7 @@ from pydantic_ai import Agent, RunContext
 
 from app.services.llm.agents.prompts import (
   CHOICE_GUIDELINES,
+  FAMILY_FRIENDLY_INSTRUCTIONS,
   METADATA_GUIDELINES,
   NARRATIVE_CONSTRAINTS,
   OUTPUT_FORMAT,
@@ -107,6 +108,7 @@ class NextNodeDeps(BaseModel):
   story_length: int = Field(description="The length of the story so far in nodes.")
   story_max_nodes: int = Field(description="The maximum length of the story in nodes.")
   is_custom_choice: bool = Field(default=False, description="Whether this is a user-created custom choice.")
+  family_friendly: bool = Field(default=False, description="Whether to enforce family-friendly content guidelines.")
 
 
 # Module-level agent instantiation
@@ -129,8 +131,10 @@ def _build_system_prompt(ctx: RunContext[NextNodeDeps]) -> str:  # pyright: igno
   choice_outcome_note = (
     CHOICE_OUTCOME_INSTRUCTIONS.format(choice_outcome=deps.choice_outcome) if deps.choice_outcome else ""
   )
+  family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if deps.family_friendly else ""
 
   return f"""{SYSTEM_PROMPT}
+{family_friendly_note}
 
 # CONTEXT
 ## Story Progress:

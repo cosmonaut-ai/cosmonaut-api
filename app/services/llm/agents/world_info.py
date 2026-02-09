@@ -4,10 +4,11 @@ Generates world setting, characters, locations from a user prompt.
 Uses structured output (no XML parsing needed for non-streaming).
 """
 
-from pydantic_ai import Agent
+from pydantic import BaseModel, Field
+from pydantic_ai import Agent, RunContext
 
 from app.core.config import settings
-from app.services.llm.agents.prompts import NARRATIVE_CONSTRAINTS
+from app.services.llm.agents.prompts import FAMILY_FRIENDLY_INSTRUCTIONS, NARRATIVE_CONSTRAINTS
 from app.services.llm.models import LLMWorldInfo
 from app.services.llm.provider import get_gemini_model
 from app.utils import extract_xml_json
@@ -60,21 +61,36 @@ Respond using these XML tags in order:
 </world_info>
 """  # noqa: E501
 
+
+class WorldInfoDeps(BaseModel):
+  """Dependencies for world info generation."""
+
+  family_friendly: bool = Field(default=False, description="Whether to enforce family-friendly content guidelines.")
+
+
 # Module-level agent instantiation
-_agent: Agent[None, str] = Agent(
+_agent: Agent[WorldInfoDeps, str] = Agent(
   model=get_gemini_model(settings.GEMINI_MODEL_LARGE),
-  system_prompt=SYSTEM_PROMPT + NARRATIVE_CONSTRAINTS,
+  deps_type=WorldInfoDeps,
   output_type=str,
 )
 
 
-async def generate_world_info(world_prompt: str) -> LLMWorldInfo:
+@_agent.system_prompt
+def _build_system_prompt(ctx: RunContext[WorldInfoDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
+  """Build system prompt with optional family-friendly instructions."""
+  family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if ctx.deps.family_friendly else ""
+  return SYSTEM_PROMPT + NARRATIVE_CONSTRAINTS + family_friendly_note
+
+
+async def generate_world_info(world_prompt: str, *, family_friendly: bool = False) -> LLMWorldInfo:
   """Generate world info from a prompt using XML-based planning format.
 
   The LLM first creates a plan in <plan> tags, then outputs structured
   world info in <world_info> tags as JSON.
   """
-  result = await _agent.run(world_prompt)
+  deps = WorldInfoDeps(family_friendly=family_friendly)
+  result = await _agent.run(world_prompt, deps=deps)
   raw_output = result.output
 
   # Extract world_info JSON from XML response

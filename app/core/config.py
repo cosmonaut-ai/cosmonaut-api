@@ -77,6 +77,15 @@ TIER_LIMITS: dict[str, dict[str, int]] = {
   "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30, "saved_worlds": 100, "audio_limit": 200},
 }
 
+# ---------------------------------------------------------------------------
+# World length presets (max story depth per branch)
+# ---------------------------------------------------------------------------
+WORLD_LENGTH_MAX_NODES: dict[str, int] = {
+  "short": 5,
+  "medium": 10,
+  "long": 15,
+}
+
 # Reverse lookup: Stripe Price ID -> tier name (populated from settings at import time)
 PRICE_TO_TIER: dict[str, str] = {}
 
