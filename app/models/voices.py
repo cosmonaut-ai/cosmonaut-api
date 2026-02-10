@@ -52,7 +52,7 @@ VOICES: list[Voice] = [
   Voice(
     id="peter",
     display_name="Peter",
-    description="A youthful male voice, perfect for lighthearted adventures.",
+    description="A deep, bassy voice with a gravelly texture.",
     elevenlabs_voiceid="ZthjuvLPty3kTMaNKVKb",
   ),
   Voice(
@@ -72,6 +72,12 @@ VOICES: list[Voice] = [
     display_name="Jon",
     description="A balanced, everyday male voice with an approachable feel.",
     elevenlabs_voiceid="MFZUKuGQUsGJPQjTS4wC",
+  ),
+  Voice(
+    id="josh",
+    display_name="Josh",
+    description="A youthful male voice, perfect for lighthearted adventures.",
+    elevenlabs_voiceid="nzFihrBIvB34imQBuxub",
   ),
 ]
 
