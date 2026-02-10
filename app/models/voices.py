@@ -32,40 +32,16 @@ class Voice:
 
 VOICES: list[Voice] = [
   Voice(
-    id="jane",
-    display_name="Jane",
-    description="A strong, older voice with a warm presence.",
-    elevenlabs_voiceid="RILOU7YmBhvwJGDGjNmP",
-  ),
-  Voice(
-    id="katherine",
-    display_name="Katherine",
-    description="A smooth, British-accented voice with refined elegance.",
-    elevenlabs_voiceid="NtS6nEHDYMQC9QczMQuq",
-  ),
-  Voice(
-    id="paige",
-    display_name="Paige",
-    description="A clear, midrange voice with an engaging cadence.",
-    elevenlabs_voiceid="NDTYOmYEjbDIVCKB35i3",
-  ),
-  Voice(
-    id="peter",
-    display_name="Peter",
-    description="A deep, bassy voice with a gravelly texture.",
-    elevenlabs_voiceid="ZthjuvLPty3kTMaNKVKb",
-  ),
-  Voice(
     id="theo",
-    display_name="Theo",
+    display_name="Theo (Default)",
     description="A smooth, composed male voice with quiet confidence.",
     elevenlabs_voiceid="jfIS2w2yJi0grJZPyEsk",
   ),
   Voice(
-    id="michael",
-    display_name="Michael",
-    description="A strong, commanding male voice with rich depth.",
-    elevenlabs_voiceid="uju3wxzG5OhpWcoi3SMy",
+    id="jane",
+    display_name="Jane",
+    description="A strong, older voice with a warm presence.",
+    elevenlabs_voiceid="RILOU7YmBhvwJGDGjNmP",
   ),
   Voice(
     id="jon",
@@ -78,6 +54,30 @@ VOICES: list[Voice] = [
     display_name="Josh",
     description="A youthful male voice, perfect for lighthearted adventures.",
     elevenlabs_voiceid="nzFihrBIvB34imQBuxub",
+  ),
+  Voice(
+    id="katherine",
+    display_name="Katherine",
+    description="A smooth, British-accented voice with refined elegance.",
+    elevenlabs_voiceid="NtS6nEHDYMQC9QczMQuq",
+  ),
+  Voice(
+    id="michael",
+    display_name="Michael",
+    description="A strong, commanding male voice with rich depth.",
+    elevenlabs_voiceid="uju3wxzG5OhpWcoi3SMy",
+  ),
+  Voice(
+    id="paige",
+    display_name="Paige",
+    description="A clear, midrange voice with an engaging cadence.",
+    elevenlabs_voiceid="NDTYOmYEjbDIVCKB35i3",
+  ),
+  Voice(
+    id="peter",
+    display_name="Peter",
+    description="A deep, bassy voice with a gravelly texture.",
+    elevenlabs_voiceid="ZthjuvLPty3kTMaNKVKb",
   ),
 ]
 
