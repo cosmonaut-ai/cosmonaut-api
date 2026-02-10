@@ -70,5 +70,4 @@ class StoryNodeDTO(DTOModel):
   updated_at: datetime | None = None
   processing_status: StoryNodeProcessingStatus = StoryNodeProcessingStatus.PENDING
   generation_status: GenerationStatus = GenerationStatus.INITIALIZED
-  audio_url: str | None = None
-  audio_voice_id: str | None = None
+  audio: dict[str, str] = Field(default_factory=dict)

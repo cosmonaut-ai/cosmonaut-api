@@ -13,7 +13,8 @@ from app.core.config import settings
 from app.core.security import User, get_current_user
 from app.models.dtos.story_node import ChooseRequestDTO, GenerationStatus, StoryNodeDTO
 from app.models.entities.story_node import StoryNode
-from app.services.audio import DEFAULT_VOICE_ID, generate_and_store_audio
+from app.models.voices import get_voice_by_id
+from app.services.audio import generate_and_store_audio
 from app.services.story_nodes import (
   InvalidChoiceError,
   InvalidGenerationStatusError,
@@ -274,6 +275,10 @@ async def retry_processing(
 # ---------------------------------------------------------------------------
 
 
+class AudioRequest(BaseModel):
+  voice_id: str
+
+
 class AudioResponse(BaseModel):
   audio_url: str
 
@@ -286,21 +291,32 @@ class AudioResponse(BaseModel):
 async def generate_node_audio(
   world_id: str = Path(..., description="Identifier for the world"),
   node_id: str = Path(..., description="Identifier for the story node"),
+  request: AudioRequest = Body(...),
   current_user: User = Depends(get_current_user),
 ) -> AudioResponse:
-  """Generate audio narration for a completed story node.
+  """Generate audio narration for a completed story node using the chosen voice.
 
-  The endpoint is **idempotent**: if audio has already been generated for this
-  node the existing URL is returned immediately without consuming quota.
+  The endpoint is **idempotent per voice**: if audio has already been generated
+  for this node with the requested voice, the existing URL is returned
+  immediately without consuming quota.
 
   Workflow:
-    1. Verify the node exists and has completed text generation.
-    2. Return the existing ``audio_url`` if present.
-    3. Check the user's audio narration quota.
-    4. Generate audio via ElevenLabs TTS (Flash 2.5).
-    5. Upload the MP3 to S3 and persist the URL on the node.
-    6. Return the CDN URL.
+    1. Validate the ``voice_id`` against the voice registry.
+    2. Verify the node exists and has completed text generation.
+    3. Return the existing audio URL for the voice if present.
+    4. Check the user's audio narration quota.
+    5. Generate audio via ElevenLabs TTS (Flash 2.5).
+    6. Upload the MP3 to S3 and persist the URL on the node.
+    7. Return the CDN URL.
   """
+  # -- Validate voice --
+  voice = get_voice_by_id(request.voice_id)
+  if voice is None:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail=f"Unknown voice_id: {request.voice_id}",
+    )
+
   # -- Auth --
   try:
     world = get_world_entity(world_id)
@@ -326,9 +342,10 @@ async def generate_node_audio(
       detail=f"Node {node_id} text has not been generated yet",
     )
 
-  # -- Idempotency: return existing audio if present --
-  if node.audio_url:
-    return AudioResponse(audio_url=str(node.audio_url))
+  # -- Idempotency: return existing audio for this voice if present --
+  existing_audio: dict[str, str] = dict(node.audio.attribute_values) if node.audio else {}
+  if voice.id in existing_audio:
+    return AudioResponse(audio_url=existing_audio[voice.id])
 
   # -- Quota check --
   try:
@@ -337,13 +354,13 @@ async def generate_node_audio(
     raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)) from e
 
   # -- Generate & upload audio --
-  voice_id = DEFAULT_VOICE_ID
   try:
     cdn_url = generate_and_store_audio(
       world_id=world_id,
       node_id=node_id,
       text=str(node.text),
-      voice_id=voice_id,
+      voice_id=voice.id,
+      elevenlabs_voiceid=voice.elevenlabs_voiceid,
     )
   except Exception as e:
     logger.error(f"Audio generation failed for node {node_id}: {e}", exc_info=True)
@@ -356,15 +373,15 @@ async def generate_node_audio(
   try:
     node.update(
       actions=[
-        StoryNode.audio_url.set(cdn_url),
-        StoryNode.audio_voice_id.set(voice_id),
+        StoryNode.audio[voice.id].set(cdn_url),  # type: ignore[union-attr]
       ],
-      condition=StoryNode.audio_url.does_not_exist(),
+      condition=StoryNode.audio[voice.id].does_not_exist() | StoryNode.audio.does_not_exist(),  # type: ignore[union-attr]
     )
   except UpdateError:
-    # Another request already set the audio URL — re-fetch and return that.
+    # Another request already set the audio URL for this voice — re-fetch and return.
     node.refresh()
-    if node.audio_url:
-      return AudioResponse(audio_url=str(node.audio_url))
+    refreshed_audio: dict[str, str] = dict(node.audio.attribute_values) if node.audio else {}
+    if voice.id in refreshed_audio:
+      return AudioResponse(audio_url=refreshed_audio[voice.id])
 
   return AudioResponse(audio_url=cdn_url)
