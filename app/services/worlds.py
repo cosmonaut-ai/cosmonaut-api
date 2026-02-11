@@ -11,7 +11,6 @@ Architecture:
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timezone
 from typing import Any, Callable
 
 from aws_lambda_powertools import Logger
@@ -148,8 +147,6 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
     visibility=create_request.visibility,
     world_prompt=create_request.world_prompt,
     generation_status=GenerationStatus.INITIALIZED,
-    created_at=datetime.now(timezone.utc).isoformat(),
-    updated_at=datetime.now(timezone.utc).isoformat(),
     story_max_nodes=max_nodes,
     world_length=create_request.world_length.value,
     family_friendly=create_request.family_friendly,
@@ -206,11 +203,6 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
         setattr(world, field_name, converted_value)  # type: ignore[arg-type]
       else:
         setattr(world, field_name, converted_value)
-
-  # Always update timestamp and GSI1SK
-  world.updated_at = datetime.now(timezone.utc)
-  if world.author_id:
-    world.GSI1SK = WorldMeta.gsi1_sk(world.updated_at.isoformat())
 
   world.save()
   return world

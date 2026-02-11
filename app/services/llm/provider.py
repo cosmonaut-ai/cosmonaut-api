@@ -2,7 +2,7 @@
 
 Uses lru_cache to provide lazy initialization without global mutable state.
 Includes automatic retry with exponential backoff for transient API errors
-(429 rate-limit, 502, 503 overloaded, 504 timeout).
+(429 rate-limit, 500 internal, 502, 503 overloaded, 504 timeout).
 """
 
 from functools import lru_cache
@@ -18,14 +18,14 @@ from app.core.config import settings
 from app.services.secret_manager import get_secret_value
 
 # HTTP status codes that should trigger a retry.
-_RETRYABLE_STATUS_CODES = {429, 502, 503, 504}
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 def _create_retrying_client() -> AsyncClient:
   """Build an httpx AsyncClient whose transport retries transient Gemini errors.
 
   - 429 (rate-limit): respects Retry-After header when present.
-  - 502 / 503 / 504: transient server errors retried with exponential backoff.
+  - 500 / 502 / 503 / 504: transient server errors retried with exponential backoff.
   - Up to 5 total attempts, capped at 5 min max wait between retries.
   """
 
@@ -54,7 +54,7 @@ def get_gemini_provider() -> GoogleProvider:
   """Get or create the Gemini provider singleton.
 
   The provider is backed by a retrying HTTP client that automatically handles
-  429 / 502 / 503 / 504 responses with exponential backoff.
+  429 / 500 / 502 / 503 / 504 responses with exponential backoff.
   """
   return GoogleProvider(
     api_key=get_secret_value(settings.GEMINI_API_KEY_PARAM),

@@ -177,6 +177,8 @@ class StoryNode(BaseCosmonautModel):
       processing_status=StoryNodeProcessingStatus(self.processing_status),
       generation_status=GenerationStatus(self.generation_status),
       audio=dict(self.audio.attribute_values) if self.audio else {},
+      created_at=self.created_at if self.created_at else None,
+      updated_at=self.updated_at if self.updated_at else None,
     )
 
   @classmethod

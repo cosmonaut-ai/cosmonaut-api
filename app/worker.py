@@ -13,7 +13,7 @@ from app.models.dtos.world_meta import GenerationStatus
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
 from app.services import images, story_nodes, worlds
-from app.services.sqs import send_world_image_generation_message
+from app.services.sqs import SQSSendError, send_world_image_generation_message
 
 # Concurrency cap for processing messages in parallel within a Lambda invocation.
 BATCH_CONCURRENCY = 5
@@ -47,10 +47,12 @@ def handler(event: SQSEvent, context: Any) -> HandlerReturn:
 
   failed_message_ids: List[str] = loop.run_until_complete(_process_batch(event.records))
 
+  # Return the AWS-standard partial batch failure response so that only failed
+  # messages are retried.  The previous format ("failed_message_ids") was not
+  # recognized by the Lambda/SQS integration, causing failed messages to be
+  # silently dropped instead of retried.
   return {
-    "statusCode": 200,
-    "body": "Batch processed",
-    "failed_message_ids": failed_message_ids,
+    "batchItemFailures": [{"itemIdentifier": mid} for mid in failed_message_ids],
   }
 
 
@@ -101,16 +103,28 @@ async def _analyze_node(payload: AnalyzeNodePayload):
 
   node: StoryNode = story_nodes.get_node_entity(world_id, node_id)
 
-  # Atomically transition: PENDING -> PROCESSING.
-  # Conditional write ensures exactly one worker processes a given node, even
-  # if duplicate SQS messages are delivered or multiple workers read PENDING.
+  # Skip if already completed or failed (idempotent for duplicate messages).
+  current_status = StoryNodeProcessingStatus(node.processing_status)
+  if current_status in (StoryNodeProcessingStatus.COMPLETED, StoryNodeProcessingStatus.FAILED):
+    logger.info(f"Node {node_id} already {current_status.value}, skipping.")
+    return
+
+  # Atomically transition: PENDING | PROCESSING -> PROCESSING.
+  # Accepting PROCESSING in addition to PENDING allows a retry to re-claim
+  # a node whose previous worker crashed after the conditional update but
+  # before the final save (which would leave it stuck in PROCESSING forever).
+  # Pinecone upserts are idempotent by record ID, so concurrent processing
+  # from a rare SQS duplicate delivery is safe — at worst it wastes compute.
   try:
     node.update(
       actions=[StoryNode.processing_status.set(StoryNodeProcessingStatus.PROCESSING.value)],
-      condition=StoryNode.processing_status.is_in(StoryNodeProcessingStatus.PENDING.value),
+      condition=StoryNode.processing_status.is_in(
+        StoryNodeProcessingStatus.PENDING.value,
+        StoryNodeProcessingStatus.PROCESSING.value,
+      ),
     )
   except UpdateError:
-    logger.info(f"Node {node_id} already being processed or completed, skipping.")
+    logger.info(f"Node {node_id} already completed or failed, skipping.")
     return
 
   try:
@@ -132,8 +146,15 @@ async def _generate_world(payload: GenerateWorldPayload):
 
   world: WorldMeta = worlds.get_world_entity(world_id)
 
-  if world.generation_status not in [GenerationStatus.INITIALIZED, GenerationStatus.FAILED]:
-    raise ValueError(f"World {world_id} is not in the INITIALIZED or FAILED state")
+  # Allow retries from intermediate states (GENERATING_LORE, GENERATING_NARRATOR_PROFILE)
+  # in addition to INITIALIZED and FAILED.  A worker crash during lore/narrator generation
+  # would otherwise leave the world permanently stuck.  Retries are safe because:
+  # - generate_lore() overwrites previous lore
+  # - generate_narrator_profile() is idempotent (returns early if already set)
+  # - initialize_root_node() overwrites the root node (same deterministic ID "0")
+  if world.generation_status == GenerationStatus.COMPLETED:
+    logger.info(f"World {world_id} already completed, skipping.")
+    return
 
   try:
     # 1. Generate Lore
@@ -156,8 +177,12 @@ async def _generate_world(payload: GenerateWorldPayload):
     world.generation_status = GenerationStatus.COMPLETED
     logger.info(f"World {world_id} generation complete.")
 
-    # 4. Enqueue image generation (fire-and-forget, non-blocking)
-    send_world_image_generation_message(world_id)
+    # 4. Enqueue image generation (fire-and-forget, non-blocking).
+    # An SQS failure here must not undo the successful world generation.
+    try:
+      send_world_image_generation_message(world_id)
+    except SQSSendError:
+      logger.error(f"Failed to enqueue image generation for world {world_id} -- world will lack a cover image")
 
   except Exception as e:
     logger.exception(f"Error generating world {world_id}: {e}")
