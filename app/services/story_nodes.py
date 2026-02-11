@@ -24,7 +24,7 @@ from app.core.config import settings
 from app.models.dtos.story_node import GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
 from app.services.pinecone import PineconeBranchFact
-from app.services.sqs import send_node_analysis_message
+from app.services.sqs import SQSSendError, send_node_analysis_message
 from app.services.usage import check_and_increment
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
 from app.utils import extract_xml_block, extract_xml_json
@@ -188,6 +188,10 @@ def get_node_entities(world_id: str, node_ids: list[str]) -> list[StoryNode]:
 _BACKOFF_INTERVALS = [0.5, 1, 2, 4, 8, 15]
 """Progressive backoff intervals (seconds) used for polling DynamoDB status."""
 
+# Tighter budget for endpoints behind API Gateway (30 s integration timeout).
+_BACKOFF_INTERVALS_SHORT = [0.5, 1, 2, 4, 8]
+"""Backoff intervals (15.5 s total) used by API Gateway-constrained callers."""
+
 
 async def _wait_for_node_processing(
   world_id: str,
@@ -199,22 +203,30 @@ async def _wait_for_node_processing(
   Used when generating a child node to ensure the parent has been fully processed
   (facts extracted, context populated) before building dependencies.
 
+  Fails fast when the node is in FAILED status rather than polling until timeout.
+
   Args:
     world_id: The world identifier.
     node_id: The node identifier to wait on.
-    max_wait_seconds: Maximum total seconds to wait before raising.
+    max_wait_seconds: Maximum total seconds to wait before raising.  Use ~20 for
+      endpoints behind API Gateway (30 s integration timeout) and the default 30
+      for Lambda Function URL callers (generate-text streaming).
 
   Returns:
     The refreshed StoryNode with COMPLETED processing status.
 
   Raises:
-    NodeProcessingError: If the node doesn't reach COMPLETED within the timeout.
+    NodeProcessingError: If the node is FAILED or doesn't reach COMPLETED within
+      the timeout.
   """
+  intervals = _BACKOFF_INTERVALS_SHORT if max_wait_seconds < 25 else _BACKOFF_INTERVALS
   elapsed = 0.0
-  for interval in _BACKOFF_INTERVALS:
+  for interval in intervals:
     node = get_node_entity(world_id, node_id)
     if node.processing_status == StoryNodeProcessingStatus.COMPLETED:
       return node
+    if node.processing_status == StoryNodeProcessingStatus.FAILED:
+      raise NodeProcessingError(node_id)
     if elapsed + interval > max_wait_seconds:
       break
     await asyncio.sleep(interval)
@@ -224,6 +236,8 @@ async def _wait_for_node_processing(
   node = get_node_entity(world_id, node_id)
   if node.processing_status == StoryNodeProcessingStatus.COMPLETED:
     return node
+  if node.processing_status == StoryNodeProcessingStatus.FAILED:
+    raise NodeProcessingError(node_id)
 
   raise NodeProcessingError(node_id)
 
@@ -249,8 +263,10 @@ async def _validate_and_prepare_choice(
   # Wait for the current node to be processed before making a choice;
   # we need context from fact extraction. Uses exponential backoff to
   # avoid both unnecessary waiting and premature timeout.
+  # Lower timeout (20 s) because the choose endpoint goes through API
+  # Gateway which has a 30 s integration timeout.
   if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
-    refreshed = await _wait_for_node_processing(node.world_id, node_id)
+    refreshed = await _wait_for_node_processing(node.world_id, node_id, max_wait_seconds=20)
     node.processing_status = refreshed.processing_status
     node.context = refreshed.context
 
@@ -271,8 +287,9 @@ async def _validate_and_prepare_choice(
     if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
       max_index = len(node.choices) - 1 if node.choices else -1
       raise InvalidChoiceError(node_id, choice_index, max_index)
-    node.save()
-    logger.info(f"Updated choice at index {choice_index} to created: {custom_choice}")
+    # No save() needed here — the node is not modified when selecting an
+    # existing choice by index.  The is_created flag is set later in choose().
+    logger.info(f"Selected existing choice at index {choice_index}")
 
   return choice_index
 
@@ -448,7 +465,12 @@ async def choose(
     except NodeNotFoundError:
       logger.error(f"New node {new_node_id} not found even though parent choice is created. Continuing.")
 
-  # Create new initialized node (without text)
+  # Create new initialized node (without text).
+  # NOTE: These two writes are intentionally non-transactional.  If the process
+  # crashes between them, the child node exists but ``is_created`` on the parent
+  # remains False.  A retry will overwrite the child (same deterministic ID,
+  # still INITIALIZED with no content) and then set ``is_created``.  This is safe
+  # and avoids the added latency/complexity of DynamoDB TransactWriteItems.
   new_node_dto = StoryNodeDTO(
     id=new_node_id,
     world_id=world_id,
@@ -505,13 +527,11 @@ async def generate_text(
     yield node.text
     return
 
-  # Enforce node quota before committing to generation
-  if user_id:
-    check_and_increment(user_id, "nodes")
-
   # Atomically transition: INITIALIZED|FAILED -> GENERATING.
   # DynamoDB conditional write ensures only one concurrent request can win this
   # transition, preventing duplicate generation and race conditions.
+  # This MUST happen before the quota check so that concurrent / retried requests
+  # do not drain quota without performing actual generation.
   allowed_statuses = [GenerationStatus.INITIALIZED, GenerationStatus.FAILED]
   try:
     node.update(
@@ -526,6 +546,11 @@ async def generate_text(
       yield node.text
       return
     raise InvalidGenerationStatusError(node_id, current_status, allowed_statuses)
+
+  # Enforce node quota after winning the status transition so that losing
+  # concurrent requests (or retries after a network error) do not waste quota.
+  if user_id:
+    check_and_increment(user_id, "nodes")
 
   try:
     world_meta = get_world_entity(world_id)
@@ -569,7 +594,7 @@ async def generate_text(
       logger.error("Failed to parse node metadata")
       node.generation_status = GenerationStatus.FAILED.value
       node.save()
-      return
+      raise ValueError("LLM generated text but failed to produce valid metadata (title, choices, summary)")
 
     # Update node with generated content
     node.text = story_text
@@ -586,7 +611,14 @@ async def generate_text(
     node.generation_status = GenerationStatus.COMPLETED.value
     node.save()
 
-    send_node_analysis_message(world_id, node_id)
+    # Enqueue async fact extraction.  This is non-critical: a failure leaves
+    # the node in PENDING processing_status which can be retried via the
+    # /retry-processing endpoint.  We must not let an SQS failure undo the
+    # successful generation.
+    try:
+      send_node_analysis_message(world_id, node_id)
+    except SQSSendError:
+      logger.error(f"Failed to enqueue analysis for node {node_id} -- node will remain in PENDING processing_status")
 
   except Exception as e:
     logger.error(f"Error generating text for node {node_id}: {e}")
@@ -605,7 +637,10 @@ async def process_node(node: StoryNode) -> None:
   world_id = node.world_id
   parent_node: StoryNode | None = get_node_entity(world_id, node.parent_id) if node.parent_id else None
 
-  # Fetch facts from Pinecone
+  # Fetch facts from Pinecone.  A failure here is non-fatal: the node will be
+  # processed with empty/partial context, degrading story quality but not
+  # blocking the pipeline.
+  pinecone_degraded = False
   world_facts: list[pinecone.PineconeWorldFact] = []
   branch_facts: list[pinecone.PineconeBranchFact] = []
   similar_nodes: list[pinecone.PineconeRecord] = []
@@ -614,7 +649,12 @@ async def process_node(node: StoryNode) -> None:
     branch_facts = _get_branch_facts(world_id, node.text, node.ancestors)
     similar_nodes = _get_similar_nodes(world_id, node.text)
   except Exception as e:
-    logger.error(f"Error getting facts for node {node.id}: {e}")
+    pinecone_degraded = True
+    logger.warning(
+      f"Pinecone query failed for node {node.id} -- proceeding with degraded context",
+      extra={"error": str(e), "world_id": world_id, "node_id": node.id},
+      exc_info=True,
+    )
 
   # Update node context
   world_facts_text: list[str] = [fact.text for fact in world_facts]
@@ -625,6 +665,13 @@ async def process_node(node: StoryNode) -> None:
     branch_facts=branch_facts_text,
     similar_nodes=similar_nodes_text,
   )
+
+  if pinecone_degraded:
+    logger.warning(
+      f"Node {node.id} context populated with degraded Pinecone data: "
+      f"world_facts={len(world_facts_text)}, branch_facts={len(branch_facts_text)}, "
+      f"similar_nodes={len(similar_nodes_text)}",
+    )
 
   # Extract new facts via LLM
   fact_deps = llm.LLMFactExtractionDeps(
@@ -679,8 +726,8 @@ async def process_node(node: StoryNode) -> None:
 def retry_processing(world_id: str, node_id: str) -> StoryNode:
   """Re-enqueue a failed node for processing (fact extraction + Pinecone upsert).
 
-  Resets processing_status from FAILED back to PENDING and sends a new
-  analysis message to the fast worker queue.
+  Atomically resets processing_status from FAILED back to PENDING and sends a
+  new analysis message to the fast worker queue.
 
   Args:
     world_id: The world identifier.
@@ -695,11 +742,17 @@ def retry_processing(world_id: str, node_id: str) -> StoryNode:
   """
   node = get_node_entity(world_id, node_id)
 
-  if StoryNodeProcessingStatus(node.processing_status) != StoryNodeProcessingStatus.FAILED:
+  # Use a conditional update to atomically transition FAILED -> PENDING.
+  # This prevents duplicate SQS messages from concurrent retry requests.
+  try:
+    node.update(
+      actions=[StoryNode.processing_status.set(StoryNodeProcessingStatus.PENDING.value)],
+      condition=StoryNode.processing_status == StoryNodeProcessingStatus.FAILED.value,
+    )
+  except UpdateError:
+    # Re-read to get the actual status for the error message
+    node = get_node_entity(world_id, node_id)
     raise InvalidProcessingStatusError(node_id, StoryNodeProcessingStatus(node.processing_status))
-
-  node.processing_status = StoryNodeProcessingStatus.PENDING
-  node.save()
 
   send_node_analysis_message(world_id, node_id)
   logger.info(f"Re-enqueued failed node {node_id} in world {world_id} for processing")
