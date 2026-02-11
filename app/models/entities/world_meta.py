@@ -176,6 +176,11 @@ class WorldMeta(BaseCosmonautModel):
       updated_at=updated_at_dt,
     )
 
+  def _on_save(self) -> None:
+    """Keep GSI1SK in sync with ``updated_at`` for chronological ordering."""
+    if self.author_id and self.updated_at:
+      self.GSI1SK = WorldMeta.gsi1_sk(self.updated_at.isoformat())  # type: ignore[reportConstantRedefinition]
+
   def can_user_read(self, user_id: str) -> bool:
     return self.visibility == WorldVisibility.PUBLIC or self.author_id == user_id or user_id in self.shared_with
 
