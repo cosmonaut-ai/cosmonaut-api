@@ -20,6 +20,8 @@ from app.services.story_nodes import (
   InvalidGenerationStatusError,
   InvalidProcessingStatusError,
   NodeNotFoundError,
+  NodeProcessingError,
+  NodeServiceError,
 )
 from app.services.usage import QuotaExceededError, check_and_increment
 from app.services.worlds import WorldNotFoundError, get_world_entity
@@ -147,6 +149,8 @@ async def choose(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
   except InvalidChoiceError as e:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+  except NodeProcessingError as e:
+    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
 
 
 @router.post(
@@ -214,14 +218,17 @@ async def generate_text(
       yield "data: [DONE]\n\n"
     except QuotaExceededError as e:
       yield f"event: error\ndata: {str(e)}\n\n"
-    except NodeNotFoundError as e:
+    except NodeServiceError as e:
+      # Catches NodeNotFoundError, NodeProcessingError, InvalidChoiceError,
+      # InvalidGenerationStatusError, and any future NodeServiceError subclasses.
       yield f"event: error\ndata: {str(e)}\n\n"
     except WorldNotFoundError as e:
       yield f"event: error\ndata: {str(e)}\n\n"
-    except InvalidChoiceError as e:
-      yield f"event: error\ndata: {str(e)}\n\n"
-    except InvalidGenerationStatusError as e:
-      yield f"event: error\ndata: {str(e)}\n\n"
+    except Exception as e:
+      # Catch-all so unexpected errors (e.g. LLM metadata parse failure) emit an
+      # SSE error event instead of silently dropping the connection.
+      logger.error(f"Unexpected error during text generation for node {node_id}: {e}", exc_info=True)
+      yield "event: error\ndata: An unexpected error occurred during generation\n\n"
 
   return StreamingResponse(
     event_generator(),
