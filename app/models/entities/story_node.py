@@ -40,9 +40,9 @@ class ChoiceMap(MapAttribute[str, UnicodeAttribute]):
     return ChoiceDTO(
       label=self.label,
       target=self.target,
-      is_created=self.is_created,
+      is_created=bool(self.is_created),
       outcome=self.outcome,
-      is_custom=self.is_custom,
+      is_custom=bool(self.is_custom),
       creator=self.creator,
     )
 
@@ -201,7 +201,7 @@ class StoryNode(BaseCosmonautModel):
         ChoiceMap(
           label=choice.label,
           target=choice.target,
-          is_custom="true" if choice.is_custom else None,
+          is_custom=choice.is_custom,
           creator=choice.creator,
         )
         for choice in dto.choices
@@ -209,7 +209,7 @@ class StoryNode(BaseCosmonautModel):
       parent_choice=ChoiceMap(
         label=dto.parent_choice.label,
         target=dto.parent_choice.target,
-        is_custom="true" if dto.parent_choice.is_custom else None,
+        is_custom=dto.parent_choice.is_custom,
         creator=dto.parent_choice.creator,
         outcome=dto.parent_choice.outcome,
       )
