@@ -475,8 +475,8 @@ async def choose(
     label=selected_choice.label,
     outcome=selected_choice.outcome,
     target=selected_choice.target,
-    is_created=selected_choice.is_created,
-    is_custom=selected_choice.is_custom,
+    is_created=bool(selected_choice.is_created),
+    is_custom=bool(selected_choice.is_custom),
     creator=selected_choice.creator,
   )
   new_node_dto = StoryNodeDTO(
@@ -613,6 +613,7 @@ async def generate_text(
       ChoiceMap(
         label=choice.label,
         outcome=choice.outcome,
+        is_custom=False,
         target=StoryNode.get_child_id_static(node_id, i),
       )
       for i, choice in enumerate(metadata.choices)
