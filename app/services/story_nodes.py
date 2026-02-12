@@ -21,7 +21,7 @@ from pynamodb.pagination import ResultIterator
 import app.services.llm as llm
 import app.services.pinecone as pinecone
 from app.core.config import settings
-from app.models.dtos.story_node import GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
+from app.models.dtos.story_node import ChoiceDTO, GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
 from app.services.pinecone import PineconeBranchFact
 from app.services.sqs import SQSSendError, send_node_analysis_message
@@ -471,6 +471,14 @@ async def choose(
   # remains False.  A retry will overwrite the child (same deterministic ID,
   # still INITIALIZED with no content) and then set ``is_created``.  This is safe
   # and avoids the added latency/complexity of DynamoDB TransactWriteItems.
+  parent_choice_dto = ChoiceDTO(
+    label=selected_choice.label,
+    outcome=selected_choice.outcome,
+    target=selected_choice.target,
+    is_created=selected_choice.is_created,
+    is_custom=selected_choice.is_custom,
+    creator=selected_choice.creator,
+  )
   new_node_dto = StoryNodeDTO(
     id=new_node_id,
     world_id=world_id,
@@ -478,6 +486,7 @@ async def choose(
     story_summary=None,
     title=None,
     choices=[],
+    parent_choice=parent_choice_dto,
     processing_status=StoryNodeProcessingStatus.PENDING,
     generation_status=GenerationStatus.INITIALIZED,
   )
