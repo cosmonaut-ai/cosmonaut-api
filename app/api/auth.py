@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from app.core.cloudfront import create_signed_cookies
 from app.core.config import TIER_LIMITS, settings
 from app.core.security import User, get_current_user
+from app.services.account import delete_account
 from app.services.secret_manager import get_secret_value
 from app.services.usage import get_or_create_usage
 from app.services.worlds import count_user_worlds
@@ -144,6 +145,24 @@ async def create_checkout(
     raise HTTPException(status_code=502, detail="Failed to create checkout session") from e
 
   return CheckoutResponse(checkout_url=session.url or "")
+
+
+@router.delete("/account", status_code=200, summary="Permanently delete user account")
+async def delete_user_account(current_user: User = Depends(get_current_user)) -> dict[str, str]:
+  """Permanently delete the authenticated user's account and all associated data.
+
+  This action is irreversible. It will:
+  - Cancel any active Stripe subscription
+  - Delete all owned worlds, story nodes, and vector embeddings
+  - Delete usage records
+  - Delete the Cognito user identity
+  """
+  try:
+    delete_account(user_id=current_user.id, cognito_username=current_user.username)
+    return {"status": "deleted"}
+  except Exception:
+    logger.exception("Account deletion failed for user %s", current_user.id)
+    raise HTTPException(status_code=500, detail="Account deletion failed. Please contact support.")
 
 
 @router.post("/billing-portal", response_model=BillingPortalResponse, summary="Create a Stripe Billing Portal session")

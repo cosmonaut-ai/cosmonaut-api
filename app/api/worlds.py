@@ -7,8 +7,10 @@ from typing import NoReturn
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 
 import app.services.worlds as world_service
+from app.core.config import settings
 from app.core.security import User, get_current_user
 from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO, WorldUpdateSharingRequest
+from app.services.email import send_world_invite
 from app.services.usage import QuotaExceededError, StorageQuotaExceededError
 from app.services.worlds import WorldNotFoundError, get_world_entity
 
@@ -146,10 +148,24 @@ async def update_sharing(
       detail=f"You are not authorized to share world {world_id}",
     )
 
+  # Identify newly added emails before persisting the update
+  previous_shared: set[str] = set(world.shared_with or [])
+  new_shared: set[str] = set(payload.shared_with or [])
+  newly_added = new_shared - previous_shared
+
   world_dto = WorldMetaDTO(
     visibility=payload.visibility,
     shared_with=payload.shared_with,
   )
 
   world = world_service.update_world(world_id, world_dto)
+
+  # Send invite emails to newly added users (non-blocking)
+  if newly_added:
+    inviter_name = user.email or user.username or "Someone"
+    world_title = str(world.title) if world.title else "Untitled World"
+    world_url = f"https://{settings.FRONTEND_DOMAIN}/worlds/{world_id}"
+    for email in newly_added:
+      send_world_invite(email, inviter_name, world_title, world_url)
+
   return world.to_dto()
