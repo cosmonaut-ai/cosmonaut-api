@@ -12,6 +12,7 @@ from fastapi import Depends, FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.auth import router as auth_router
+from app.api.meta import router as meta_router
 from app.api.story_nodes import router as story_nodes_router
 from app.api.voices import router as voices_router
 from app.api.webhooks import router as webhooks_router
@@ -61,6 +62,9 @@ async def health():
 app.include_router(worlds_router, dependencies=[Depends(get_current_user)])
 app.include_router(story_nodes_router, dependencies=[Depends(get_current_user)])
 app.include_router(auth_router, dependencies=[Depends(get_current_user)])
+
+# Meta router – public (bots can't authenticate)
+app.include_router(meta_router)
 
 # Voices router – public (no auth required)
 app.include_router(voices_router)
