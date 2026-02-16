@@ -7,7 +7,7 @@ Includes automatic retry with exponential backoff for transient API errors
 
 from functools import lru_cache
 
-from httpx import AsyncClient, HTTPStatusError
+from httpx import AsyncClient, HTTPStatusError, Response
 from pydantic_ai import ModelSettings
 from pydantic_ai.models.google import GoogleModel
 from pydantic_ai.providers.google import GoogleProvider
@@ -29,7 +29,7 @@ def _create_retrying_client() -> AsyncClient:
   - Up to 5 total attempts, capped at 5 min max wait between retries.
   """
 
-  def _should_retry(response):  # noqa: ANN001
+  def _should_retry(response: Response) -> None:
     """Raise for retryable status codes so tenacity can intercept them."""
     if response.status_code in _RETRYABLE_STATUS_CODES:
       response.raise_for_status()

@@ -14,6 +14,10 @@ from app.services.llm.agents.narrator import generate_narrator_profile
 from app.services.llm.agents.next_node import (
   LLMNextNodeDeps,
   NextNodeDeps,
+  build_cached_world_context,
+  build_dynamic_user_message,
+  build_static_system_prompt,
+  get_cached_next_node_agent,
   get_next_node_agent,
 )
 from app.services.llm.agents.root_node import (
@@ -57,6 +61,10 @@ __all__ = [
   # Next Node
   "LLMNextNodeDeps",
   "NextNodeDeps",
+  "build_cached_world_context",
+  "build_dynamic_user_message",
+  "build_static_system_prompt",
+  "get_cached_next_node_agent",
   "get_next_node_agent",
   # Fact Extraction
   "FactExtractionDeps",

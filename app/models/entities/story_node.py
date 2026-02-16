@@ -40,9 +40,9 @@ class ChoiceMap(MapAttribute[str, UnicodeAttribute]):
     return ChoiceDTO(
       label=self.label,
       target=self.target,
-      is_created=self.is_created,
+      is_created=bool(self.is_created),
       outcome=self.outcome,
-      is_custom=self.is_custom,
+      is_custom=bool(self.is_custom),
       creator=self.creator,
     )
 
@@ -100,6 +100,7 @@ class StoryNode(BaseCosmonautModel):
   story_summary: UnicodeAttribute = UnicodeAttribute(null=True)
   title: UnicodeAttribute = UnicodeAttribute(null=True, attr_name="node_title")
   choices: ListAttribute[ChoiceMap] = ListAttribute(of=ChoiceMap, default=list, attr_name="node_choices")
+  parent_choice: ChoiceMap = ChoiceMap(null=True)
   processing_status: UnicodeAttribute = UnicodeAttribute(default="pending")
   generation_status: UnicodeAttribute = UnicodeAttribute(default="initialized")
 
@@ -171,6 +172,7 @@ class StoryNode(BaseCosmonautModel):
       story_summary=self.story_summary,
       title=self.title,
       choices=[choice.to_dto() for choice in self.choices],
+      parent_choice=self.parent_choice.to_dto() if self.parent_choice else None,
       parent_id=self.parent_id,
       ancestors=self.ancestors,
       context=self.context.to_dto() if self.context else None,
@@ -199,11 +201,20 @@ class StoryNode(BaseCosmonautModel):
         ChoiceMap(
           label=choice.label,
           target=choice.target,
-          is_custom="true" if choice.is_custom else None,
+          is_custom=choice.is_custom,
           creator=choice.creator,
         )
         for choice in dto.choices
       ],
+      parent_choice=ChoiceMap(
+        label=dto.parent_choice.label,
+        target=dto.parent_choice.target,
+        is_custom=dto.parent_choice.is_custom,
+        creator=dto.parent_choice.creator,
+        outcome=dto.parent_choice.outcome,
+      )
+      if dto.parent_choice
+      else None,
       processing_status=StoryNodeProcessingStatus(dto.processing_status).value,
       generation_status=GenerationStatus(dto.generation_status).value,
       context=StoryNodeContext.from_dto(dto.context) if dto.context else None,
