@@ -15,14 +15,16 @@ import uuid
 from typing import TYPE_CHECKING, AsyncGenerator
 
 from aws_lambda_powertools import Logger
+from pydantic_ai.models.google import GoogleModelSettings
 from pynamodb.exceptions import UpdateError
 from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
 from app.core.config import settings
-from app.models.dtos.story_node import GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
+from app.models.dtos.story_node import ChoiceDTO, GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
+from app.services.llm.cache import get_or_create_world_cache
 from app.services.pinecone import PineconeBranchFact
 from app.services.sqs import SQSSendError, send_node_analysis_message
 from app.services.usage import check_and_increment
@@ -192,6 +194,11 @@ _BACKOFF_INTERVALS = [0.5, 1, 2, 4, 8, 15]
 _BACKOFF_INTERVALS_SHORT = [0.5, 1, 2, 4, 8]
 """Backoff intervals (15.5 s total) used by API Gateway-constrained callers."""
 
+# Very tight budget for latency-sensitive callers that can tolerate degraded
+# context (e.g. generate-text, where proceeding without facts is acceptable).
+_BACKOFF_INTERVALS_FAST = [0.5, 1]
+"""Backoff intervals (1.5 s total) used when degraded context is acceptable."""
+
 
 async def _wait_for_node_processing(
   world_id: str,
@@ -208,9 +215,10 @@ async def _wait_for_node_processing(
   Args:
     world_id: The world identifier.
     node_id: The node identifier to wait on.
-    max_wait_seconds: Maximum total seconds to wait before raising.  Use ~20 for
-      endpoints behind API Gateway (30 s integration timeout) and the default 30
-      for Lambda Function URL callers (generate-text streaming).
+    max_wait_seconds: Maximum total seconds to wait before raising.  Use ~3 for
+      latency-sensitive callers that tolerate degraded context, ~20 for endpoints
+      behind API Gateway (30 s integration timeout), and the default 30 for
+      Lambda Function URL callers (generate-text streaming).
 
   Returns:
     The refreshed StoryNode with COMPLETED processing status.
@@ -219,7 +227,13 @@ async def _wait_for_node_processing(
     NodeProcessingError: If the node is FAILED or doesn't reach COMPLETED within
       the timeout.
   """
-  intervals = _BACKOFF_INTERVALS_SHORT if max_wait_seconds < 25 else _BACKOFF_INTERVALS
+  if max_wait_seconds <= 3:
+    intervals = _BACKOFF_INTERVALS_FAST
+  elif max_wait_seconds < 25:
+    intervals = _BACKOFF_INTERVALS_SHORT
+  else:
+    intervals = _BACKOFF_INTERVALS
+
   elapsed = 0.0
   for interval in intervals:
     node = get_node_entity(world_id, node_id)
@@ -260,15 +274,19 @@ async def _validate_and_prepare_choice(
     Tuple of (choice_index, is_custom_choice)
   """
 
-  # Wait for the current node to be processed before making a choice;
-  # we need context from fact extraction. Uses exponential backoff to
-  # avoid both unnecessary waiting and premature timeout.
-  # Lower timeout (20 s) because the choose endpoint goes through API
-  # Gateway which has a 30 s integration timeout.
+  # Wait briefly for the current node to be processed before making a choice.
+  # Context from fact extraction improves story quality but is not required;
+  # the choose flow only needs the node to exist and have valid choices.
+  # Short timeout (3 s) avoids blocking the user while still catching most
+  # fast completions.  The generate-text path will use whatever context is
+  # available at generation time.
   if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
-    refreshed = await _wait_for_node_processing(node.world_id, node_id, max_wait_seconds=20)
-    node.processing_status = refreshed.processing_status
-    node.context = refreshed.context
+    try:
+      refreshed = await _wait_for_node_processing(node.world_id, node_id, max_wait_seconds=3)
+      node.processing_status = refreshed.processing_status
+      node.context = refreshed.context
+    except NodeProcessingError:
+      logger.info(f"Node {node_id} processing not yet complete after short wait -- proceeding without context")
 
   if custom_choice is not None:
     choice_index = len(node.choices)
@@ -349,8 +367,13 @@ def _build_next_node_deps(
 
 async def _stream_next_node(
   deps: llm.NextNodeDeps,
+  world_id: str,
 ) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None], None]:
   """Stream next node content via LLM.
+
+  Attempts to use a Gemini cached content resource for the world's static
+  prompt + context.  Falls back to the standard (non-cached) agent if caching
+  is unavailable.
 
   Yields:
     Tuple of (chunk_text, full_buffer, metadata_if_complete)
@@ -359,8 +382,27 @@ async def _stream_next_node(
   last_emitted_index = 0
   story_started = False
 
-  # Deps are injected into system prompt; user message is simple
-  async with llm.get_next_node_agent().run_stream("Continue the story.", deps=deps) as result:
+  # Try the cached path: static prompt + world context are in the Gemini cache;
+  # only per-node dynamic context is sent as the user message.
+  cache_name = get_or_create_world_cache(
+    world_id=world_id,
+    static_system_prompt=llm.build_static_system_prompt(family_friendly=deps.family_friendly),
+    world_context=llm.build_cached_world_context(deps.world_info, deps.narrator_profile),
+    family_friendly=deps.family_friendly,
+  )
+
+  if cache_name is not None:
+    user_message = llm.build_dynamic_user_message(deps)
+    model_settings = GoogleModelSettings(google_cached_content=cache_name)
+    run_stream_ctx = llm.get_cached_next_node_agent().run_stream(
+      user_message,
+      model_settings=model_settings,
+    )
+    logger.info(f"Using cached Gemini context for world {world_id}")
+  else:
+    run_stream_ctx = llm.get_next_node_agent().run_stream("Continue the story.", deps=deps)
+
+  async with run_stream_ctx as result:
     async for chunk in result.stream_text(delta=True):
       full_response_buffer += chunk
 
@@ -471,6 +513,14 @@ async def choose(
   # remains False.  A retry will overwrite the child (same deterministic ID,
   # still INITIALIZED with no content) and then set ``is_created``.  This is safe
   # and avoids the added latency/complexity of DynamoDB TransactWriteItems.
+  parent_choice_dto = ChoiceDTO(
+    label=selected_choice.label,
+    outcome=selected_choice.outcome,
+    target=selected_choice.target,
+    is_created=bool(selected_choice.is_created),
+    is_custom=bool(selected_choice.is_custom),
+    creator=selected_choice.creator,
+  )
   new_node_dto = StoryNodeDTO(
     id=new_node_id,
     world_id=world_id,
@@ -478,6 +528,7 @@ async def choose(
     story_summary=None,
     title=None,
     choices=[],
+    parent_choice=parent_choice_dto,
     processing_status=StoryNodeProcessingStatus.PENDING,
     generation_status=GenerationStatus.INITIALIZED,
   )
@@ -553,12 +604,11 @@ async def generate_text(
     check_and_increment(user_id, "nodes")
 
   try:
-    world_meta = get_world_entity(world_id)
-
     # Select appropriate stream generator based on node type
     if node.parent_id is None:
       # Root node: use root node agent
       logger.info(f"Generating root node text for world {world_id}")
+      world_meta = get_world_entity(world_id)
       llm_world_info = world_meta_to_llm_world_info(world_meta)
       root_deps = llm.RootNodeDeps(
         world_info=llm_world_info,
@@ -568,16 +618,31 @@ async def generate_text(
       stream = _stream_root_node(root_deps)
     else:
       # Child node: use next node agent with parent context.
-      # Wait for the parent node to be fully processed (facts extracted, context
-      # populated) before building deps. This prevents the race condition where
-      # generate_text is called before the SQS worker finishes analyzing the parent.
-      parent_node = await _wait_for_node_processing(world_id, node.parent_id)
+      # Fetch world meta and wait for parent processing concurrently to
+      # reduce pre-generation latency.
+      parent_id: str = node.parent_id  # narrowed from str | None by the if-branch above
+
+      async def _fetch_parent() -> StoryNode:
+        try:
+          return await _wait_for_node_processing(world_id, parent_id, max_wait_seconds=2)
+        except NodeProcessingError:
+          logger.info(
+            f"Parent node {parent_id} processing not complete after short wait -- proceeding with degraded context"
+          )
+          return get_node_entity(world_id, parent_id)
+
+      world_meta_result, parent_node = await asyncio.gather(
+        asyncio.to_thread(get_world_entity, world_id),
+        _fetch_parent(),
+      )
+      world_meta = world_meta_result
+
       if node.choice_index is None or node.choice_index >= len(parent_node.choices):
         raise InvalidChoiceError(node_id, node.choice_index or -1, len(parent_node.choices) - 1)
 
       selected_choice = parent_node.choices[node.choice_index]
       next_deps = _build_next_node_deps(parent_node, world_meta, selected_choice)
-      stream = _stream_next_node(next_deps)
+      stream = _stream_next_node(next_deps, world_id=world_id)
 
     # Stream content and collect metadata
     story_text = ""
@@ -604,6 +669,7 @@ async def generate_text(
       ChoiceMap(
         label=choice.label,
         outcome=choice.outcome,
+        is_custom=False,
         target=StoryNode.get_child_id_static(node_id, i),
       )
       for i, choice in enumerate(metadata.choices)

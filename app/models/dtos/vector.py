@@ -18,7 +18,7 @@ class VectorUpsertItem(DTOModel):
   """Single vector upsert payload."""
 
   id: str
-  values: list[float] = Field(default_factory=list, description="Embedding values.")
+  values: list[float] = Field(default_factory=list[float], description="Embedding values.")
   metadata: dict[str, object] | None = Field(default=None, description="Optional metadata to persist with the vector.")
   namespace: str | None = Field(default=None, description="Overrides default namespace.")
 
@@ -26,7 +26,7 @@ class VectorUpsertItem(DTOModel):
 class VectorUpsertRequest(DTOModel):
   """Bulk upsert request."""
 
-  items: list[VectorUpsertItem] = Field(default_factory=list)
+  items: list[VectorUpsertItem] = Field(default_factory=list[VectorUpsertItem])
 
 
 class VectorUpsertResponse(DTOModel):
@@ -38,7 +38,7 @@ class VectorUpsertResponse(DTOModel):
 class VectorQueryRequest(DTOModel):
   """Vector similarity query request."""
 
-  embedding: list[float] = Field(default_factory=list, description="Query embedding.")
+  embedding: list[float] = Field(default_factory=list[float], description="Query embedding.")
   top_k: int | None = Field(default=None, description="Override default top-k.")
   namespace: str | None = Field(default=None, description="Namespace to search.")
 
@@ -54,7 +54,7 @@ class VectorMatch(DTOModel):
 class VectorQueryResponse(DTOModel):
   """Query response with ordered matches."""
 
-  matches: list[VectorMatch] = Field(default_factory=list)
+  matches: list[VectorMatch] = Field(default_factory=list[VectorMatch])
 
 
 class VectorDeleteRequest(DTOModel):
