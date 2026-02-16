@@ -62,7 +62,7 @@ class StoryNodeDTO(DTOModel):
   text: str | None = None
   story_summary: str | None = None
   title: str | None = None
-  choices: list[ChoiceDTO] = Field(default_factory=list)
+  choices: list[ChoiceDTO] = Field(default_factory=list[ChoiceDTO])
   parent_id: str | None = None
   context: StoryNodeContextDTO | None = None
   ancestors: list[str] = Field(default_factory=list)
