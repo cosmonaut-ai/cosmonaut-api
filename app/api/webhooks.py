@@ -23,7 +23,6 @@ from app.services.email import (
   send_subscription_ended,
   send_subscription_plan_change_scheduled,
   send_subscription_renewed,
-  send_subscription_upgraded,
   send_subscription_welcome,
 )
 from app.services.secret_manager import get_secret_value
@@ -292,10 +291,6 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
       customer_id = str(subscription.get("customer", ""))
       update_tier(user_id, new_tier, stripe_customer_id=customer_id)
       update_user_tier(user_id, new_tier)
-
-      email, name = get_user_contact_info(user_id)
-      if email:
-        send_subscription_upgraded(email, name, new_tier)
 
       logger.info(f"Subscription plan changed: user={user_id} new_tier={new_tier}")
     return
