@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, AsyncGenerator
+from typing import TYPE_CHECKING, AsyncContextManager, AsyncGenerator, Any
 
 from aws_lambda_powertools import Logger
 from pydantic_ai.models.google import GoogleModelSettings
@@ -164,11 +164,45 @@ def get_node_entity(world_id: str, node_id: str) -> StoryNode:
     raise NodeNotFoundError(world_id, node_id) from e
 
 
-def list_nodes(world_id: str) -> list[StoryNode]:
-  """Return all nodes for a given world."""
+def list_nodes(
+  world_id: str,
+  limit: int = 100,
+  cursor: str | None = None,
+) -> tuple[list[StoryNode], str | None]:
+  """Return nodes for a given world with cursor-based pagination.
+
+  Args:
+    world_id: The world identifier.
+    limit: Maximum number of nodes to return (default 100).
+    cursor: Opaque pagination token from a previous response.
+
+  Returns:
+    Tuple of (nodes, next_cursor).  ``next_cursor`` is None when there
+    are no more pages.
+  """
+  import base64
+  import json
+
   pk = StoryNode.gsi2_pk(world_id)
-  nodes: ResultIterator[StoryNode] = StoryNode.GSI2.query(hash_key=pk, page_size=100)  # type: ignore[reportUnknownReturnType]
-  return list(nodes)
+
+  last_evaluated_key = None
+  if cursor:
+    try:
+      last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
+    except Exception:
+      pass
+
+  results: ResultIterator[StoryNode] = StoryNode.GSI2.query(  # type: ignore[reportUnknownReturnType]
+    hash_key=pk,
+    page_size=limit,
+    limit=limit,
+    last_evaluated_key=last_evaluated_key,
+  )
+  nodes = list(results)
+  next_cursor: str | None = None
+  if results.last_evaluated_key:
+    next_cursor = base64.urlsafe_b64encode(json.dumps(results.last_evaluated_key).encode()).decode()
+  return nodes, next_cursor
 
 
 def get_node(world_id: str, node_id: str) -> StoryNode:
@@ -274,19 +308,9 @@ async def _validate_and_prepare_choice(
     Tuple of (choice_index, is_custom_choice)
   """
 
-  # Wait briefly for the current node to be processed before making a choice.
-  # Context from fact extraction improves story quality but is not required;
-  # the choose flow only needs the node to exist and have valid choices.
-  # Short timeout (3 s) avoids blocking the user while still catching most
-  # fast completions.  The generate-text path will use whatever context is
-  # available at generation time.
-  if node.processing_status != StoryNodeProcessingStatus.COMPLETED:
-    try:
-      refreshed = await _wait_for_node_processing(node.world_id, node_id, max_wait_seconds=3)
-      node.processing_status = refreshed.processing_status
-      node.context = refreshed.context
-    except NodeProcessingError:
-      logger.info(f"Node {node_id} processing not yet complete after short wait -- proceeding without context")
+  # The choose flow only needs the node to exist and have valid choices.
+  # Processing status (fact extraction) is not required here -- the
+  # generate-text path will use whatever context is available at that time.
 
   if custom_choice is not None:
     choice_index = len(node.choices)
@@ -365,42 +389,17 @@ def _build_next_node_deps(
   )
 
 
-async def _stream_next_node(
-  deps: llm.NextNodeDeps,
-  world_id: str,
+async def _stream_node_content(
+  run_stream_ctx: AsyncContextManager[Any],
 ) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None], None]:
-  """Stream next node content via LLM.
-
-  Attempts to use a Gemini cached content resource for the world's static
-  prompt + context.  Falls back to the standard (non-cached) agent if caching
-  is unavailable.
+  """Shared streaming loop: buffer response, extract <story> content, yield metadata at end.
 
   Yields:
-    Tuple of (chunk_text, full_buffer, metadata_if_complete)
+    (new_text, full_buffer, None) during streaming; ("", full_buffer, metadata) at completion.
   """
   full_response_buffer = ""
   last_emitted_index = 0
   story_started = False
-
-  # Try the cached path: static prompt + world context are in the Gemini cache;
-  # only per-node dynamic context is sent as the user message.
-  cache_name = get_or_create_world_cache(
-    world_id=world_id,
-    static_system_prompt=llm.build_static_system_prompt(family_friendly=deps.family_friendly),
-    world_context=llm.build_cached_world_context(deps.world_info, deps.narrator_profile),
-    family_friendly=deps.family_friendly,
-  )
-
-  if cache_name is not None:
-    user_message = llm.build_dynamic_user_message(deps)
-    model_settings = GoogleModelSettings(google_cached_content=cache_name)
-    run_stream_ctx = llm.get_cached_next_node_agent().run_stream(
-      user_message,
-      model_settings=model_settings,
-    )
-    logger.info(f"Using cached Gemini context for world {world_id}")
-  else:
-    run_stream_ctx = llm.get_next_node_agent().run_stream("Continue the story.", deps=deps)
 
   async with run_stream_ctx as result:
     async for chunk in result.stream_text(delta=True):
@@ -425,6 +424,41 @@ async def _stream_next_node(
     raise ValueError("LLM failed to output metadata tags") from e
 
 
+async def _stream_next_node(
+  deps: llm.NextNodeDeps,
+  world_id: str,
+) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None], None]:
+  """Stream next node content via LLM.
+
+  Attempts to use a Gemini cached content resource for the world's static
+  prompt + context.  Falls back to the standard (non-cached) agent if caching
+  is unavailable.
+
+  Yields:
+    Tuple of (chunk_text, full_buffer, metadata_if_complete)
+  """
+  cache_name = get_or_create_world_cache(
+    world_id=world_id,
+    static_system_prompt=llm.build_static_system_prompt(family_friendly=deps.family_friendly),
+    world_context=llm.build_cached_world_context(deps.world_info, deps.narrator_profile),
+    family_friendly=deps.family_friendly,
+  )
+
+  if cache_name is not None:
+    user_message = llm.build_dynamic_user_message(deps)
+    model_settings = GoogleModelSettings(google_cached_content=cache_name)
+    run_stream_ctx = llm.get_cached_next_node_agent().run_stream(
+      user_message,
+      model_settings=model_settings,
+    )
+    logger.info(f"Using cached Gemini context for world {world_id}")
+  else:
+    run_stream_ctx = llm.get_next_node_agent().run_stream("Continue the story.", deps=deps)
+
+  async for item in _stream_node_content(run_stream_ctx):
+    yield item
+
+
 async def _stream_root_node(
   deps: llm.RootNodeDeps,
 ) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None], None]:
@@ -435,32 +469,9 @@ async def _stream_root_node(
   Yields:
     Tuple of (chunk_text, full_buffer, metadata_if_complete)
   """
-  full_response_buffer = ""
-  last_emitted_index = 0
-  story_started = False
-
-  # Deps are injected into system prompt; user message is simple
-  async with llm.get_root_node_agent().run_stream("Generate the first story node.", deps=deps) as result:
-    async for chunk in result.stream_text(delta=True):
-      full_response_buffer += chunk
-
-      story_content = extract_xml_block(full_response_buffer, "story", streaming=True)
-      if story_content is not None:
-        if not story_started:
-          story_started = True
-
-        if len(story_content) > last_emitted_index:
-          new_text = story_content[last_emitted_index:]
-          yield new_text, full_response_buffer, None
-          last_emitted_index = len(story_content)
-
-  # Parse metadata after stream completes
-  try:
-    metadata = extract_xml_json(full_response_buffer, "metadata", llm.LLMNodeMetadata)
-    yield "", full_response_buffer, metadata
-  except ValueError as e:
-    logger.error(f"LLM failed to output expected XML tags. Full response: {full_response_buffer}")
-    raise ValueError("LLM failed to output metadata tags") from e
+  run_stream_ctx = llm.get_root_node_agent().run_stream("Generate the first story node.", deps=deps)
+  async for item in _stream_node_content(run_stream_ctx):
+    yield item
 
 
 # =============================================================================
@@ -618,22 +629,16 @@ async def generate_text(
       stream = _stream_root_node(root_deps)
     else:
       # Child node: use next node agent with parent context.
-      # Fetch world meta and wait for parent processing concurrently to
-      # reduce pre-generation latency.
+      # Fetch world meta and parent node concurrently. We do NOT wait for
+      # parent processing (fact extraction) to complete -- whatever context
+      # is available at this moment is used. This avoids up to 2s of
+      # blocking latency at the cost of potentially degraded context for
+      # the first few nodes in rapid succession.
       parent_id: str = node.parent_id  # narrowed from str | None by the if-branch above
-
-      async def _fetch_parent() -> StoryNode:
-        try:
-          return await _wait_for_node_processing(world_id, parent_id, max_wait_seconds=2)
-        except NodeProcessingError:
-          logger.info(
-            f"Parent node {parent_id} processing not complete after short wait -- proceeding with degraded context"
-          )
-          return get_node_entity(world_id, parent_id)
 
       world_meta_result, parent_node = await asyncio.gather(
         asyncio.to_thread(get_world_entity, world_id),
-        _fetch_parent(),
+        asyncio.to_thread(get_node_entity, world_id, parent_id),
       )
       world_meta = world_meta_result
 
@@ -711,9 +716,11 @@ async def process_node(node: StoryNode) -> None:
   branch_facts: list[pinecone.PineconeBranchFact] = []
   similar_nodes: list[pinecone.PineconeRecord] = []
   try:
-    world_facts = _get_world_facts(world_id, node.text)
-    branch_facts = _get_branch_facts(world_id, node.text, node.ancestors)
-    similar_nodes = _get_similar_nodes(world_id, node.text)
+    world_facts, branch_facts, similar_nodes = await asyncio.gather(
+      asyncio.to_thread(_get_world_facts, world_id, node.text),
+      asyncio.to_thread(_get_branch_facts, world_id, node.text, node.ancestors),
+      asyncio.to_thread(_get_similar_nodes, world_id, node.text),
+    )
   except Exception as e:
     pinecone_degraded = True
     logger.warning(
@@ -787,6 +794,22 @@ async def process_node(node: StoryNode) -> None:
         for fact in facts.branch_facts
       ]
     )
+
+
+def warm_world_cache(world_id: str, world_meta: "WorldMeta") -> None:
+  """Pre-warm the Gemini content cache for a world.
+
+  This creates the CachedContent resource eagerly so that the first
+  node generation in a session doesn't pay the cache-creation latency.
+  """
+  family_friendly = world_meta.family_friendly == "true"
+  llm_world_info = world_meta_to_llm_world_info(world_meta)
+  get_or_create_world_cache(
+    world_id=world_id,
+    static_system_prompt=llm.build_static_system_prompt(family_friendly=family_friendly),
+    world_context=llm.build_cached_world_context(llm_world_info, world_meta.narrator_profile or ""),
+    family_friendly=family_friendly,
+  )
 
 
 def retry_processing(world_id: str, node_id: str) -> StoryNode:
