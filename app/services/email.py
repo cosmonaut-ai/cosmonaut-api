@@ -440,31 +440,6 @@ def send_subscription_plan_change_scheduled(
   return _send_email(recipient_email, subject, _base_template(subject, body), text_body)
 
 
-def send_subscription_upgraded(recipient_email: str, name: str, new_tier: str) -> bool:
-  """Confirmation email after an immediate plan upgrade."""
-  display = _TIER_DISPLAY.get(new_tier, new_tier.title())
-  subject = f"You've upgraded to {display} on Cosmonaut!"
-  body = f"""
-  <p style="margin:0 0 16px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    {_greeting(name)}
-  </p>
-  <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    Your upgrade to the <strong style="color:{_FG};">{display}</strong> plan is now active. You have immediate access to your new limits.
-  </p>
-
-  {_tier_limits_html(new_tier)}
-
-  {_cta_button(_frontend_url("/dashboard"), "Start Exploring")}"""
-
-  text_body = (
-    f"{_greeting(name)}\n\n"
-    f"Your upgrade to the {display} plan is now active!\n\n"
-    f"Start exploring: {_frontend_url('/dashboard')}\n\n"
-    "— The Cosmonaut Team"
-  )
-  return _send_email(recipient_email, subject, _base_template(subject, body), text_body)
-
-
 def send_subscription_ended(recipient_email: str, name: str) -> bool:
   """Email when a subscription is fully deleted (end of cancellation period or payment failure)."""
   subject = "Your Cosmonaut subscription has ended"
