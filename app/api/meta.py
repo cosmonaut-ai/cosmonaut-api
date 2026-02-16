@@ -33,7 +33,7 @@ def _build_og_html(
 ) -> str:
   """Build a minimal HTML page containing Open Graph and Twitter Card meta tags."""
 
-  safe_title = escape(title)
+  safe_title = escape("Cosmonaut World: " + title)
   safe_desc = escape(description)
   safe_image = escape(image_url)
   safe_url = escape(canonical_url)
