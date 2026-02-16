@@ -41,7 +41,7 @@ _DESTRUCTIVE = "#e85454"
 _FONT = "Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif"
 
 _TIER_DISPLAY: dict[str, str] = {
-  "FREE": "Scout",
+  "FREE": "Free",
   "EXPLORER": "Explorer",
   "COSMONAUT": "Cosmonaut",
 }
@@ -177,10 +177,10 @@ def _tier_limits_html(tier: str) -> str:
   <tr><td style="padding:16px 20px;background-color:{_CODE_BG};border:1px solid {_CARD_BORDER};border-radius:12px;">
     <p style="margin:0 0 8px;font-size:14px;font-weight:600;color:{_FG};">Your plan includes:</p>
     <p style="margin:0;font-size:14px;color:{_MUTED};line-height:1.8;">
-      &bull; {limits['worlds']} worlds per {period}<br>
-      &bull; {limits['nodes']:,} story nodes per {period}<br>
-      &bull; {limits['saved_worlds']} saved stories<br>
-      &bull; {limits['audio_limit']} audio narrations per {period}
+      &bull; {limits["worlds"]} worlds per {period}<br>
+      &bull; {limits["nodes"]:,} story nodes per {period}<br>
+      &bull; {limits["saved_worlds"]} saved stories<br>
+      &bull; {limits["audio_limit"]} audio narrations per {period}
     </p>
   </td></tr>
   </table>"""
@@ -388,7 +388,7 @@ def send_subscription_cancellation_scheduled(
     Your subscription cancellation has been confirmed. You'll continue to have full access to your current plan until <strong style="color:{_FG};">{formatted_date}</strong>.
   </p>
   <p style="margin:0 0 24px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    After that date, your account will revert to the free Scout plan. Changed your mind? You can resubscribe anytime.
+    After that date, your account will revert to the Free plan. Changed your mind? You can resubscribe anytime.
   </p>
 
   {_cta_button(_frontend_url("/pricing"), "Resubscribe")}"""
@@ -397,7 +397,7 @@ def send_subscription_cancellation_scheduled(
     f"{_greeting(name)}\n\n"
     f"Your subscription cancellation has been confirmed. You'll continue "
     f"to have full access until {formatted_date}.\n\n"
-    f"After that, your account will revert to the free Scout plan.\n\n"
+    f"After that, your account will revert to the Free plan.\n\n"
     f"Resubscribe: {_frontend_url('/pricing')}\n\n"
     "— The Cosmonaut Team"
   )
@@ -473,10 +473,10 @@ def send_subscription_ended(recipient_email: str, name: str) -> bool:
     {_greeting(name)}
   </p>
   <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    Your paid subscription has ended and your account has been moved to the free <strong style="color:{_FG};">Scout</strong> plan.
+    Your paid subscription has ended and your account has been moved to the <strong style="color:{_FG};">Free</strong> plan.
   </p>
   <p style="margin:0 0 24px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    You can still access Cosmonaut with Scout-tier limits. If you'd like to pick up where you left off, you can resubscribe anytime.
+    You can still access Cosmonaut with Free-tier limits. If you'd like to pick up where you left off, you can resubscribe anytime.
   </p>
 
   {_cta_button(_frontend_url("/pricing"), "View Plans")}
@@ -488,7 +488,7 @@ def send_subscription_ended(recipient_email: str, name: str) -> bool:
   text_body = (
     f"{_greeting(name)}\n\n"
     "Your paid subscription has ended and your account has been moved to "
-    "the free Scout plan.\n\n"
+    "the Free plan.\n\n"
     "Your saved stories are still here. You can resubscribe anytime.\n\n"
     f"View plans: {_frontend_url('/pricing')}\n\n"
     "— The Cosmonaut Team"
