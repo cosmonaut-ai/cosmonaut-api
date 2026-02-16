@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 
 from aws_lambda_powertools import Logger
 
-from app.core.config import TIER_LIMITS, settings
+from app.core.config import get_tier_limits, settings
 
 if TYPE_CHECKING:
   from mypy_boto3_sesv2.client import SESv2Client
@@ -169,9 +169,7 @@ def _format_date(dt: datetime) -> str:
 
 def _tier_limits_html(tier: str) -> str:
   """Return an HTML snippet listing the key limits for a tier."""
-  limits = TIER_LIMITS.get(tier)
-  if not limits:
-    return ""
+  limits = get_tier_limits(tier)
   period = "week" if limits.get("reset_days", 30) <= 7 else "month"
   return f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 24px;">
   <tr><td style="padding:16px 20px;background-color:{_CODE_BG};border:1px solid {_CARD_BORDER};border-radius:12px;">

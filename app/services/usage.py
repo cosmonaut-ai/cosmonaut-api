@@ -13,7 +13,7 @@ from typing import Literal
 from aws_lambda_powertools import Logger
 from pynamodb.exceptions import UpdateError
 
-from app.core.config import TIER_LIMITS, settings
+from app.core.config import get_tier_limits, settings
 from app.models.entities.usage import UserUsage
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
@@ -64,7 +64,7 @@ _METRIC_LIMIT_KEY = {
 
 def _new_period_end(tier: str) -> datetime:
   """Calculate the next period end timestamp for *tier*."""
-  reset_days = TIER_LIMITS.get(tier, TIER_LIMITS["FREE"])["reset_days"]
+  reset_days = get_tier_limits(tier)["reset_days"]
   return datetime.now(timezone.utc) + timedelta(days=reset_days)
 
 
@@ -127,7 +127,7 @@ def check_storage_quota(user_id: str) -> None:
 
   usage = get_or_create_usage(user_id)
   tier = str(usage.tier) if usage.tier else "FREE"
-  limits = TIER_LIMITS.get(tier, TIER_LIMITS["FREE"])
+  limits = get_tier_limits(tier)
   saved_worlds_limit: int = limits["saved_worlds"]
 
   current_count = count_user_worlds(user_id)
@@ -146,7 +146,7 @@ def check_and_increment(user_id: str, metric: Literal["worlds", "nodes", "audio"
   """
   usage = get_or_create_usage(user_id)
   tier = str(usage.tier) if usage.tier else "FREE"
-  limits = TIER_LIMITS.get(tier, TIER_LIMITS["FREE"])
+  limits = get_tier_limits(tier)
   limit_key = _METRIC_LIMIT_KEY[metric]
   limit_value: int = limits[limit_key]
 

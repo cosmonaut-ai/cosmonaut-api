@@ -86,6 +86,11 @@ TIER_LIMITS: dict[str, dict[str, int]] = {
   "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30, "saved_worlds": 100, "audio_limit": 200},
 }
 
+
+def get_tier_limits(tier: str) -> dict[str, int]:
+  """Return the limits dict for the given tier, falling back to FREE if unknown."""
+  return TIER_LIMITS.get(tier, TIER_LIMITS["FREE"])
+
 # ---------------------------------------------------------------------------
 # World length presets (max story depth per branch)
 # ---------------------------------------------------------------------------

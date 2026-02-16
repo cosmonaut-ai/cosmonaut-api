@@ -66,7 +66,11 @@ def delete_account(user_id: str, cognito_username: str) -> None:
 
 
 def _cancel_stripe_subscription(user_id: str) -> None:
-  """Cancel any active Stripe subscription for the user."""
+  """Cancel any active Stripe subscription for the user.
+
+  Queries all non-terminal subscription statuses (active, past_due,
+  trialing, unpaid) to ensure nothing is missed.
+  """
   try:
     usage = UserUsage.get(UserUsage.pk(user_id), UserUsage.sk())
     if not usage.stripe_customer_id:
@@ -75,10 +79,11 @@ def _cancel_stripe_subscription(user_id: str) -> None:
     stripe.api_key = get_secret_value(settings.STRIPE_API_KEY_PARAM)
     customer_id = str(usage.stripe_customer_id)
 
-    subscriptions = stripe.Subscription.list(customer=customer_id, status="active", limit=10)
-    for sub in subscriptions.data:
-      stripe.Subscription.cancel(sub.id)
-      logger.info("Cancelled Stripe subscription %s for user %s", sub.id, user_id)
+    for status in ("active", "past_due", "trialing", "unpaid"):
+      subscriptions = stripe.Subscription.list(customer=customer_id, status=status, limit=10)
+      for sub in subscriptions.data:
+        stripe.Subscription.cancel(sub.id)
+        logger.info("Cancelled Stripe subscription %s (was %s) for user %s", sub.id, status, user_id)
 
   except UserUsage.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
     logger.info("No usage record found for Stripe cancellation (user %s)", user_id)
