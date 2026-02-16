@@ -29,6 +29,7 @@ from app.services.secret_manager import get_secret_value
 from app.services.usage import (
   clear_pending_cancellation,
   clear_pending_plan_change,
+  get_or_create_usage,
   reset_period,
   set_pending_cancellation,
   set_pending_plan_change,
@@ -235,13 +236,26 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
       cancel_dt = (
         datetime.fromtimestamp(period_end_ts, tz=timezone.utc) if period_end_ts else datetime.now(timezone.utc)
       )
+
+    # Idempotency: Stripe often fires multiple subscription.updated events
+    # in quick succession (e.g. cancel_at_period_end + schedule attachment).
+    # Only send the cancellation email if we haven't already recorded this
+    # exact cancellation date.
+    usage = get_or_create_usage(user_id)
+    already_pending = (
+      usage.pending_cancellation
+      and usage.cancellation_date
+      and abs((usage.cancellation_date - cancel_dt).total_seconds()) < 60
+    )
+
     set_pending_cancellation(user_id, cancel_dt)
 
-    email, name = get_user_contact_info(user_id)
-    if email:
-      send_subscription_cancellation_scheduled(email, name, cancel_dt)
+    if not already_pending:
+      email, name = get_user_contact_info(user_id)
+      if email:
+        send_subscription_cancellation_scheduled(email, name, cancel_dt)
 
-    logger.info(f"Subscription cancellation scheduled: user={user_id} cancel_at={cancel_dt.isoformat()}")
+    logger.info(f"Subscription cancellation scheduled: user={user_id} cancel_at={cancel_dt.isoformat()} email_sent={not already_pending}")
     return
 
   # -- Active with no cancellation scheduled (plan change or cancellation reversal) --
