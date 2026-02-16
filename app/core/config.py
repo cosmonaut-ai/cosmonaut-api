@@ -59,6 +59,9 @@ class Settings(BaseSettings):
   STRIPE_PRICE_COSMONAUT: str = Field(default="", description="Stripe Price ID for the Cosmonaut tier.")
   STRIPE_PORTAL_CONFIG_ID: str = Field(default="", description="Stripe Customer Portal configuration ID.")
 
+  # Frontend
+  FRONTEND_DOMAIN: str = Field(default="dev.cosmonaut-ai.com", description="Public frontend domain for canonical URLs.")
+
   # Dev access control
   DEV_ALLOWED_EMAILS: list[str] = Field(
     default=["imatson9119@gmail.com", "ian@cosmonaut-ai.com"],
