@@ -18,7 +18,6 @@ from app.models.voices import get_voice_by_id
 from app.services.audio import generate_and_store_audio
 from app.services.story_nodes import (
   InvalidChoiceError,
-  InvalidGenerationStatusError,
   InvalidProcessingStatusError,
   NodeNotFoundError,
   NodeProcessingError,
@@ -154,17 +153,14 @@ async def generate_text(
   """
   require_world_read(world_id, current_user)
 
-  # Validate node exists and has correct status before starting stream
+  # Validate node exists before starting stream.
+  # Status validation is intentionally deferred to the service layer which uses
+  # an atomic DynamoDB conditional write to prevent race conditions between
+  # concurrent requests.
   try:
-    node = node_service.get_node(world_id, node_id)
-    current_status = GenerationStatus(node.generation_status)
-    allowed_statuses = [GenerationStatus.INITIALIZED, GenerationStatus.FAILED]
-    if current_status not in allowed_statuses:
-      raise InvalidGenerationStatusError(node_id, current_status, allowed_statuses)
+    node_service.get_node(world_id, node_id)
   except NodeNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-  except InvalidGenerationStatusError as e:
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
   async def event_generator():
     """Wrap the story node stream in SSE format for better Lambda/Mangum compatibility."""
