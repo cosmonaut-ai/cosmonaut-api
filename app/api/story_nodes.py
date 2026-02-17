@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 from aws_lambda_powertools import Logger
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pynamodb.exceptions import UpdateError
 
 import app.services.story_nodes as node_service
+from app.api.dependencies import require_world_read
 from app.core.config import settings
 from app.core.security import User, get_current_user
 from app.models.dtos.story_node import ChooseRequestDTO, GenerationStatus, StoryNodeDTO
@@ -17,45 +18,43 @@ from app.models.voices import get_voice_by_id
 from app.services.audio import generate_and_store_audio
 from app.services.story_nodes import (
   InvalidChoiceError,
-  InvalidGenerationStatusError,
   InvalidProcessingStatusError,
   NodeNotFoundError,
   NodeProcessingError,
   NodeServiceError,
 )
 from app.services.usage import QuotaExceededError, check_and_increment
-from app.services.worlds import WorldNotFoundError, get_world_entity
+from app.services.worlds import WorldNotFoundError
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 router = APIRouter(prefix="/worlds", tags=["story-nodes"])
 
 
+class PaginatedNodesResponse(BaseModel):
+  nodes: list[StoryNodeDTO]
+  next_cursor: str | None = None
+
+
 @router.get(
   "/{world_id}/nodes/",
-  response_model=list[StoryNodeDTO],
+  response_model=PaginatedNodesResponse,
   response_model_exclude_none=True,
-  summary="List all nodes in a world",
+  summary="List nodes in a world (paginated)",
 )
 async def list_nodes(
   world_id: str = Path(..., description="Identifier for the world"),
   current_user: User = Depends(get_current_user),
-) -> list[StoryNodeDTO]:
-  """Return all story nodes for a given world."""
-  # Check authorization
-  try:
-    world = get_world_entity(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-
-  if not world.can_user_read(current_user.id):
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail=f"You are not authorized to access world {world_id}",
-    )
-
-  nodes = node_service.list_nodes(world_id)
-  return [node.to_dto() for node in nodes]
+  limit: int = Query(100, ge=1, le=500, description="Maximum number of nodes to return"),
+  cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
+) -> PaginatedNodesResponse:
+  """Return story nodes for a given world with optional pagination."""
+  require_world_read(world_id, current_user)
+  nodes, next_cursor = node_service.list_nodes(world_id, limit=limit, cursor=cursor)
+  return PaginatedNodesResponse(
+    nodes=[node.to_dto() for node in nodes],
+    next_cursor=next_cursor,
+  )
 
 
 @router.get(
@@ -69,18 +68,7 @@ async def get_node(
   current_user: User = Depends(get_current_user),
 ) -> StoryNodeDTO:
   """Retrieve a single story node by its identifier."""
-  # Check authorization
-  try:
-    world = get_world_entity(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-
-  if not world.can_user_read(current_user.id):
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail=f"You are not authorized to access world {world_id}",
-    )
-
+  require_world_read(world_id, current_user)
   try:
     node = node_service.get_node(world_id, node_id)
     return node.to_dto()
@@ -124,18 +112,7 @@ async def choose(
       detail="Exactly one of 'choice_index' or 'custom_choice' must be provided",
     )
 
-  # Check authorization
-  try:
-    world = get_world_entity(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-
-  if not world.can_user_read(current_user.id):
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail=f"You are not authorized to access world {world_id}",
-    )
-
+  require_world_read(world_id, current_user)
   try:
     new_node = await node_service.choose(
       world_id,
@@ -174,29 +151,16 @@ async def generate_text(
   4. Updates the node with generated text, title, choices, and sets generation_status to COMPLETED
   5. On error, sets generation_status to FAILED
   """
-  # Check authorization
-  try:
-    world = get_world_entity(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+  require_world_read(world_id, current_user)
 
-  if not world.can_user_read(current_user.id):
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail=f"You are not authorized to access world {world_id}",
-    )
-
-  # Validate node exists and has correct status before starting stream
+  # Validate node exists before starting stream.
+  # Status validation is intentionally deferred to the service layer which uses
+  # an atomic DynamoDB conditional write to prevent race conditions between
+  # concurrent requests.
   try:
-    node = node_service.get_node(world_id, node_id)
-    current_status = GenerationStatus(node.generation_status)
-    allowed_statuses = [GenerationStatus.INITIALIZED, GenerationStatus.FAILED]
-    if current_status not in allowed_statuses:
-      raise InvalidGenerationStatusError(node_id, current_status, allowed_statuses)
+    node_service.get_node(world_id, node_id)
   except NodeNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-  except InvalidGenerationStatusError as e:
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
 
   async def event_generator():
     """Wrap the story node stream in SSE format for better Lambda/Mangum compatibility."""
@@ -225,8 +189,9 @@ async def generate_text(
     except WorldNotFoundError as e:
       yield f"event: error\ndata: {str(e)}\n\n"
     except Exception as e:
-      # Catch-all so unexpected errors (e.g. LLM metadata parse failure) emit an
-      # SSE error event instead of silently dropping the connection.
+      # Intentional catch-all: unexpected errors during streaming (e.g. LLM metadata
+      # parse failure, network timeouts) must emit an SSE error event instead of
+      # silently dropping the connection.
       logger.error(f"Unexpected error during text generation for node {node_id}: {e}", exc_info=True)
       yield "event: error\ndata: An unexpected error occurred during generation\n\n"
 
@@ -238,6 +203,26 @@ async def generate_text(
       "X-Accel-Buffering": "no",  # Disable buffering in nginx/proxies
     },
   )
+
+
+@router.post(
+  "/{world_id}/warm-cache",
+  status_code=status.HTTP_204_NO_CONTENT,
+  summary="Pre-warm the Gemini content cache for a world",
+)
+async def warm_cache(
+  world_id: str = Path(..., description="Identifier for the world"),
+  current_user: User = Depends(get_current_user),
+) -> None:
+  """Eagerly create a Gemini CachedContent resource for the given world.
+
+  Calling this when the user opens a world avoids the cache-creation
+  latency (~500-2000 ms) on the first node generation.  The endpoint is
+  idempotent: if a cache already exists for this world it returns
+  immediately.
+  """
+  world = require_world_read(world_id, current_user)
+  node_service.warm_world_cache(world_id, world)
 
 
 @router.post(
@@ -256,18 +241,7 @@ async def retry_processing(
   analysis message to the worker queue. Only nodes with
   processing_status=FAILED can be retried.
   """
-  # Check authorization
-  try:
-    world = get_world_entity(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-
-  if not world.can_user_read(current_user.id):
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail=f"You are not authorized to access world {world_id}",
-    )
-
+  require_world_read(world_id, current_user)
   try:
     node = node_service.retry_processing(world_id, node_id)
     return node.to_dto()
@@ -324,17 +298,7 @@ async def generate_node_audio(
       detail=f"Unknown voice_id: {request.voice_id}",
     )
 
-  # -- Auth --
-  try:
-    world = get_world_entity(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-
-  if not world.can_user_read(current_user.id):
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail=f"You are not authorized to access world {world_id}",
-    )
+  require_world_read(world_id, current_user)
 
   # -- Fetch node --
   try:

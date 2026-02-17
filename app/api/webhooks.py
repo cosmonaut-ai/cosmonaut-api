@@ -16,11 +16,20 @@ from aws_lambda_powertools import Logger
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app.core.config import PRICE_TO_TIER, settings
-from app.services.cognito import update_user_tier
+from app.services.cognito import get_user_contact_info, update_user_tier
+from app.services.email import (
+  send_payment_failed,
+  send_subscription_cancellation_scheduled,
+  send_subscription_ended,
+  send_subscription_plan_change_scheduled,
+  send_subscription_renewed,
+  send_subscription_welcome,
+)
 from app.services.secret_manager import get_secret_value
 from app.services.usage import (
   clear_pending_cancellation,
   clear_pending_plan_change,
+  get_or_create_usage,
   reset_period,
   set_pending_cancellation,
   set_pending_plan_change,
@@ -166,6 +175,10 @@ def _handle_checkout_completed(event: stripe.Event) -> None:
   update_tier(user_id, tier, stripe_customer_id=customer_id)
   update_user_tier(user_id, tier)
 
+  email, name = get_user_contact_info(user_id)
+  if email:
+    send_subscription_welcome(email, name, tier)
+
   logger.info(f"Checkout completed: user={user_id} tier={tier}")
 
 
@@ -183,8 +196,15 @@ def _handle_invoice_paid(event: stripe.Event) -> None:
     logger.warning(f"invoice.payment_succeeded: no user_id in subscription {subscription_id} metadata")
     return
 
+  tier = _resolve_tier_from_subscription(sub) or "EXPLORER"
+
   reset_period(user_id)
   clear_pending_cancellation(user_id)
+
+  email, name = get_user_contact_info(user_id)
+  if email:
+    send_subscription_renewed(email, name, tier)
+
   logger.info(f"Invoice paid (renewal): user={user_id}")
 
 
@@ -216,8 +236,26 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
       cancel_dt = (
         datetime.fromtimestamp(period_end_ts, tz=timezone.utc) if period_end_ts else datetime.now(timezone.utc)
       )
+
+    # Idempotency: Stripe often fires multiple subscription.updated events
+    # in quick succession (e.g. cancel_at_period_end + schedule attachment).
+    # Only send the cancellation email if we haven't already recorded this
+    # exact cancellation date.
+    usage = get_or_create_usage(user_id)
+    already_pending = (
+      usage.pending_cancellation
+      and usage.cancellation_date
+      and abs((usage.cancellation_date - cancel_dt).total_seconds()) < 60
+    )
+
     set_pending_cancellation(user_id, cancel_dt)
-    logger.info(f"Subscription cancellation scheduled: user={user_id} cancel_at={cancel_dt.isoformat()}")
+
+    if not already_pending:
+      email, name = get_user_contact_info(user_id)
+      if email:
+        send_subscription_cancellation_scheduled(email, name, cancel_dt)
+
+    logger.info(f"Subscription cancellation scheduled: user={user_id} cancel_at={cancel_dt.isoformat()} email_sent={not already_pending}")
     return
 
   # -- Active with no cancellation scheduled (plan change or cancellation reversal) --
@@ -247,6 +285,11 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
         datetime.fromtimestamp(effective_ts, tz=timezone.utc) if effective_ts else datetime.now(timezone.utc)
       )
       set_pending_plan_change(user_id, pending_tier, effective_dt)
+
+      email, name = get_user_contact_info(user_id)
+      if email:
+        send_subscription_plan_change_scheduled(email, name, pending_tier, effective_dt)
+
       logger.info(f"Scheduled plan change: user={user_id} pending_tier={pending_tier} at={effective_dt.isoformat()}")
       # Don't fall through to update_tier – the subscription items haven't
       # changed yet (the change is scheduled for end-of-period).  Calling
@@ -262,6 +305,7 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
       customer_id = str(subscription.get("customer", ""))
       update_tier(user_id, new_tier, stripe_customer_id=customer_id)
       update_user_tier(user_id, new_tier)
+
       logger.info(f"Subscription plan changed: user={user_id} new_tier={new_tier}")
     return
 
@@ -301,6 +345,11 @@ def _handle_invoice_payment_failed(event: stripe.Event) -> None:
     return
 
   update_subscription_status(user_id, "past_due")
+
+  email, name = get_user_contact_info(user_id)
+  if email:
+    send_payment_failed(email, name)
+
   logger.warning(f"Invoice payment failed: user={user_id} sub={subscription_id}")
 
 
@@ -314,6 +363,11 @@ def _handle_subscription_deleted(event: stripe.Event) -> None:
 
   update_tier(user_id, "FREE")
   update_user_tier(user_id, "FREE")
+
+  email, name = get_user_contact_info(user_id)
+  if email:
+    send_subscription_ended(email, name)
+
   logger.info(f"Subscription deleted → FREE: user={user_id}")
 
 

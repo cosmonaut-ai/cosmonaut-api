@@ -1,13 +1,15 @@
 from typing import Literal
 
 import stripe
+from botocore.exceptions import ClientError
 from aws_lambda_powertools import Logger
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
 from pydantic import BaseModel
 
 from app.core.cloudfront import create_signed_cookies
-from app.core.config import TIER_LIMITS, settings
+from app.core.config import get_tier_limits, settings
 from app.core.security import User, get_current_user
+from app.services.account import delete_account
 from app.services.secret_manager import get_secret_value
 from app.services.usage import get_or_create_usage
 from app.services.worlds import count_user_worlds
@@ -63,7 +65,7 @@ class UsageResponse(BaseModel):
 async def create_session(response: Response, current_user: User = Depends(get_current_user)):
   try:
     private_key = get_secret_value(settings.CLOUDFRONT_PRIVATE_KEY_PARAM)
-  except Exception:
+  except (ValueError, OSError, ClientError):
     logger.error("Could not retrieve signing key", exc_info=True)
     raise HTTPException(status_code=500, detail="Could not retrieve signing key")
 
@@ -93,7 +95,7 @@ async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResp
   """Return the authenticated user's tier, usage counters, and limits."""
   usage = get_or_create_usage(current_user.id)
   tier = str(usage.tier) if usage.tier else "FREE"
-  limits = TIER_LIMITS.get(tier, TIER_LIMITS["FREE"])
+  limits = get_tier_limits(tier)
 
   return UsageResponse(
     tier=tier,
@@ -144,6 +146,24 @@ async def create_checkout(
     raise HTTPException(status_code=502, detail="Failed to create checkout session") from e
 
   return CheckoutResponse(checkout_url=session.url or "")
+
+
+@router.delete("/account", status_code=200, summary="Permanently delete user account")
+async def delete_user_account(current_user: User = Depends(get_current_user)) -> dict[str, str]:
+  """Permanently delete the authenticated user's account and all associated data.
+
+  This action is irreversible. It will:
+  - Cancel any active Stripe subscription
+  - Delete all owned worlds, story nodes, and vector embeddings
+  - Delete usage records
+  - Delete the Cognito user identity
+  """
+  try:
+    delete_account(user_id=current_user.id, cognito_username=current_user.username)
+    return {"status": "deleted"}
+  except ClientError:
+    logger.exception("Account deletion failed for user %s", current_user.id)
+    raise HTTPException(status_code=500, detail="Account deletion failed. Please contact support.")
 
 
 @router.post("/billing-portal", response_model=BillingPortalResponse, summary="Create a Stripe Billing Portal session")
