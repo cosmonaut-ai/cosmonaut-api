@@ -46,6 +46,38 @@ def _resolve_cognito_username(client: CognitoIdentityProviderClient, user_id: st
   return None
 
 
+def get_user_contact_info(user_id: str) -> tuple[str, str]:
+  """Return ``(email, name)`` for a Cognito user identified by ``sub``.
+
+  Uses the same ``list_users`` call that ``_resolve_cognito_username`` makes,
+  so it costs a single API call.  Returns ``("", "")`` on failure — callers
+  should treat a missing email as a reason to skip the email send.
+  """
+  if not settings.COGNITO_USER_POOL_ID:
+    logger.warning("COGNITO_USER_POOL_ID not set; cannot look up user contact info")
+    return "", ""
+
+  client = _get_cognito_client()
+  try:
+    response = client.list_users(
+      UserPoolId=settings.COGNITO_USER_POOL_ID,
+      Filter=f'sub = "{user_id}"',
+      Limit=1,
+    )
+    users = response.get("Users", [])
+    if not users:
+      logger.warning(f"No Cognito user found for sub {user_id}")
+      return "", ""
+
+    attrs = {a["Name"]: a["Value"] for a in users[0].get("Attributes", [])}
+    email = attrs.get("email", "")
+    name = attrs.get("given_name") or attrs.get("name") or ""
+    return email, name
+  except Exception:
+    logger.exception(f"Failed to look up contact info for sub {user_id}")
+    return "", ""
+
+
 def update_user_tier(user_id: str, tier: str) -> None:
   """Update the ``custom:tier`` attribute on a Cognito user.
 

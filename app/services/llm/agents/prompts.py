@@ -6,7 +6,7 @@ plus narrative constraints shared across all generation agents.
 
 NARRATIVE_CONSTRAINTS = """
 ## Narrative Constraints (STRICT)
-- NEVER use these character names: Elara, Kaelen, Elias, Kethric, Thorne
+- NEVER use these character names: Elara, Kaelen, Elias, Kethric, Thorne, Silas, Vane
 - NEVER use "Oakhaven" as a place name
 - Avoid contrastive emphasis patterns. Do NOT overuse constructions like:
   - "X, yet Y" / "X, but Y" / "Despite X, Y" / "X — and yet, Y"

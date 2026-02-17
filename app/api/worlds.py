@@ -4,13 +4,19 @@ from __future__ import annotations
 
 from typing import NoReturn
 
+from aws_lambda_powertools import Logger
 from fastapi import APIRouter, Depends, HTTPException, Path, status
 
 import app.services.worlds as world_service
+from app.api.dependencies import require_world_read, require_world_write
+from app.core.config import settings
 from app.core.security import User, get_current_user
 from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO, WorldUpdateSharingRequest
+from app.services.email import send_world_invite
 from app.services.usage import QuotaExceededError, StorageQuotaExceededError
-from app.services.worlds import WorldNotFoundError, get_world_entity
+from app.services.worlds import WorldNotFoundError
+
+logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 router = APIRouter(prefix="/worlds", tags=["worlds"])
 
@@ -29,7 +35,7 @@ def _raise_not_implemented() -> NoReturn:
 @router.get("/", response_model=list[WorldMetaDTO], summary="List available worlds")
 async def list_worlds(user: User = Depends(get_current_user)) -> list[WorldMetaDTO]:
   """Return a discoverable set of worlds (paged feed TBD)."""
-  print(f"Listing worlds for user {user.id}")
+  logger.info(f"Listing worlds for user {user.id}")
   try:
     worlds = world_service.list_worlds(user.id)
     return [world.to_dto() for world in worlds]
@@ -47,18 +53,7 @@ async def get_world(
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Retrieve a single world by its identifier."""
-  # Check authorization
-  try:
-    world = world_service.get_world(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-
-  if not world.can_user_read(user.id):
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail=f"You are not authorized to access world {world_id}",
-    )
-
+  world = require_world_read(world_id, user)
   return world.to_dto()
 
 
@@ -87,8 +82,11 @@ async def create_world(payload: WorldCreateRequest, user: User = Depends(get_cur
 async def update_world(
   payload: WorldMetaDTO,
   world_id: str = Path(..., description="Identifier for the world"),
+  user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Apply partial updates to an existing world."""
+  require_world_write(world_id, user)
+
   try:
     world = world_service.update_world(world_id, payload)
     return world.to_dto()
@@ -107,19 +105,7 @@ async def delete_world(
   world_id: str = Path(..., description="Identifier for the world"), user: User = Depends(get_current_user)
 ) -> None:
   """Delete a world and any associated state (implementation pending)."""
-
-  # Check authorization
-  try:
-    world = get_world_entity(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-
-  if not world.can_user_write(user.id):
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail=f"You are not authorized to delete world {world_id}",
-    )
-
+  require_world_write(world_id, user)
   world_service.delete_world(world_id)
 
 
@@ -134,17 +120,12 @@ async def update_sharing(
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Share a world with a user."""
-  # Check authorization
-  try:
-    world = get_world_entity(world_id)
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+  world = require_world_write(world_id, user)
 
-  if not world.can_user_write(user.id):
-    raise HTTPException(
-      status_code=status.HTTP_403_FORBIDDEN,
-      detail=f"You are not authorized to share world {world_id}",
-    )
+  # Identify newly added emails before persisting the update
+  previous_shared: set[str] = set(world.shared_with or [])
+  new_shared: set[str] = set(payload.shared_with or [])
+  newly_added = new_shared - previous_shared
 
   world_dto = WorldMetaDTO(
     visibility=payload.visibility,
@@ -152,4 +133,13 @@ async def update_sharing(
   )
 
   world = world_service.update_world(world_id, world_dto)
+
+  # Send invite emails to newly added users (non-blocking)
+  if newly_added:
+    inviter_name = user.email or user.username or "Someone"
+    world_title = str(world.title) if world.title else "Untitled World"
+    world_url = f"https://{settings.FRONTEND_DOMAIN}/worlds/{world_id}"
+    for email in newly_added:
+      send_world_invite(email, inviter_name, world_title, world_url)
+
   return world.to_dto()
