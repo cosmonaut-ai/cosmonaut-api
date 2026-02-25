@@ -7,6 +7,7 @@ handled by the Cognito custom_message Lambda trigger.
 
 from __future__ import annotations
 
+import html
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -237,8 +238,11 @@ def send_world_invite(
   world_url: str,
 ) -> bool:
   """Send a branded invite email when a world is shared with a new user."""
-  subject = f'{inviter_name} invited you to explore "{world_title}" on Cosmonaut'
-  html_body = _invite_email_html(inviter_name, world_title, world_url)
+  safe_inviter = html.escape(inviter_name)
+  safe_title = html.escape(world_title)
+  safe_url = html.escape(world_url)
+  subject = f'{safe_inviter} invited you to explore "{safe_title}" on Cosmonaut'
+  html_body = _invite_email_html(safe_inviter, safe_title, safe_url)
   text_body = (
     f'{inviter_name} invited you to explore "{world_title}" on Cosmonaut.\n\n'
     f"Open this link to start your adventure:\n{world_url}\n\n"
@@ -291,11 +295,12 @@ def _invite_email_html(inviter_name: str, world_title: str, world_url: str) -> s
 
 def send_subscription_welcome(recipient_email: str, name: str, tier: str) -> bool:
   """Welcome email after a new subscription purchase via Stripe Checkout."""
+  safe_name = html.escape(name)
   display = _TIER_DISPLAY.get(tier, tier.title())
   subject = f"Welcome to the {display} plan on Cosmonaut!"
   body = f"""
   <p style="margin:0 0 16px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    {_greeting(name)}
+    {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
     Your subscription to the <strong style="color:{_FG};">{display}</strong> plan is now active. Thank you for supporting Cosmonaut!
@@ -321,11 +326,12 @@ def send_subscription_welcome(recipient_email: str, name: str, tier: str) -> boo
 
 def send_subscription_renewed(recipient_email: str, name: str, tier: str) -> bool:
   """Confirmation email after a successful subscription renewal payment."""
+  safe_name = html.escape(name)
   display = _TIER_DISPLAY.get(tier, tier.title())
   subject = f"Your {display} subscription has been renewed"
   body = f"""
   <p style="margin:0 0 16px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    {_greeting(name)}
+    {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 24px;font-size:15px;color:{_MUTED};line-height:1.6;">
     Your <strong style="color:{_FG};">{display}</strong> plan has been successfully renewed and your usage limits have been reset. You're all set for another billing period!
@@ -345,10 +351,11 @@ def send_subscription_renewed(recipient_email: str, name: str, tier: str) -> boo
 
 def send_payment_failed(recipient_email: str, name: str) -> bool:
   """Alert email when a subscription invoice payment fails."""
+  safe_name = html.escape(name)
   subject = "Action required: your Cosmonaut payment failed"
   body = f"""
   <p style="margin:0 0 16px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    {_greeting(name)}
+    {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 24px;font-size:15px;color:{_MUTED};line-height:1.6;">
     We were unable to process your latest subscription payment. Your access remains active while we retry, but please update your payment method to avoid interruption.
@@ -376,11 +383,12 @@ def send_subscription_cancellation_scheduled(
   cancel_date: datetime,
 ) -> bool:
   """Confirmation email when a subscription cancellation is scheduled."""
+  safe_name = html.escape(name)
   formatted_date = _format_date(cancel_date)
   subject = "Your Cosmonaut subscription cancellation is confirmed"
   body = f"""
   <p style="margin:0 0 16px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    {_greeting(name)}
+    {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
     Your subscription cancellation has been confirmed. You'll continue to have full access to your current plan until <strong style="color:{_FG};">{formatted_date}</strong>.
@@ -409,12 +417,13 @@ def send_subscription_plan_change_scheduled(
   effective_date: datetime,
 ) -> bool:
   """Email when a plan change (typically a downgrade) is scheduled for period end."""
+  safe_name = html.escape(name)
   display = _TIER_DISPLAY.get(pending_tier, pending_tier.title())
   formatted_date = _format_date(effective_date)
   subject = f"Your Cosmonaut plan change to {display} is scheduled"
   body = f"""
   <p style="margin:0 0 16px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    {_greeting(name)}
+    {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
     Your plan change to <strong style="color:{_FG};">{display}</strong> has been scheduled. You'll keep your current plan benefits until <strong style="color:{_FG};">{formatted_date}</strong>, and the change will take effect automatically.
@@ -440,10 +449,11 @@ def send_subscription_plan_change_scheduled(
 
 def send_subscription_ended(recipient_email: str, name: str) -> bool:
   """Email when a subscription is fully deleted (end of cancellation period or payment failure)."""
+  safe_name = html.escape(name)
   subject = "Your Cosmonaut subscription has ended"
   body = f"""
   <p style="margin:0 0 16px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    {_greeting(name)}
+    {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
     Your paid subscription has ended and your account has been moved to the <strong style="color:{_FG};">Free</strong> plan.
@@ -467,3 +477,77 @@ def send_subscription_ended(recipient_email: str, name: str) -> bool:
     "— The Cosmonaut Team"
   )
   return _send_email(recipient_email, subject, _base_template(subject, body), text_body)
+
+
+# ---------------------------------------------------------------------------
+# User feedback email (sent to support)
+# ---------------------------------------------------------------------------
+
+_CATEGORY_DISPLAY: dict[str, str] = {
+  "bug": "Bug Report",
+  "feature": "Feature Request",
+  "feedback": "General Feedback",
+  "other": "Other",
+}
+
+
+def send_feedback_email(
+  user_email: str,
+  user_id: str,
+  tier: str,
+  category: str,
+  message: str,
+) -> bool:
+  """Send a formatted feedback email to the support address."""
+  safe_email = html.escape(user_email)
+  safe_user_id = html.escape(user_id)
+  safe_message = html.escape(message)
+  display_category = _CATEGORY_DISPLAY.get(category, category.title())
+  display_tier = _TIER_DISPLAY.get(tier, tier.title())
+
+  subject = f"[{display_category}] Feedback from {user_email}"
+  body = f"""
+  <p style="margin:0 0 16px;font-size:15px;color:{_MUTED};line-height:1.6;">
+    New feedback submission:
+  </p>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 24px;">
+  <tr><td style="padding:16px 20px;background-color:{_CODE_BG};border:1px solid {_CARD_BORDER};border-radius:12px;">
+    <p style="margin:0 0 8px;font-size:14px;color:{_MUTED};">
+      <strong style="color:{_FG};">From:</strong> {safe_email}
+    </p>
+    <p style="margin:0 0 8px;font-size:14px;color:{_MUTED};">
+      <strong style="color:{_FG};">User ID:</strong> {safe_user_id}
+    </p>
+    <p style="margin:0 0 8px;font-size:14px;color:{_MUTED};">
+      <strong style="color:{_FG};">Tier:</strong> {display_tier}
+    </p>
+    <p style="margin:0;font-size:14px;color:{_MUTED};">
+      <strong style="color:{_FG};">Category:</strong> {display_category}
+    </p>
+  </td></tr>
+  </table>
+
+  <p style="margin:0 0 8px;font-size:14px;font-weight:600;color:{_FG};">Message:</p>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+  <tr><td style="padding:16px 20px;background-color:{_CODE_BG};border:1px solid {_CARD_BORDER};border-radius:12px;">
+    <p style="margin:0;font-size:14px;color:{_MUTED};line-height:1.6;white-space:pre-wrap;">{safe_message}</p>
+  </td></tr>
+  </table>"""
+
+  text_body = (
+    f"New feedback submission\n\n"
+    f"From: {user_email}\n"
+    f"User ID: {user_id}\n"
+    f"Tier: {display_tier}\n"
+    f"Category: {display_category}\n\n"
+    f"Message:\n{message}\n"
+  )
+
+  support_email = (
+    settings.SES_FROM_EMAIL.replace("noreply@", "support@")
+    if settings.SES_FROM_EMAIL
+    else "support@cosmonaut-ai.com"
+  )
+  html_body = _base_template(f"Feedback: {display_category}", body)
+  return _send_email(support_email, subject, html_body, text_body)

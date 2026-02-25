@@ -1,15 +1,20 @@
+import time
 from typing import Literal
+from urllib.parse import urlparse
 
 import stripe
-from botocore.exceptions import ClientError
 from aws_lambda_powertools import Logger
+from botocore.exceptions import ClientError
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 
 from app.core.cloudfront import create_signed_cookies
 from app.core.config import get_tier_limits, settings
 from app.core.security import User, get_current_user
+from app.models.entities.rate_limit import RateLimitRecord
 from app.services.account import delete_account
+from app.services.email import send_feedback_email
+from app.services.newsletter import subscribe, unsubscribe
 from app.services.secret_manager import get_secret_value
 from app.services.usage import get_or_create_usage
 from app.services.worlds import count_user_worlds
@@ -28,6 +33,14 @@ class CheckoutRequest(BaseModel):
   tier: Literal["EXPLORER", "COSMONAUT"]
   success_url: str
   cancel_url: str
+
+  @field_validator("success_url", "cancel_url")
+  @classmethod
+  def validate_url_domain(cls, v: str) -> str:
+    parsed = urlparse(v)
+    if parsed.scheme != "https" or parsed.netloc != settings.FRONTEND_DOMAIN:
+      raise ValueError(f"URL must belong to {settings.FRONTEND_DOMAIN}")
+    return v
 
 
 class CheckoutResponse(BaseModel):
@@ -54,6 +67,16 @@ class UsageResponse(BaseModel):
   subscription_status: str | None
   pending_tier: str | None
   pending_tier_date: str | None
+  newsletter_opted_in: bool
+
+
+class FeedbackRequest(BaseModel):
+  category: Literal["bug", "feature", "feedback", "other"]
+  message: str
+
+
+class NewsletterRequest(BaseModel):
+  opted_in: bool
 
 
 # ---------------------------------------------------------------------------
@@ -113,6 +136,7 @@ async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResp
     subscription_status=str(usage.subscription_status) if usage.subscription_status else None,
     pending_tier=str(usage.pending_tier) if usage.pending_tier else None,
     pending_tier_date=usage.pending_tier_date.isoformat() if usage.pending_tier_date else None,
+    newsletter_opted_in=bool(usage.newsletter_opted_in) if usage.newsletter_opted_in is not None else False,
   )
 
 
@@ -193,3 +217,78 @@ async def create_billing_portal(
     raise HTTPException(status_code=502, detail="Failed to create billing portal session") from e
 
   return BillingPortalResponse(portal_url=session.url or "")
+
+
+# ---------------------------------------------------------------------------
+# Feedback endpoint
+# ---------------------------------------------------------------------------
+
+FEEDBACK_COOLDOWN_SECONDS = 300  # 5 minutes between submissions
+
+
+@router.post("/feedback", status_code=200, summary="Submit user feedback")
+async def submit_feedback(
+  payload: FeedbackRequest = Body(...),
+  current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+  """Submit feedback via email.  Rate-limited to one submission per 5 minutes."""
+  rate_pk = f"RATE#FEEDBACK#{current_user.id}"
+  rate_sk = "LIMIT"
+  now = int(time.time())
+
+  try:
+    existing = RateLimitRecord.get(rate_pk, rate_sk)
+    if existing.expiration and int(existing.expiration) > now:
+      retry_after = int(existing.expiration) - now
+      raise HTTPException(
+        status_code=429,
+        detail="Please wait before submitting more feedback.",
+        headers={"Retry-After": str(retry_after)},
+      )
+  except RateLimitRecord.DoesNotExist:
+    pass
+
+  record = RateLimitRecord(
+    PK=rate_pk,
+    SK=rate_sk,
+    expiration=now + FEEDBACK_COOLDOWN_SECONDS,
+  )
+  record.save()
+
+  usage = get_or_create_usage(current_user.id)
+  tier = str(usage.tier) if usage.tier else "FREE"
+
+  send_feedback_email(
+    user_email=current_user.email or "unknown",
+    user_id=current_user.id,
+    tier=tier,
+    category=payload.category,
+    message=payload.message,
+  )
+
+  return {"status": "submitted"}
+
+
+# ---------------------------------------------------------------------------
+# Newsletter endpoint
+# ---------------------------------------------------------------------------
+
+
+@router.post("/newsletter", status_code=200, summary="Update newsletter preference")
+async def update_newsletter(
+  payload: NewsletterRequest = Body(...),
+  current_user: User = Depends(get_current_user),
+) -> dict[str, str]:
+  """Subscribe or unsubscribe the user from the product newsletter."""
+  usage = get_or_create_usage(current_user.id)
+  usage.newsletter_opted_in = payload.opted_in
+  usage.save()
+
+  email = current_user.email
+  if email:
+    if payload.opted_in:
+      subscribe(email)
+    else:
+      unsubscribe(email)
+
+  return {"status": "subscribed" if payload.opted_in else "unsubscribed"}
