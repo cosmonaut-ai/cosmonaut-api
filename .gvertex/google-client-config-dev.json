@@ -3,7 +3,7 @@
   "type": "external_account",
   "audience": "//iam.googleapis.com/projects/357029287606/locations/global/workloadIdentityPools/aws-lambda-pool/providers/aws-lambda",
   "subject_token_type": "urn:ietf:params:aws:token-type:aws4_request",
-  "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/lambda-vertex-caller@cosmonaut-481723.iam.gserviceaccount.com:generateAccessToken",
+  "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/cosmonaut-vertex-ai@cosmonaut-481723.iam.gserviceaccount.com:generateAccessToken",
   "token_url": "https://sts.googleapis.com/v1/token",
   "credential_source": {
     "environment_id": "aws1",

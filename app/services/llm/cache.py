@@ -19,7 +19,6 @@ from google.genai import Client as GenAIClient
 from google.genai.types import CreateCachedContentConfig
 
 from app.core.config import settings
-from app.services.secret_manager import get_secret_value
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
@@ -33,8 +32,12 @@ _CACHE_TTL = "3600s"
 
 @lru_cache
 def _get_genai_client() -> GenAIClient:
-  """Lazy singleton for the Google GenAI client used by the cache service."""
-  return GenAIClient(api_key=get_secret_value(settings.GEMINI_API_KEY_PARAM))
+  """Lazy singleton for the Vertex AI GenAI client used by the cache service."""
+  return GenAIClient(
+    vertexai=True,
+    project=settings.GCP_PROJECT_ID,
+    location=settings.GCP_LOCATION,
+  )
 
 
 def get_or_create_world_cache(

@@ -15,7 +15,6 @@ from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
-from app.services.secret_manager import get_secret_value
 
 # HTTP status codes that should trigger a retry.
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
@@ -55,9 +54,12 @@ def get_gemini_provider() -> GoogleProvider:
 
   The provider is backed by a retrying HTTP client that automatically handles
   429 / 500 / 502 / 503 / 504 responses with exponential backoff.
+  Uses Vertex AI via Workload Identity Federation (Lambda) or ADC (local).
   """
   return GoogleProvider(
-    api_key=get_secret_value(settings.GEMINI_API_KEY_PARAM),
+    vertexai=True,
+    project=settings.GCP_PROJECT_ID,
+    location=settings.GCP_LOCATION,
     http_client=_create_retrying_client(),
   )
 
