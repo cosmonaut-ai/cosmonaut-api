@@ -7,6 +7,7 @@ via Stripe signature verification instead.
 
 from __future__ import annotations
 
+import time
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Any, cast
@@ -16,6 +17,7 @@ from aws_lambda_powertools import Logger
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app.core.config import PRICE_TO_TIER, settings
+from app.models.entities.rate_limit import RateLimitRecord
 from app.services.cognito import get_user_contact_info, update_user_tier
 from app.services.email import (
   send_payment_failed,
@@ -409,10 +411,30 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
   event_type: str = event.get("type", "")
   logger.info(f"Stripe webhook received: {event_type}")
 
+  # Idempotency: skip duplicate events from Stripe retries
+  event_id: str = event.get("id", "")
+  if event_id:
+    idempotency_pk = RateLimitRecord.pk(f"WEBHOOK#{event_id}")
+    try:
+      existing = RateLimitRecord.get(idempotency_pk, RateLimitRecord.sk("PROCESSED"))
+      if existing and existing.expiration > int(time.time()):
+        logger.info("Duplicate webhook event %s, skipping", event_id)
+        return {"status": "already_processed"}
+    except RateLimitRecord.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+      pass
+
   handler = _EVENT_HANDLERS.get(event_type)
   if handler:
     try:
       handler(event)
+      # Mark as processed only after successful handling
+      if event_id:
+        record = RateLimitRecord(
+          PK=idempotency_pk,
+          SK=RateLimitRecord.sk("PROCESSED"),
+          expiration=int(time.time()) + 172800,  # 48 hours TTL
+        )
+        record.save()
     except Exception:
       logger.exception(f"Error handling Stripe event {event_type}")
       # Return 200 even on internal errors to prevent Stripe retries for

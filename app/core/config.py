@@ -59,6 +59,9 @@ class Settings(BaseSettings):
   STRIPE_PRICE_COSMONAUT: str = Field(default="", description="Stripe Price ID for the Cosmonaut tier.")
   STRIPE_PORTAL_CONFIG_ID: str = Field(default="", description="Stripe Customer Portal configuration ID.")
 
+  # Buttondown newsletter
+  BUTTONDOWN_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Buttondown API key.")
+
   # SES Email
   SES_FROM_EMAIL: str = Field(
     default="", description="Verified SES sender address (e.g. Cosmonaut <noreply@cosmonaut-ai.com>)."

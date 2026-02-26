@@ -36,6 +36,9 @@ class UserUsage(BaseCosmonautModel):
   pending_tier: UnicodeAttribute = UnicodeAttribute(null=True)
   pending_tier_date: UTCDateTimeAttribute = UTCDateTimeAttribute(null=True)
 
+  # Newsletter opt-in (Buttondown)
+  newsletter_opted_in: BooleanAttribute = BooleanAttribute(default=False)
+
   # ── Key helpers ──────────────────────────────────────────────────────────
 
   @classmethod
