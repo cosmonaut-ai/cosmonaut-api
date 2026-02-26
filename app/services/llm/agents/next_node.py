@@ -25,7 +25,7 @@ from app.services.llm.agents.prompts import (
   STORY_TEXT_RULES,
 )
 from app.services.llm.models import LLMWorldInfo
-from app.services.llm.provider import get_gemini_model
+from app.services.llm.provider import get_vertex_model
 from app.services.llm.utils import format_model_with_descriptions
 
 NEXT_NODE_PREAMBLE = """
@@ -123,7 +123,7 @@ class NextNodeDeps(BaseModel):
 # =============================================================================
 
 _agent: Agent[NextNodeDeps, str] = Agent(
-  model=get_gemini_model(),
+  model=get_vertex_model(),
   deps_type=NextNodeDeps,
   output_type=str,
 )
@@ -185,7 +185,7 @@ def get_next_node_agent() -> Agent[NextNodeDeps, str]:
 # =============================================================================
 
 _cached_agent: Agent[None, str] = Agent(
-  model=get_gemini_model(),
+  model=get_vertex_model(),
   output_type=str,
 )
 """Agent used when a Gemini CachedContent resource is available.

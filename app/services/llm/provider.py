@@ -49,14 +49,14 @@ def _create_retrying_client() -> AsyncClient:
 
 
 @lru_cache
-def get_gemini_provider() -> GoogleProvider:
-  """Get or create the Gemini provider singleton.
+def get_vertex_provider() -> GoogleProvider:
+  """Get or create the Vertex AI provider singleton.
 
   The provider is backed by a retrying HTTP client that automatically handles
   429 / 500 / 502 / 503 / 504 responses with exponential backoff.
   Uses Vertex AI via Workload Identity Federation (Lambda) or ADC (local).
   """
-  return GoogleProvider(
+  return GoogleProvider(  # type: ignore[reportCallIssue]
     vertexai=True,
     project=settings.GCP_PROJECT_ID,
     location=settings.GCP_LOCATION,
@@ -65,10 +65,10 @@ def get_gemini_provider() -> GoogleProvider:
 
 
 @lru_cache
-def get_gemini_model(model_name: str = settings.GEMINI_MODEL_SMALL) -> GoogleModel:
-  """Get or create a Gemini model with the specified model name."""
+def get_vertexs_model(model_name: str = settings.MODEL_SMALL) -> GoogleModel:
+  """Get or create a Vertex AI model with the specified model name."""
   return GoogleModel(
     model_name=model_name,
-    provider=get_gemini_provider(),
+    provider=get_vertex_provider(),
     settings=ModelSettings(temperature=0.95),
   )
