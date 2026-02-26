@@ -35,7 +35,7 @@ from app.services.llm.models import (
   LLMStoryNode,
   LLMWorldInfo,
 )
-from app.services.llm.provider import get_gemini_model, get_gemini_provider
+from app.services.llm.provider import get_vertex_model, get_vertex_provider
 from app.services.llm.utils import format_model_with_descriptions
 
 __all__ = [
@@ -48,8 +48,8 @@ __all__ = [
   "LLMStoryNode",
   "LLMWorldInfo",
   # Provider
-  "get_gemini_model",
-  "get_gemini_provider",
+  "get_vertex_model",
+  "get_vertex_provider",
   # Utils
   "format_model_with_descriptions",
   # World Info

@@ -17,7 +17,7 @@ from app.services.llm.agents.prompts import (
   STORY_TEXT_RULES,
 )
 from app.services.llm.models import LLMWorldInfo
-from app.services.llm.provider import get_gemini_model
+from app.services.llm.provider import get_vertex_model
 from app.services.llm.utils import format_model_with_descriptions
 
 ROOT_NODE_PREAMBLE = """
@@ -63,7 +63,7 @@ class RootNodeDeps(BaseModel):
 
 # Module-level agent instantiation (streaming with XML output)
 _agent: Agent[RootNodeDeps, str] = Agent(
-  model=get_gemini_model(),
+  model=get_vertex_model(),
   deps_type=RootNodeDeps,
   output_type=str,
 )

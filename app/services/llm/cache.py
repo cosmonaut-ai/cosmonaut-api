@@ -74,7 +74,7 @@ def get_or_create_world_cache(
   try:
     client = _get_genai_client()
     cache = client.caches.create(
-      model=settings.GEMINI_MODEL_SMALL,
+      model=settings.MODEL_SMALL,
       config=CreateCachedContentConfig(
         display_name=f"cosmonaut-world-{world_id}",
         system_instruction=static_system_prompt,
