@@ -12,9 +12,10 @@ from __future__ import annotations
 
 import asyncio
 import uuid
-from typing import TYPE_CHECKING, AsyncContextManager, AsyncGenerator, Any
+from typing import TYPE_CHECKING, Any, AsyncContextManager, AsyncGenerator
 
 from aws_lambda_powertools import Logger
+from google.genai.errors import ClientError
 from pydantic_ai.models.google import GoogleModelSettings
 from pynamodb.exceptions import UpdateError
 from pynamodb.pagination import ResultIterator
@@ -24,7 +25,7 @@ import app.services.pinecone as pinecone
 from app.core.config import settings
 from app.models.dtos.story_node import ChoiceDTO, GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
-from app.services.llm.cache import get_or_create_world_cache
+from app.services.llm.cache import evict_world_cache, get_or_create_world_cache
 from app.services.pinecone import PineconeBranchFact
 from app.services.sqs import SQSSendError, send_node_analysis_message
 from app.services.usage import check_and_increment
@@ -431,18 +432,20 @@ async def _stream_next_node(
   """Stream next node content via LLM.
 
   Attempts to use a Gemini cached content resource for the world's static
-  prompt + context.  Falls back to the standard (non-cached) agent if caching
-  is unavailable.
+  prompt + context.  If the cached resource has expired (stale registry entry),
+  evicts the entry, creates a fresh cache, and retries.  Falls back to the
+  standard (non-cached) agent if caching is unavailable.
 
   Yields:
     Tuple of (chunk_text, full_buffer, metadata_if_complete)
   """
-  cache_name = get_or_create_world_cache(
+  cache_kwargs = dict(
     world_id=world_id,
     static_system_prompt=llm.build_static_system_prompt(family_friendly=deps.family_friendly),
     world_context=llm.build_cached_world_context(deps.world_info, deps.narrator_profile),
     family_friendly=deps.family_friendly,
   )
+  cache_name = get_or_create_world_cache(**cache_kwargs)
 
   if cache_name is not None:
     user_message = llm.build_dynamic_user_message(deps)
@@ -452,9 +455,36 @@ async def _stream_next_node(
       model_settings=model_settings,
     )
     logger.info(f"Using cached Gemini context for world {world_id}")
-  else:
-    run_stream_ctx = llm.get_next_node_agent().run_stream("Continue the story.", deps=deps)
 
+    try:
+      async for item in _stream_node_content(run_stream_ctx):
+        yield item
+      return
+    except ClientError as e:
+      if "CachedContent not found" not in str(e):
+        raise
+
+      logger.warning(
+        f"Stale Gemini cache for world {world_id} -- evicting and recreating",
+        extra={"cache_name": cache_name},
+      )
+      evict_world_cache(world_id, family_friendly=deps.family_friendly)
+
+      cache_name = get_or_create_world_cache(**cache_kwargs)
+      if cache_name is not None:
+        model_settings = GoogleModelSettings(google_cached_content=cache_name)
+        run_stream_ctx = llm.get_cached_next_node_agent().run_stream(
+          user_message,
+          model_settings=model_settings,
+        )
+        logger.info(f"Retrying with fresh Gemini cache for world {world_id}")
+        async for item in _stream_node_content(run_stream_ctx):
+          yield item
+        return
+
+    logger.info(f"Falling back to non-cached agent for world {world_id}")
+
+  run_stream_ctx = llm.get_next_node_agent().run_stream("Continue the story.", deps=deps)
   async for item in _stream_node_content(run_stream_ctx):
     yield item
 
