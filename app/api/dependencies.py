@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from fastapi import HTTPException, status
+
 from app.core.security import User
 from app.models.entities.world_meta import WorldMeta
 from app.services.worlds import WorldNotFoundError, get_world_entity
-from fastapi import HTTPException, status
 
 
 def require_world_read(world_id: str, user: User) -> WorldMeta:
@@ -14,7 +15,7 @@ def require_world_read(world_id: str, user: User) -> WorldMeta:
     world = get_world_entity(world_id)
   except WorldNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-  if not world.can_user_read(user.id):
+  if not world.can_user_read(user.id, user.email):
     raise HTTPException(
       status_code=status.HTTP_403_FORBIDDEN,
       detail=f"You are not authorized to access world {world_id}",

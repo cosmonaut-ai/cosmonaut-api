@@ -38,7 +38,7 @@ class WorldCreateRequest(BaseModel):
   """Payload for creating a new world."""
 
   visibility: WorldVisibility = WorldVisibility.PRIVATE
-  world_prompt: str = Field(..., description="The prompt for the world.")
+  world_prompt: str = Field(..., max_length=2000, description="The prompt for the world.")
   world_length: WorldLength = Field(default=WorldLength.MEDIUM, description="Story length preset (short/medium/long).")
   family_friendly: bool = Field(default=False, description="If true, story content is made suitable for children.")
 

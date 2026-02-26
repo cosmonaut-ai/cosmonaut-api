@@ -82,7 +82,7 @@ Clients should poll this endpoint until `generation_status` reaches `completed`.
     "generation_status": "completed",
     "root_node_id": "0",
     "author_id": "user-sub-id",
-    "world_image_url": "https://cdn.cosmonaut.ai/worlds/uuid-123/image.png"
+    "world_image_url": "https://cdn.cosmonaut-ai.com/worlds/uuid-123/image.png"
   }
   ```
 

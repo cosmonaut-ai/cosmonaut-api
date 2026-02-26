@@ -92,3 +92,11 @@ def get_or_create_world_cache(
       exc_info=True,
     )
     return None
+
+
+def evict_world_cache(world_id: str, *, family_friendly: bool = False) -> None:
+  """Remove a stale cache entry so the next call to ``get_or_create_world_cache`` creates a fresh one."""
+  cache_key = f"{world_id}:{family_friendly}"
+  removed = _cache_registry.pop(cache_key, None)
+  if removed:
+    logger.info(f"Evicted stale Gemini cache for world {world_id}", extra={"cache_name": removed})
