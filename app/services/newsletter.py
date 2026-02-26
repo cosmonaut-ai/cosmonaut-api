@@ -38,15 +38,16 @@ def subscribe(email: str) -> bool:
   try:
     resp = httpx.post(
       f"{_BUTTONDOWN_BASE}/subscribers",
-      headers={"Authorization": f"Token {api_key}"},
-      json={"email": email, "type": "regular"},
+      headers={
+        "Authorization": f"Token {api_key}",
+        "X-Buttondown-Collision-Behavior": "overwrite",
+        "X-Buttondown-Bypass-Firewall": "true",
+      },
+      json={"email_address": email, "type": "regular"},
       timeout=10,
     )
     if resp.status_code in (200, 201):
       logger.info("Subscribed %s to newsletter", email)
-      return True
-    if resp.status_code == 409:
-      logger.info("User %s already subscribed", email)
       return True
     logger.warning("Buttondown subscribe returned %s: %s", resp.status_code, resp.text)
     return False
