@@ -15,6 +15,7 @@ from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_
 from tenacity import retry_if_exception_type, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
+from app.core.gcp_auth import get_gcp_credentials
 
 # HTTP status codes that should trigger a retry.
 _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
@@ -58,6 +59,7 @@ def get_vertex_provider() -> GoogleProvider:
   """
   return GoogleProvider(  # type: ignore[reportCallIssue]
     vertexai=True,
+    credentials=get_gcp_credentials(),
     project=settings.GCP_PROJECT_ID,
     location=settings.GCP_LOCATION,
     http_client=_create_retrying_client(),

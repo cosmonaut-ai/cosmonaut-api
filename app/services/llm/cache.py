@@ -19,6 +19,7 @@ from google.genai import Client as GenAIClient
 from google.genai.types import CreateCachedContentConfig
 
 from app.core.config import settings
+from app.core.gcp_auth import get_gcp_credentials
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
@@ -35,6 +36,7 @@ def _get_genai_client() -> GenAIClient:
   """Lazy singleton for the Vertex AI GenAI client used by the cache service."""
   return GenAIClient(
     vertexai=True,
+    credentials=get_gcp_credentials(),
     project=settings.GCP_PROJECT_ID,
     location=settings.GCP_LOCATION,
   )
