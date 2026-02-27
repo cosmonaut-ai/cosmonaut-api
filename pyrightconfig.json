@@ -7,8 +7,6 @@
   "reportIncompatibleMethodOverride": true,
   "reportArgumentType": true,
   "reportGeneralTypeIssues": true,
-  "reportAny": false,
-
   "venvPath": ".",
   "venv": ".venv",
 

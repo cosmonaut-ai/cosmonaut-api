@@ -206,26 +206,6 @@ async def generate_text(
 
 
 @router.post(
-  "/{world_id}/warm-cache",
-  status_code=status.HTTP_204_NO_CONTENT,
-  summary="Pre-warm the Gemini content cache for a world",
-)
-async def warm_cache(
-  world_id: str = Path(..., description="Identifier for the world"),
-  current_user: User = Depends(get_current_user),
-) -> None:
-  """Eagerly create a Gemini CachedContent resource for the given world.
-
-  Calling this when the user opens a world avoids the cache-creation
-  latency (~500-2000 ms) on the first node generation.  The endpoint is
-  idempotent: if a cache already exists for this world it returns
-  immediately.
-  """
-  world = require_world_read(world_id, current_user)
-  node_service.warm_world_cache(world_id, world)
-
-
-@router.post(
   "/{world_id}/nodes/{node_id}/retry-processing",
   response_model=StoryNodeDTO,
   summary="Retry processing for a failed node",

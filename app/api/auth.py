@@ -136,7 +136,7 @@ async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResp
     subscription_status=str(usage.subscription_status) if usage.subscription_status else None,
     pending_tier=str(usage.pending_tier) if usage.pending_tier else None,
     pending_tier_date=usage.pending_tier_date.isoformat() if usage.pending_tier_date else None,
-    newsletter_opted_in=bool(usage.newsletter_opted_in) if usage.newsletter_opted_in is not None else False,
+    newsletter_opted_in=bool(usage.newsletter_opted_in),
   )
 
 
@@ -245,7 +245,7 @@ async def submit_feedback(
         detail="Please wait before submitting more feedback.",
         headers={"Retry-After": str(retry_after)},
       )
-  except RateLimitRecord.DoesNotExist:
+  except RateLimitRecord.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
     pass
 
   record = RateLimitRecord(

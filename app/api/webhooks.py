@@ -257,7 +257,12 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
       if email:
         send_subscription_cancellation_scheduled(email, name, cancel_dt)
 
-    logger.info(f"Subscription cancellation scheduled: user={user_id} cancel_at={cancel_dt.isoformat()} email_sent={not already_pending}")
+    logger.info(
+      "Subscription cancellation scheduled: user=%s cancel_at=%s email_sent=%s",
+      user_id,
+      cancel_dt.isoformat(),
+      not already_pending,
+    )
     return
 
   # -- Active with no cancellation scheduled (plan change or cancellation reversal) --
@@ -413,8 +418,8 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
 
   # Idempotency: skip duplicate events from Stripe retries
   event_id: str = event.get("id", "")
+  idempotency_pk = RateLimitRecord.pk(f"WEBHOOK#{event_id}") if event_id else ""
   if event_id:
-    idempotency_pk = RateLimitRecord.pk(f"WEBHOOK#{event_id}")
     try:
       existing = RateLimitRecord.get(idempotency_pk, RateLimitRecord.sk("PROCESSED"))
       if existing and existing.expiration > int(time.time()):

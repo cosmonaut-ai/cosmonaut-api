@@ -15,8 +15,6 @@ import uuid
 from typing import TYPE_CHECKING, Any, AsyncContextManager, AsyncGenerator
 
 from aws_lambda_powertools import Logger
-from google.genai.errors import ClientError
-from pydantic_ai.models.google import GoogleModelSettings
 from pynamodb.exceptions import UpdateError
 from pynamodb.pagination import ResultIterator
 
@@ -25,7 +23,6 @@ import app.services.pinecone as pinecone
 from app.core.config import settings
 from app.models.dtos.story_node import ChoiceDTO, GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
-from app.services.llm.cache import evict_world_cache, get_or_create_world_cache
 from app.services.pinecone import PineconeBranchFact
 from app.services.sqs import SQSSendError, send_node_analysis_message
 from app.services.usage import check_and_increment
@@ -219,79 +216,6 @@ def get_node_entities(world_id: str, node_ids: list[str]) -> list[StoryNode]:
 
 
 # =============================================================================
-# Async Polling Helpers
-# =============================================================================
-
-_BACKOFF_INTERVALS = [0.5, 1, 2, 4, 8, 15]
-"""Progressive backoff intervals (seconds) used for polling DynamoDB status."""
-
-# Tighter budget for endpoints behind API Gateway (30 s integration timeout).
-_BACKOFF_INTERVALS_SHORT = [0.5, 1, 2, 4, 8]
-"""Backoff intervals (15.5 s total) used by API Gateway-constrained callers."""
-
-# Very tight budget for latency-sensitive callers that can tolerate degraded
-# context (e.g. generate-text, where proceeding without facts is acceptable).
-_BACKOFF_INTERVALS_FAST = [0.5, 1]
-"""Backoff intervals (1.5 s total) used when degraded context is acceptable."""
-
-
-async def _wait_for_node_processing(
-  world_id: str,
-  node_id: str,
-  max_wait_seconds: float = 30,
-) -> StoryNode:
-  """Wait for a node to reach COMPLETED processing status with exponential backoff.
-
-  Used when generating a child node to ensure the parent has been fully processed
-  (facts extracted, context populated) before building dependencies.
-
-  Fails fast when the node is in FAILED status rather than polling until timeout.
-
-  Args:
-    world_id: The world identifier.
-    node_id: The node identifier to wait on.
-    max_wait_seconds: Maximum total seconds to wait before raising.  Use ~3 for
-      latency-sensitive callers that tolerate degraded context, ~20 for endpoints
-      behind API Gateway (30 s integration timeout), and the default 30 for
-      Lambda Function URL callers (generate-text streaming).
-
-  Returns:
-    The refreshed StoryNode with COMPLETED processing status.
-
-  Raises:
-    NodeProcessingError: If the node is FAILED or doesn't reach COMPLETED within
-      the timeout.
-  """
-  if max_wait_seconds <= 3:
-    intervals = _BACKOFF_INTERVALS_FAST
-  elif max_wait_seconds < 25:
-    intervals = _BACKOFF_INTERVALS_SHORT
-  else:
-    intervals = _BACKOFF_INTERVALS
-
-  elapsed = 0.0
-  for interval in intervals:
-    node = get_node_entity(world_id, node_id)
-    if node.processing_status == StoryNodeProcessingStatus.COMPLETED:
-      return node
-    if node.processing_status == StoryNodeProcessingStatus.FAILED:
-      raise NodeProcessingError(node_id)
-    if elapsed + interval > max_wait_seconds:
-      break
-    await asyncio.sleep(interval)
-    elapsed += interval
-
-  # Final check after exhausting backoff schedule
-  node = get_node_entity(world_id, node_id)
-  if node.processing_status == StoryNodeProcessingStatus.COMPLETED:
-    return node
-  if node.processing_status == StoryNodeProcessingStatus.FAILED:
-    raise NodeProcessingError(node_id)
-
-  raise NodeProcessingError(node_id)
-
-
-# =============================================================================
 # Choose Flow - Helper Functions
 # =============================================================================
 
@@ -371,8 +295,10 @@ def _build_next_node_deps(
 
   # Safely access context attributes; context may be None if the parent node
   # hasn't been processed yet (e.g., SQS worker hasn't completed analysis).
-  world_facts: list[str] = (node.context.world_facts if node.context else None) or []  # type: ignore[assignment]
-  branch_facts: list[str] = (node.context.branch_facts if node.context else None) or []  # type: ignore[assignment]
+  raw_world_facts = node.context.world_facts if node.context else None
+  raw_branch_facts = node.context.branch_facts if node.context else None
+  world_facts: list[str] = [str(f) for f in raw_world_facts] if raw_world_facts else []
+  branch_facts: list[str] = [str(f) for f in raw_branch_facts] if raw_branch_facts else []
 
   return llm.NextNodeDeps(
     world_info=llm_world_info,
@@ -431,60 +357,15 @@ async def _stream_next_node(
 ) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None], None]:
   """Stream next node content via LLM.
 
-  Attempts to use a Gemini cached content resource for the world's static
-  prompt + context.  If the cached resource has expired (stale registry entry),
-  evicts the entry, creates a fresh cache, and retries.  Falls back to the
-  standard (non-cached) agent if caching is unavailable.
+  The agent's system prompt contains only static content (instructions + world
+  context + narrator profile).  Dynamic per-node context is passed as the user
+  message.  Prompt caching is handled transparently at the model level.
 
   Yields:
     Tuple of (chunk_text, full_buffer, metadata_if_complete)
   """
-  cache_kwargs = dict(
-    world_id=world_id,
-    static_system_prompt=llm.build_static_system_prompt(family_friendly=deps.family_friendly),
-    world_context=llm.build_cached_world_context(deps.world_info, deps.narrator_profile),
-    family_friendly=deps.family_friendly,
-  )
-  cache_name = get_or_create_world_cache(**cache_kwargs)
-
-  if cache_name is not None:
-    user_message = llm.build_dynamic_user_message(deps)
-    model_settings = GoogleModelSettings(google_cached_content=cache_name)
-    run_stream_ctx = llm.get_cached_next_node_agent().run_stream(
-      user_message,
-      model_settings=model_settings,
-    )
-    logger.info(f"Using cached Gemini context for world {world_id}")
-
-    try:
-      async for item in _stream_node_content(run_stream_ctx):
-        yield item
-      return
-    except ClientError as e:
-      if "CachedContent not found" not in str(e):
-        raise
-
-      logger.warning(
-        f"Stale Gemini cache for world {world_id} -- evicting and recreating",
-        extra={"cache_name": cache_name},
-      )
-      evict_world_cache(world_id, family_friendly=deps.family_friendly)
-
-      cache_name = get_or_create_world_cache(**cache_kwargs)
-      if cache_name is not None:
-        model_settings = GoogleModelSettings(google_cached_content=cache_name)
-        run_stream_ctx = llm.get_cached_next_node_agent().run_stream(
-          user_message,
-          model_settings=model_settings,
-        )
-        logger.info(f"Retrying with fresh Gemini cache for world {world_id}")
-        async for item in _stream_node_content(run_stream_ctx):
-          yield item
-        return
-
-    logger.info(f"Falling back to non-cached agent for world {world_id}")
-
-  run_stream_ctx = llm.get_next_node_agent().run_stream("Continue the story.", deps=deps)
+  user_message = llm.build_user_message(deps)
+  run_stream_ctx = llm.get_next_node_agent().run_stream(user_message, deps=deps)
   async for item in _stream_node_content(run_stream_ctx):
     yield item
 
@@ -824,22 +705,6 @@ async def process_node(node: StoryNode) -> None:
         for fact in facts.branch_facts
       ]
     )
-
-
-def warm_world_cache(world_id: str, world_meta: "WorldMeta") -> None:
-  """Pre-warm the Gemini content cache for a world.
-
-  This creates the CachedContent resource eagerly so that the first
-  node generation in a session doesn't pay the cache-creation latency.
-  """
-  family_friendly = world_meta.family_friendly == "true"
-  llm_world_info = world_meta_to_llm_world_info(world_meta)
-  get_or_create_world_cache(
-    world_id=world_id,
-    static_system_prompt=llm.build_static_system_prompt(family_friendly=family_friendly),
-    world_context=llm.build_cached_world_context(llm_world_info, world_meta.narrator_profile or ""),
-    family_friendly=family_friendly,
-  )
 
 
 def retry_processing(world_id: str, node_id: str) -> StoryNode:

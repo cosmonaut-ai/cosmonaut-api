@@ -24,7 +24,7 @@ class Character(MapAttribute):  # type: ignore[type-arg]
     return CharacterDTO(
       name=self.name,
       description=self.description,
-      relationships=self.relationships or [],  # type: ignore[arg-type]
+      relationships=[str(r) for r in self.relationships] if self.relationships else [],
     )
 
   @classmethod
@@ -32,7 +32,7 @@ class Character(MapAttribute):  # type: ignore[type-arg]
     return Character(
       name=dto.name,
       description=dto.description,
-      relationships=dto.relationships or [],  # type: ignore[arg-type]
+      relationships=dto.relationships or [],
     )
 
 
@@ -45,7 +45,7 @@ class Location(MapAttribute):  # type: ignore[type-arg]
     return LocationDTO(
       name=self.name,
       description=self.description,
-      connections=self.connections or [],  # type: ignore[arg-type]
+      connections=[str(c) for c in self.connections] if self.connections else [],
     )
 
   @classmethod
@@ -53,7 +53,7 @@ class Location(MapAttribute):  # type: ignore[type-arg]
     return Location(
       name=dto.name,
       description=dto.description,
-      connections=dto.connections or [],  # type: ignore[arg-type]
+      connections=dto.connections or [],
     )
 
 
@@ -121,10 +121,10 @@ class WorldMeta(BaseCosmonautModel):
       narrative_context=self.narrative_context,
       characters=[character.to_dto() for character in self.characters],
       locations=[location.to_dto() for location in self.locations],
-      potential_endings=self.potential_endings or [],  # type: ignore[arg-type]
+      potential_endings=[str(e) for e in self.potential_endings] if self.potential_endings else [],
       narrator_profile=self.narrator_profile,
       node_text_length=int(self.node_text_length) if self.node_text_length else None,
-      shared_with=self.shared_with or [],  # type: ignore[arg-type]
+      shared_with=[str(s) for s in self.shared_with] if self.shared_with else [],
       world_image_url=self.world_image_url,
       world_image_alt_text=self.world_image_alt_text,
       world_image_width=self.world_image_width,
@@ -161,13 +161,13 @@ class WorldMeta(BaseCosmonautModel):
       narrative_context=dto.narrative_context,
       characters=[Character.from_dto(character) for character in dto.characters or []],
       locations=[Location.from_dto(location) for location in dto.locations or []],
-      potential_endings=dto.potential_endings or [],  # type: ignore[arg-type]
+      potential_endings=dto.potential_endings or [],
       narrator_profile=dto.narrator_profile,
       node_text_length=dto.node_text_length,
       story_max_nodes=dto.story_max_nodes,
       world_length=dto.world_length,
       family_friendly="true" if dto.family_friendly else "false",
-      shared_with=dto.shared_with or [],  # type: ignore[arg-type]
+      shared_with=dto.shared_with or [],
       world_image_url=dto.world_image_url,
       world_image_alt_text=dto.world_image_alt_text,
       world_image_width=dto.world_image_width,

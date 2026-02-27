@@ -16,11 +16,11 @@ from aws_lambda_powertools import Logger
 from app.core.config import get_tier_limits, settings
 
 if TYPE_CHECKING:
-  from mypy_boto3_sesv2.client import SESv2Client
+  from mypy_boto3_sesv2.client import SESV2Client
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
-_ses_client: SESv2Client | None = None
+_ses_client: SESV2Client | None = None
 
 # ---------------------------------------------------------------------------
 # Brand constants (dark-theme palette — must stay in sync with the Cognito
@@ -48,7 +48,7 @@ _TIER_DISPLAY: dict[str, str] = {
 }
 
 
-def _get_ses_client() -> SESv2Client:
+def _get_ses_client() -> SESV2Client:
   global _ses_client
   if _ses_client is None:
     import boto3
@@ -93,11 +93,14 @@ def _base_template(title: str, body_content: str, footer_note: str = "") -> str:
 <title>{title}</title>
 </head>
 <body style="margin:0;padding:0;background-color:{_BG};font-family:{_FONT};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background-color:{_BG};min-height:100vh;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+  style="background-color:{_BG};min-height:100vh;">
 <tr><td align="center" style="padding:40px 16px;">
 
 <!-- Main card -->
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;background-color:{_CARD_BG};border-radius:16px;border:1px solid {_CARD_BORDER};overflow:hidden;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0"
+  style="max-width:480px;background-color:{_CARD_BG};border-radius:16px;
+  border:1px solid {_CARD_BORDER};overflow:hidden;">
 
 <!-- Logo header -->
 <tr><td align="center" style="padding:32px 32px 16px;">
@@ -132,7 +135,8 @@ def _base_template(title: str, body_content: str, footer_note: str = "") -> str:
     {footer_note}
   </p>
   <p style="margin:12px 0 0;font-size:12px;color:{_FOOTER_TEXT};">
-    Matson Software LLC &middot; <a href="https://cosmonaut-ai.com" style="color:{_PRIMARY};text-decoration:none;">cosmonaut-ai.com</a>
+    Matson Software LLC &middot;
+    <a href="https://cosmonaut-ai.com" style="color:{_PRIMARY};text-decoration:none;">cosmonaut-ai.com</a>
   </p>
 </td></tr>
 </table>
@@ -147,7 +151,9 @@ def _cta_button(url: str, label: str, *, color: str = _PRIMARY, text_color: str 
   """Return a centered CTA button."""
   return f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0">
   <tr><td align="center">
-    <a href="{url}" style="display:inline-block;padding:14px 32px;background-color:{color};color:{text_color};text-decoration:none;font-size:15px;font-weight:600;border-radius:10px;letter-spacing:0.3px;">
+    <a href="{url}" style="display:inline-block;padding:14px 32px;
+      background-color:{color};color:{text_color};text-decoration:none;
+      font-size:15px;font-weight:600;border-radius:10px;letter-spacing:0.3px;">
       {label}
     </a>
   </td></tr>
@@ -257,7 +263,8 @@ def _invite_email_html(inviter_name: str, world_title: str, world_url: str) -> s
     Hi there,
   </p>
   <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    <strong style="color:{_FG};">{inviter_name}</strong> has invited you to explore an interactive story world on Cosmonaut:
+    <strong style="color:{_FG};">{inviter_name}</strong> has invited you to explore
+    an interactive story world on Cosmonaut:
   </p>
 
   <!-- World title card -->
@@ -303,7 +310,8 @@ def send_subscription_welcome(recipient_email: str, name: str, tier: str) -> boo
     {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    Your subscription to the <strong style="color:{_FG};">{display}</strong> plan is now active. Thank you for supporting Cosmonaut!
+    Your subscription to the <strong style="color:{_FG};">{display}</strong> plan is now active.
+    Thank you for supporting Cosmonaut!
   </p>
 
   {_tier_limits_html(tier)}
@@ -334,7 +342,8 @@ def send_subscription_renewed(recipient_email: str, name: str, tier: str) -> boo
     {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 24px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    Your <strong style="color:{_FG};">{display}</strong> plan has been successfully renewed and your usage limits have been reset. You're all set for another billing period!
+    Your <strong style="color:{_FG};">{display}</strong> plan has been successfully renewed
+    and your usage limits have been reset. You're all set for another billing period!
   </p>
 
   {_cta_button(_frontend_url("/dashboard"), "Go to Dashboard")}"""
@@ -358,13 +367,15 @@ def send_payment_failed(recipient_email: str, name: str) -> bool:
     {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 24px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    We were unable to process your latest subscription payment. Your access remains active while we retry, but please update your payment method to avoid interruption.
+    We were unable to process your latest subscription payment. Your access
+    remains active while we retry, but please update your payment method to avoid interruption.
   </p>
 
   {_cta_button(_frontend_url("/pricing"), "Update Payment Method")}
 
   <p style="margin:24px 0 0;font-size:13px;color:{_MUTED_DARK};line-height:1.6;">
-    If you believe this is an error, please check with your bank or card issuer. We'll automatically retry the charge over the next few days.
+    If you believe this is an error, please check with your bank or
+    card issuer. We'll automatically retry the charge over the next few days.
   </p>"""
 
   text_body = (
@@ -391,7 +402,8 @@ def send_subscription_cancellation_scheduled(
     {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    Your subscription cancellation has been confirmed. You'll continue to have full access to your current plan until <strong style="color:{_FG};">{formatted_date}</strong>.
+    Your subscription cancellation has been confirmed. You'll continue to have full access
+    to your current plan until <strong style="color:{_FG};">{formatted_date}</strong>.
   </p>
   <p style="margin:0 0 24px;font-size:15px;color:{_MUTED};line-height:1.6;">
     After that date, your account will revert to the Free plan. Changed your mind? You can resubscribe anytime.
@@ -426,7 +438,10 @@ def send_subscription_plan_change_scheduled(
     {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    Your plan change to <strong style="color:{_FG};">{display}</strong> has been scheduled. You'll keep your current plan benefits until <strong style="color:{_FG};">{formatted_date}</strong>, and the change will take effect automatically.
+    Your plan change to <strong style="color:{_FG};">{display}</strong> has been scheduled.
+    You'll keep your current plan benefits
+    until <strong style="color:{_FG};">{formatted_date}</strong>,
+    and the change will take effect automatically.
   </p>
 
   {_tier_limits_html(pending_tier)}
@@ -456,10 +471,12 @@ def send_subscription_ended(recipient_email: str, name: str) -> bool:
     {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    Your paid subscription has ended and your account has been moved to the <strong style="color:{_FG};">Free</strong> plan.
+    Your paid subscription has ended and your account has been moved to the
+    <strong style="color:{_FG};">Free</strong> plan.
   </p>
   <p style="margin:0 0 24px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    You can still access Cosmonaut with Free-tier limits. If you'd like to pick up where you left off, you can resubscribe anytime.
+    You can still access Cosmonaut with Free-tier limits. If you'd like to pick up
+    where you left off, you can resubscribe anytime.
   </p>
 
   {_cta_button(_frontend_url("/pricing"), "View Plans")}
@@ -545,9 +562,7 @@ def send_feedback_email(
   )
 
   support_email = (
-    settings.SES_FROM_EMAIL.replace("noreply@", "support@")
-    if settings.SES_FROM_EMAIL
-    else "support@cosmonaut-ai.com"
+    settings.SES_FROM_EMAIL.replace("noreply@", "support@") if settings.SES_FROM_EMAIL else "support@cosmonaut-ai.com"
   )
   html_body = _base_template(f"Feedback: {display_category}", body)
   return _send_email(support_email, subject, html_body, text_body)
