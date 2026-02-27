@@ -65,7 +65,7 @@ def get_vertex_provider() -> GoogleProvider:
 
 
 @lru_cache
-def get_vertexs_model(model_name: str = settings.MODEL_SMALL) -> GoogleModel:
+def get_vertex_model(model_name: str = settings.MODEL_SMALL) -> GoogleModel:
   """Get or create a Vertex AI model with the specified model name."""
   return GoogleModel(
     model_name=model_name,
