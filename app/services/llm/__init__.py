@@ -14,10 +14,7 @@ from app.services.llm.agents.narrator import generate_narrator_profile
 from app.services.llm.agents.next_node import (
   LLMNextNodeDeps,
   NextNodeDeps,
-  build_cached_world_context,
-  build_dynamic_user_message,
-  build_static_system_prompt,
-  get_cached_next_node_agent,
+  build_user_message,
   get_next_node_agent,
 )
 from app.services.llm.agents.root_node import (
@@ -35,7 +32,13 @@ from app.services.llm.models import (
   LLMStoryNode,
   LLMWorldInfo,
 )
-from app.services.llm.provider import get_vertex_model, get_vertex_provider
+from app.services.llm.provider import (
+  get_storytelling_model,
+  get_utility_model,
+  get_vertex_google_model,
+  get_vertex_google_provider,
+  get_world_building_model,
+)
 from app.services.llm.utils import format_model_with_descriptions
 
 __all__ = [
@@ -48,8 +51,11 @@ __all__ = [
   "LLMStoryNode",
   "LLMWorldInfo",
   # Provider
-  "get_vertex_model",
-  "get_vertex_provider",
+  "get_storytelling_model",
+  "get_utility_model",
+  "get_vertex_google_model",
+  "get_vertex_google_provider",
+  "get_world_building_model",
   # Utils
   "format_model_with_descriptions",
   # World Info
@@ -61,10 +67,7 @@ __all__ = [
   # Next Node
   "LLMNextNodeDeps",
   "NextNodeDeps",
-  "build_cached_world_context",
-  "build_dynamic_user_message",
-  "build_static_system_prompt",
-  "get_cached_next_node_agent",
+  "build_user_message",
   "get_next_node_agent",
   # Fact Extraction
   "FactExtractionDeps",

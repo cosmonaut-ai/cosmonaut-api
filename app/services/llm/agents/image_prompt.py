@@ -7,7 +7,7 @@ The output is a concise, visually descriptive string suitable for Imagen 3.
 from pydantic_ai import Agent, RunContext
 
 from app.services.llm.models import LLMWorldInfo
-from app.services.llm.provider import get_vertex_model
+from app.services.llm.provider import get_utility_model
 from app.services.llm.utils import format_model_with_descriptions
 
 SYSTEM_PROMPT = """
@@ -42,7 +42,7 @@ Respond with ONLY the image prompt — no preamble, no explanation, no quotes.
 
 # Module-level agent instantiation
 _agent: Agent[LLMWorldInfo, str] = Agent(
-  model=get_vertex_model(),
+  model=get_utility_model(),
   deps_type=LLMWorldInfo,
   output_type=str,
 )

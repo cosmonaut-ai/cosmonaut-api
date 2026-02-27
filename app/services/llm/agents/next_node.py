@@ -2,14 +2,13 @@
 
 Generates subsequent story nodes with streaming support.
 Uses XML output for incremental content extraction during streaming.
-Deps are properly injected into system prompt.
 
-Supports two execution paths:
-  1. **Standard (non-cached)**: Full system prompt built dynamically from deps
-     via ``@_agent.system_prompt``.
-  2. **Cached**: Static prompt + world context stored in a Gemini
-     ``CachedContent`` resource; per-node dynamic context sent as the user
-     message via ``_cached_agent``.
+The system prompt contains only static content (instructions + world context
++ narrator profile) that is constant for all nodes within a world.  Dynamic
+per-node context (story progress, facts, user choice, recent text) is passed
+as the user message.  This layout enables automatic prompt caching at the
+model level -- the system prompt prefix gets a cache hit on every node after
+the first.
 """
 
 from pydantic import BaseModel, Field
@@ -25,7 +24,7 @@ from app.services.llm.agents.prompts import (
   STORY_TEXT_RULES,
 )
 from app.services.llm.models import LLMWorldInfo
-from app.services.llm.provider import get_vertex_model
+from app.services.llm.provider import get_storytelling_model
 from app.services.llm.utils import format_model_with_descriptions
 
 NEXT_NODE_PREAMBLE = """
@@ -118,12 +117,8 @@ class NextNodeDeps(BaseModel):
   family_friendly: bool = Field(default=False, description="Whether to enforce family-friendly content guidelines.")
 
 
-# =============================================================================
-# Standard (non-cached) agent
-# =============================================================================
-
 _agent: Agent[NextNodeDeps, str] = Agent(
-  model=get_vertex_model(),
+  model=get_storytelling_model(),
   deps_type=NextNodeDeps,
   output_type=str,
 )
@@ -131,103 +126,28 @@ _agent: Agent[NextNodeDeps, str] = Agent(
 
 @_agent.system_prompt
 def _build_system_prompt(ctx: RunContext[NextNodeDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
-  """Build system prompt with all context injected from deps."""
-  deps = ctx.deps
-  progress_pct = (deps.story_length / deps.story_max_nodes) * 100
-  world_facts = "\n".join(f"- {f}" for f in deps.world_facts) if deps.world_facts else "None"
-  branch_facts = "\n".join(f"- {f}" for f in deps.branch_facts) if deps.branch_facts else "None"
+  """Build the static system prompt (cacheable).
 
-  custom_choice_note = CUSTOM_CHOICE_INSTRUCTIONS if deps.is_custom_choice else ""
-  choice_outcome_note = (
-    CHOICE_OUTCOME_INSTRUCTIONS.format(choice_outcome=deps.choice_outcome) if deps.choice_outcome else ""
-  )
+  Contains only content that is constant across all node generations for a
+  given world: instructions, world info, and narrator profile.  Dynamic
+  per-node context is passed as the user message via ``build_user_message``.
+  """
+  deps = ctx.deps
   family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if deps.family_friendly else ""
 
   return f"""{SYSTEM_PROMPT}
 {family_friendly_note}
-
-# CONTEXT
-## Story Progress:
-{progress_pct:.0f}%
-
-## Story Summary:
-{deps.story_summary}
-
-## Player's Choice:
-{deps.user_choice}
-{custom_choice_note}
-{choice_outcome_note}
-
-## World Facts:
-{world_facts}
-
-## Branch Facts (newest first):
-{branch_facts}
 
 ## Narrator Profile:
 {deps.narrator_profile}
 
 ## World Info (background—player hasn't seen this):
 {format_model_with_descriptions(deps.world_info)}
-
-## Recent Text (last 5 nodes):
-{deps.previous_text}
 """
 
 
-def get_next_node_agent() -> Agent[NextNodeDeps, str]:
-  """Get the next node agent for streaming (non-cached path)."""
-  return _agent
-
-
-# =============================================================================
-# Cached agent + helpers
-# =============================================================================
-
-_cached_agent: Agent[None, str] = Agent(
-  model=get_vertex_model(),
-  output_type=str,
-)
-"""Agent used when a Gemini CachedContent resource is available.
-
-Has NO system prompt decorator — the static system prompt and world context
-live inside the cache.  Per-node dynamic context is passed as the user message.
-"""
-
-
-def get_cached_next_node_agent() -> Agent[None, str]:
-  """Get the agent used with Gemini context caching."""
-  return _cached_agent
-
-
-def build_static_system_prompt(*, family_friendly: bool = False) -> str:
-  """Build the static (cacheable) portion of the system prompt.
-
-  This is the part that is identical across all node generations for a given
-  world and is stored as ``system_instruction`` in the Gemini cache.
-  """
-  family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if family_friendly else ""
-  return f"{SYSTEM_PROMPT}\n{family_friendly_note}"
-
-
-def build_cached_world_context(world_info: LLMWorldInfo, narrator_profile: str) -> str:
-  """Build the world-specific context that is cached alongside the system prompt.
-
-  Stored as ``contents`` in the Gemini cache.  Contains world info and narrator
-  profile which are constant for all nodes within a world.
-  """
-  return f"""# WORLD CONTEXT
-
-## Narrator Profile:
-{narrator_profile}
-
-## World Info (background—player hasn't seen this):
-{format_model_with_descriptions(world_info)}
-"""
-
-
-def build_dynamic_user_message(deps: NextNodeDeps) -> str:
-  """Build the per-node dynamic context sent as the user message (cached path).
+def build_user_message(deps: NextNodeDeps) -> str:
+  """Build the per-node dynamic context sent as the user message.
 
   Contains everything that changes between node generations: story progress,
   story summary, the player's choice, world/branch facts, and recent text.
@@ -264,6 +184,11 @@ def build_dynamic_user_message(deps: NextNodeDeps) -> str:
 ## Recent Text (last 5 nodes):
 {deps.previous_text}
 """
+
+
+def get_next_node_agent() -> Agent[NextNodeDeps, str]:
+  """Get the next node agent for streaming."""
+  return _agent
 
 
 # Re-export for backward compatibility

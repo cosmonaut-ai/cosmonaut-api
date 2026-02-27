@@ -59,17 +59,17 @@ class StoryNodeContext(MapAttribute[str, UnicodeAttribute]):
 
   def to_dto(self) -> StoryNodeContextDTO:
     return StoryNodeContextDTO(
-      world_facts=self.world_facts,  # type: ignore[arg-type]
-      branch_facts=self.branch_facts,  # type: ignore[arg-type]
-      similar_nodes=self.similar_nodes,  # type: ignore[arg-type]
+      world_facts=[str(f) for f in self.world_facts] if self.world_facts else [],
+      branch_facts=[str(f) for f in self.branch_facts] if self.branch_facts else [],
+      similar_nodes=[str(n) for n in self.similar_nodes] if self.similar_nodes else [],
     )
 
   @classmethod
   def from_dto(cls, dto: StoryNodeContextDTO) -> StoryNodeContext:
     return StoryNodeContext(
-      world_facts=dto.world_facts,  # type: ignore[arg-type]
-      branch_facts=dto.branch_facts,  # type: ignore[arg-type]
-      similar_nodes=dto.similar_nodes,  # type: ignore[arg-type]
+      world_facts=dto.world_facts,
+      branch_facts=dto.branch_facts,
+      similar_nodes=dto.similar_nodes,
     )
 
 

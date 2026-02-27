@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
 from app.services.llm.models import LLMFactExtraction
-from app.services.llm.provider import get_vertex_model
+from app.services.llm.provider import get_utility_model
 
 logger = logging.getLogger(__name__)
 
@@ -69,7 +69,7 @@ class FactExtractionDeps(BaseModel):
 
 # Module-level agent instantiation
 _agent: Agent[FactExtractionDeps, LLMFactExtraction] = Agent(
-  model=get_vertex_model(),
+  model=get_utility_model(),
   deps_type=FactExtractionDeps,
   output_type=LLMFactExtraction,
 )

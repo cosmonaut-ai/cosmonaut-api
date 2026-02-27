@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import uuid4
 
 import nest_asyncio  # type: ignore[import-untyped]
@@ -86,19 +87,20 @@ async def debug_wif():
   try:
     import google.auth
 
-    credentials, project = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
-    results["cred_type"] = type(credentials).__name__
+    creds: Any
+    creds, project = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])  # type: ignore[reportUnknownVariableType]
+    results["cred_type"] = type(creds).__name__
     results["project"] = project
   except Exception as e:
     results["cred_load_error"] = f"{type(e).__name__}: {e}"
     return results
 
   try:
-    from google.auth.transport.requests import Request
+    from google.auth.transport.requests import Request as AuthRequest
 
-    credentials.refresh(Request())
+    creds.refresh(AuthRequest())
     results["refresh"] = "SUCCESS"
-    results["token_preview"] = credentials.token[:20] + "..." if credentials.token else "NO TOKEN"
+    results["token_preview"] = creds.token[:20] + "..." if creds.token else "NO TOKEN"
   except Exception as e:
     results["refresh_error"] = f"{type(e).__name__}: {e}"
 

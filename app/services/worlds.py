@@ -57,12 +57,12 @@ def world_meta_to_llm_world_info(world: WorldMeta) -> llm.LLMWorldInfo:
     description=world.description or "",
     setting=world.setting or "",
     backstory=world.narrative_context or "",
-    endings=world.potential_endings or [],  # type: ignore[arg-type]
+    endings=[str(e) for e in world.potential_endings] if world.potential_endings else [],
     characters=[
       llm.LLMCharacter(
         name=character.name or "",
         description=character.description or "",
-        relationships=character.relationships or [],  # type: ignore[arg-type]
+        relationships=[str(r) for r in character.relationships] if character.relationships else [],
       )
       for character in world.characters
     ],
@@ -70,7 +70,7 @@ def world_meta_to_llm_world_info(world: WorldMeta) -> llm.LLMWorldInfo:
       llm.LLMLocation(
         name=location.name or "",
         description=location.description or "",
-        connections=location.connections or [],  # type: ignore[arg-type]
+        connections=[str(c) for c in location.connections] if location.connections else [],
       )
       for location in world.locations
     ],
@@ -198,11 +198,7 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
     if value is not None:
       converter = converters.get(field_name)
       converted_value = converter(value) if converter else value
-      # PynamoDB ListAttribute accepts regular lists, but type checker doesn't know
-      if field_name in ("potential_endings", "shared_with"):
-        setattr(world, field_name, converted_value)  # type: ignore[arg-type]
-      else:
-        setattr(world, field_name, converted_value)
+      setattr(world, field_name, converted_value)
 
   world.save()
   return world
@@ -249,7 +245,7 @@ async def generate_lore(world: WorldMeta) -> WorldMeta:
     )
     for location in llm_world_info.locations
   ]
-  world.potential_endings = llm_world_info.endings or []  # type: ignore[arg-type]
+  world.potential_endings = llm_world_info.endings or []  # type: ignore[reportAttributeAccessIssue]  # PynamoDB ListAttribute accepts list[str]
 
   return world
 
