@@ -105,7 +105,7 @@ def get_vertex_google_model(model_name: str = settings.MODEL_SMALL) -> GoogleMod
 def get_vertex_anthropic_provider() -> AnthropicProvider:
   """Get or create the Vertex AI Anthropic provider singleton."""
   vertex_client = AsyncAnthropicVertex(
-    region=settings.GCP_LOCATION,
+    region="global",
     project_id=settings.GCP_PROJECT_ID,
     credentials=get_gcp_credentials(),
   )
