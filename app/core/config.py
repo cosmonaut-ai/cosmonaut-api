@@ -17,7 +17,9 @@ class Settings(BaseSettings):
   )
   DYNAMODB_TABLE_NAME: str = Field(default="cosmonaut-dev", description="Primary DynamoDB table for application state.")
   MODEL_SMALL: str = Field(default="claude-3-flash-preview", description="Vertex AI model name for small tasks.")
-  MODEL_SMALL_ANTHROPIC: str = Field(default="claude-haiku-4-5", description="Vertex AI model name for small tasks.")
+  MODEL_SMALL_ANTHROPIC: str = Field(
+    default="claude-haiku-4-5@20251001", description="Vertex AI model name for small tasks."
+  )
   MODEL_LARGE: str = Field(default="gemini-3.1-pro-preview", description="Vertex AI model name for large tasks.")
   VERTEX_TIMEOUT_S: int = Field(default=30, description="Client timeout in seconds.")
   PINECONE_INDEX: str | None = Field(default=None, description="Target Pinecone index for vector operations.")

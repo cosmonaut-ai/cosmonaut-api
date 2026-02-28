@@ -30,7 +30,7 @@ _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 # Anthropic requires a minimum token count for prompt caching to activate.
 # Below this threshold the request is processed normally (no error, no cache).
 ANTHROPIC_CACHE_MIN_TOKENS: dict[str, int] = {
-  "claude-haiku-4-5": 4096,
+  "claude-haiku-4-5@20251001": 4096,
   "claude-3-5-haiku": 4096,
 }
 ANTHROPIC_CACHE_MIN_TOKENS_DEFAULT = 4096
