@@ -25,7 +25,7 @@ from app.models.dtos.story_node import ChoiceDTO, GenerationStatus, StoryNodeDTO
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
 from app.services.pinecone import PineconeBranchFact
 from app.services.sqs import SQSSendError, send_node_analysis_message
-from app.services.usage import check_and_increment
+from app.services.usage import check_and_increment, release_quota
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
 from app.utils import extract_xml_block, extract_xml_json
 
@@ -604,6 +604,8 @@ async def generate_text(
 
   except Exception as e:
     logger.error(f"Error generating text for node {node_id}: {e}")
+    if user_id:
+      release_quota(user_id, "nodes")
     node.generation_status = GenerationStatus.FAILED.value
     node.save()
     raise
