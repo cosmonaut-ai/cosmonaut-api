@@ -23,7 +23,7 @@ from app.services.story_nodes import (
   NodeProcessingError,
   NodeServiceError,
 )
-from app.services.usage import QuotaExceededError, check_and_increment
+from app.services.usage import QuotaExceededError, check_and_increment, release_quota
 from app.services.worlds import WorldNotFoundError
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
@@ -314,6 +314,7 @@ async def generate_node_audio(
       elevenlabs_voiceid=voice.elevenlabs_voiceid,
     )
   except Exception as e:
+    release_quota(current_user.id, "audio")
     logger.error(f"Audio generation failed for node {node_id}: {e}", exc_info=True)
     raise HTTPException(
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

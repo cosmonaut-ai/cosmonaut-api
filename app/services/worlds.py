@@ -37,7 +37,7 @@ from app.models.dtos.world_meta import (
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import Character, Location, WorldMeta
 from app.services.sqs import send_world_generation_message
-from app.services.usage import check_and_increment, check_storage_quota
+from app.services.usage import check_and_increment, check_storage_quota, release_quota
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
@@ -134,28 +134,34 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
   #    slot isn't consumed when the user is already at storage capacity.
   check_storage_quota(user_id)
 
-  # 2. Check periodic rate limit (worlds created this billing period)
+  # 2. Atomically reserve a periodic slot (worlds created this billing period).
+  #    Released below if the actual creation fails.
   check_and_increment(user_id, "worlds")
 
-  world_id = str(uuid.uuid4())
+  try:
+    world_id = str(uuid.uuid4())
 
-  max_nodes = WORLD_LENGTH_MAX_NODES[create_request.world_length.value]
+    max_nodes = WORLD_LENGTH_MAX_NODES[create_request.world_length.value]
 
-  meta_dto = WorldMetaDTO(
-    id=world_id,
-    author_id=user_id,
-    visibility=create_request.visibility,
-    world_prompt=create_request.world_prompt,
-    generation_status=GenerationStatus.INITIALIZED,
-    story_max_nodes=max_nodes,
-    world_length=create_request.world_length.value,
-    family_friendly=create_request.family_friendly,
-  )
+    meta_dto = WorldMetaDTO(
+      id=world_id,
+      author_id=user_id,
+      visibility=create_request.visibility,
+      world_prompt=create_request.world_prompt,
+      generation_status=GenerationStatus.INITIALIZED,
+      story_max_nodes=max_nodes,
+      world_length=create_request.world_length.value,
+      family_friendly=create_request.family_friendly,
+    )
 
-  meta = WorldMeta.from_dto(meta_dto)
+    meta = WorldMeta.from_dto(meta_dto)
 
-  meta.save()
-  send_world_generation_message(world_id)
+    meta.save()
+    send_world_generation_message(world_id)
+  except Exception:
+    release_quota(user_id, "worlds")
+    raise
+
   return meta
 
 
