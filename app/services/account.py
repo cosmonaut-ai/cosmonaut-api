@@ -96,7 +96,7 @@ def _cancel_stripe_subscription(user_id: str) -> None:
 def _delete_all_user_worlds(user_id: str) -> None:
   """Delete every world owned by the user, including nodes and vectors."""
   gsi1_pk = WorldMeta.gsi1_pk(user_id)
-  worlds = list(WorldMeta.GSI1.query(hash_key=gsi1_pk))  # type: ignore[reportUnknownMemberType]
+  worlds: list[WorldMeta] = list(WorldMeta.GSI1.query(hash_key=gsi1_pk))  # type: ignore[reportUnknownMemberType]
 
   logger.info("Deleting %d worlds for user %s", len(worlds), user_id)
 

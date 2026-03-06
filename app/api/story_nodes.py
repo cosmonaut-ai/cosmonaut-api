@@ -23,7 +23,7 @@ from app.services.story_nodes import (
   NodeProcessingError,
   NodeServiceError,
 )
-from app.services.usage import QuotaExceededError, check_and_increment
+from app.services.usage import QuotaExceededError, check_and_increment, release_quota
 from app.services.worlds import WorldNotFoundError
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
@@ -206,26 +206,6 @@ async def generate_text(
 
 
 @router.post(
-  "/{world_id}/warm-cache",
-  status_code=status.HTTP_204_NO_CONTENT,
-  summary="Pre-warm the Gemini content cache for a world",
-)
-async def warm_cache(
-  world_id: str = Path(..., description="Identifier for the world"),
-  current_user: User = Depends(get_current_user),
-) -> None:
-  """Eagerly create a Gemini CachedContent resource for the given world.
-
-  Calling this when the user opens a world avoids the cache-creation
-  latency (~500-2000 ms) on the first node generation.  The endpoint is
-  idempotent: if a cache already exists for this world it returns
-  immediately.
-  """
-  world = require_world_read(world_id, current_user)
-  node_service.warm_world_cache(world_id, world)
-
-
-@router.post(
   "/{world_id}/nodes/{node_id}/retry-processing",
   response_model=StoryNodeDTO,
   summary="Retry processing for a failed node",
@@ -334,6 +314,7 @@ async def generate_node_audio(
       elevenlabs_voiceid=voice.elevenlabs_voiceid,
     )
   except Exception as e:
+    release_quota(current_user.id, "audio")
     logger.error(f"Audio generation failed for node {node_id}: {e}", exc_info=True)
     raise HTTPException(
       status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

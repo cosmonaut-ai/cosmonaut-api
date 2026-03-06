@@ -9,7 +9,7 @@ from pydantic_ai import Agent, RunContext
 
 from app.services.llm.agents.prompts import FAMILY_FRIENDLY_INSTRUCTIONS, NARRATIVE_CONSTRAINTS
 from app.services.llm.models import LLMNarratorProfile, LLMWorldInfo
-from app.services.llm.provider import get_gemini_model
+from app.services.llm.provider import get_utility_model
 from app.services.llm.utils import format_model_with_descriptions
 
 SYSTEM_PROMPT = """
@@ -49,7 +49,7 @@ class NarratorDeps(BaseModel):
 
 # Module-level agent instantiation
 _agent: Agent[NarratorDeps, LLMNarratorProfile] = Agent(
-  model=get_gemini_model(),
+  model=get_utility_model(),
   deps_type=NarratorDeps,
   output_type=LLMNarratorProfile,
 )

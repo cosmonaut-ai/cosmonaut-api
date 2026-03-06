@@ -7,10 +7,9 @@ Uses structured output (no XML parsing needed for non-streaming).
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
-from app.core.config import settings
 from app.services.llm.agents.prompts import FAMILY_FRIENDLY_INSTRUCTIONS, NARRATIVE_CONSTRAINTS
 from app.services.llm.models import LLMWorldInfo
-from app.services.llm.provider import get_gemini_model
+from app.services.llm.provider import get_world_building_model
 from app.utils import extract_xml_json
 
 SYSTEM_PROMPT = """
@@ -70,7 +69,7 @@ class WorldInfoDeps(BaseModel):
 
 # Module-level agent instantiation
 _agent: Agent[WorldInfoDeps, str] = Agent(
-  model=get_gemini_model(settings.GEMINI_MODEL_LARGE),
+  model=get_world_building_model(),
   deps_type=WorldInfoDeps,
   output_type=str,
 )

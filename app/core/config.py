@@ -16,9 +16,12 @@ class Settings(BaseSettings):
     default="cosmonaut-api", description="Service name for AWS Powertools telemetry."
   )
   DYNAMODB_TABLE_NAME: str = Field(default="cosmonaut-dev", description="Primary DynamoDB table for application state.")
-  GEMINI_MODEL_SMALL: str = Field(default="gemini-3-flash-preview", description="Gemini model name for small tasks.")
-  GEMINI_MODEL_LARGE: str = Field(default="gemini-3-pro-preview", description="Gemini model name for large tasks.")
-  GEMINI_TIMEOUT_S: int = Field(default=30, description="Client timeout in seconds.")
+  MODEL_SMALL: str = Field(default="gemini-3-flash-preview", description="Vertex AI model name for small tasks.")
+  MODEL_SMALL_ANTHROPIC: str = Field(
+    default="claude-haiku-4-5", description="Vertex AI model name for small tasks."
+  )  # claude-haiku-4-5@20251001
+  MODEL_LARGE: str = Field(default="gemini-3.1-pro-preview", description="Vertex AI model name for large tasks.")
+  VERTEX_TIMEOUT_S: int = Field(default=30, description="Client timeout in seconds.")
   PINECONE_INDEX: str | None = Field(default=None, description="Target Pinecone index for vector operations.")
   MOCK_AUTH: bool = Field(default=False, description="If True, bypasses JWT validation (DEV ONLY).")
   COGNITO_USER_POOL_ID: str = Field(default="", description="AWS Cognito User Pool ID.")
@@ -45,8 +48,9 @@ class Settings(BaseSettings):
   STATIC_CONTENT_S3_BUCKET: str = Field(default="", description="S3 bucket for static content (images, audio).")
   STATIC_CONTENT_CDN_DOMAIN: str = Field(default="", description="CloudFront domain for serving static content.")
 
+  GCP_PROJECT_ID: str = Field(default="", description="GCP project ID for Vertex AI.")
+  GCP_LOCATION: str = Field(default="global", description="GCP region for Vertex AI.")
   GOOGLE_CLIENT_SECRET_PARAM: str = Field(default="", description="Parameter store path for the Google client secret.")
-  GEMINI_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Gemini API key.")
   PINECONE_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Pinecone API key.")
   ELEVENLABS_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the ElevenLabs API key.")
 
@@ -93,6 +97,7 @@ TIER_LIMITS: dict[str, dict[str, int]] = {
 def get_tier_limits(tier: str) -> dict[str, int]:
   """Return the limits dict for the given tier, falling back to FREE if unknown."""
   return TIER_LIMITS.get(tier, TIER_LIMITS["FREE"])
+
 
 # ---------------------------------------------------------------------------
 # World length presets (max story depth per branch)

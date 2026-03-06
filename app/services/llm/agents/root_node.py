@@ -2,6 +2,9 @@
 
 Generates the first story node for a world with streaming support.
 Uses XML output format for incremental content extraction.
+
+Like next_node, the system prompt contains only static content so that
+prompt caching (configured at the model level) can activate automatically.
 """
 
 from pydantic import BaseModel, Field
@@ -17,7 +20,7 @@ from app.services.llm.agents.prompts import (
   STORY_TEXT_RULES,
 )
 from app.services.llm.models import LLMWorldInfo
-from app.services.llm.provider import get_gemini_model
+from app.services.llm.provider import get_storytelling_model
 from app.services.llm.utils import format_model_with_descriptions
 
 ROOT_NODE_PREAMBLE = """
@@ -61,9 +64,8 @@ class RootNodeDeps(BaseModel):
   family_friendly: bool = Field(default=False, description="Whether to enforce family-friendly content guidelines.")
 
 
-# Module-level agent instantiation (streaming with XML output)
 _agent: Agent[RootNodeDeps, str] = Agent(
-  model=get_gemini_model(),
+  model=get_storytelling_model(),
   deps_type=RootNodeDeps,
   output_type=str,
 )

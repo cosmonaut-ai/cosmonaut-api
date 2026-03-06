@@ -123,7 +123,7 @@ async def update_sharing(
   world = require_world_write(world_id, user)
 
   # Identify newly added emails before persisting the update
-  previous_shared: set[str] = set(world.shared_with or [])
+  previous_shared: set[str] = {str(x) for x in (world.shared_with or [])}
   new_shared: set[str] = set(payload.shared_with or [])
   newly_added = new_shared - previous_shared
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from typing import Any
 from uuid import uuid4
 
 import nest_asyncio  # type: ignore[import-untyped]
@@ -57,6 +58,53 @@ async def health():
 
   metrics.add_metric(name="HealthCheck", unit=MetricUnit.Count, value=1)
   return {"status": "ok"}
+
+
+@app.get("/debug/wif")
+async def debug_wif():
+  """Temporary diagnostic endpoint for Workload Identity Federation auth."""
+  import json
+  import os
+
+  results: dict[str, object] = {}
+
+  cred_path = os.environ.get("GOOGLE_APPLICATION_CREDENTIALS", "")
+  results["config_path"] = cred_path
+  results["config_exists"] = os.path.exists(cred_path)
+
+  if results["config_exists"]:
+    with open(cred_path) as f:
+      config = json.load(f)
+    results["audience"] = config.get("audience", "MISSING")
+    results["service_account_url"] = config.get("service_account_impersonation_url", "MISSING")
+    results["type"] = config.get("type", "MISSING")
+
+  results["aws_access_key"] = bool(os.environ.get("AWS_ACCESS_KEY_ID"))
+  results["aws_secret_key"] = bool(os.environ.get("AWS_SECRET_ACCESS_KEY"))
+  results["aws_session_token"] = bool(os.environ.get("AWS_SESSION_TOKEN"))
+  results["aws_region"] = os.environ.get("AWS_REGION", "MISSING")
+
+  try:
+    import google.auth
+
+    creds: Any
+    creds, project = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-platform"])  # type: ignore[reportUnknownVariableType]
+    results["cred_type"] = type(creds).__name__
+    results["project"] = project
+  except Exception as e:
+    results["cred_load_error"] = f"{type(e).__name__}: {e}"
+    return results
+
+  try:
+    from google.auth.transport.requests import Request as AuthRequest
+
+    creds.refresh(AuthRequest())
+    results["refresh"] = "SUCCESS"
+    results["token_preview"] = creds.token[:20] + "..." if creds.token else "NO TOKEN"
+  except Exception as e:
+    results["refresh_error"] = f"{type(e).__name__}: {e}"
+
+  return results
 
 
 app.include_router(worlds_router, dependencies=[Depends(get_current_user)])

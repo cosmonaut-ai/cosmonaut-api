@@ -69,7 +69,7 @@ def get_user_contact_info(user_id: str) -> tuple[str, str]:
       logger.warning(f"No Cognito user found for sub {user_id}")
       return "", ""
 
-    attrs = {a["Name"]: a["Value"] for a in users[0].get("Attributes", [])}
+    attrs = {a["Name"]: a.get("Value", "") for a in users[0].get("Attributes", [])}
     email = attrs.get("email", "")
     name = attrs.get("given_name") or attrs.get("name") or ""
     return email, name

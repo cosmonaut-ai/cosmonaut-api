@@ -163,6 +163,25 @@ def check_and_increment(user_id: str, metric: Literal["worlds", "nodes", "audio"
     raise QuotaExceededError(metric, limit_value) from exc
 
 
+def release_quota(user_id: str, metric: Literal["worlds", "nodes", "audio"]) -> None:
+  """Reverse a prior ``check_and_increment`` after a failed operation.
+
+  Best-effort: logs a warning if the decrement fails (e.g. counter already
+  at zero due to a concurrent period reset) but never raises, so the
+  original error always propagates unobstructed.
+  """
+  attr_name = _METRIC_ATTR[metric]
+  attr = getattr(UserUsage, attr_name)
+  try:
+    usage = get_or_create_usage(user_id)
+    usage.update(
+      actions=[attr.set((attr | 0) - 1)],
+      condition=(attr > 0),
+    )
+  except Exception:
+    logger.warning(f"Failed to release {metric} quota for user {user_id} — counter may be slightly inflated")
+
+
 def update_subscription_status(user_id: str, subscription_status: str) -> UserUsage:
   """Persist the raw Stripe subscription status for frontend visibility."""
   usage = get_or_create_usage(user_id)

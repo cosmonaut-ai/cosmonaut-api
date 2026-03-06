@@ -14,9 +14,9 @@ from google.genai import types
 
 import app.services.llm as llm
 from app.core.config import settings
+from app.core.gcp_auth import get_gcp_credentials
 from app.models.entities.world_meta import WorldMeta
 from app.services.s3 import upload_image
-from app.services.secret_manager import get_secret_value
 from app.services.worlds import world_meta_to_llm_world_info
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
@@ -28,8 +28,13 @@ S3_KEY_TEMPLATE = "worlds/{world_id}/cover.png"
 
 @lru_cache
 def _get_genai_client() -> GenAIClient:
-  """Lazy singleton for the Google GenAI client."""
-  return GenAIClient(api_key=get_secret_value(settings.GEMINI_API_KEY_PARAM))
+  """Lazy singleton for the Vertex AI GenAI client."""
+  return GenAIClient(
+    vertexai=True,
+    credentials=get_gcp_credentials(),
+    project=settings.GCP_PROJECT_ID,
+    location=settings.GCP_LOCATION,
+  )
 
 
 async def generate_world_image(world: WorldMeta) -> WorldMeta:
