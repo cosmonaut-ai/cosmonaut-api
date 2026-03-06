@@ -148,14 +148,14 @@ def get_vertex_anthropic_model(
 # =============================================================================
 
 
-def get_storytelling_model() -> GoogleModel:
+def get_storytelling_model() -> AnthropicModel:
   """Model for story narration (root_node, next_node).
 
   Uses Claude Haiku via Vertex AI with 1-hour prompt caching enabled.
   The system prompt (static instructions + world context + narrator profile)
   is cached automatically by Anthropic -- agents are cache-unaware.
   """
-  return get_vertex_google_model()
+  return get_vertex_anthropic_model()
 
 
 def get_utility_model() -> GoogleModel:
