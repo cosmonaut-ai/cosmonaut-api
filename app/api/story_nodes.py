@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from pynamodb.exceptions import UpdateError
 
 import app.services.story_nodes as node_service
+import app.services.user_progress as progress_service
 from app.api.dependencies import require_world_read
 from app.core.config import settings
 from app.core.security import User, get_current_user
@@ -76,6 +77,25 @@ async def get_node(
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
 
 
+class ProgressResponse(BaseModel):
+  current_node_id: str | None = None
+
+
+@router.get(
+  "/{world_id}/progress",
+  response_model=ProgressResponse,
+  summary="Get the user's last-visited node in a world",
+)
+async def get_progress(
+  world_id: str = Path(..., description="Identifier for the world"),
+  current_user: User = Depends(get_current_user),
+) -> ProgressResponse:
+  """Return the last story node the authenticated user visited in this world."""
+  require_world_read(world_id, current_user)
+  node_id = progress_service.get_progress(current_user.id, world_id)
+  return ProgressResponse(current_node_id=node_id)
+
+
 @router.post(
   "/{world_id}/nodes/{node_id}/choose",
   response_model=StoryNodeDTO,
@@ -121,6 +141,12 @@ async def choose(
       custom_choice=request.custom_choice,
       user_id=current_user.id,
     )
+
+    try:
+      progress_service.update_progress(current_user.id, world_id, str(new_node.id))
+    except Exception:
+      logger.warning("Failed to update progress for user %s in world %s", current_user.id, world_id, exc_info=True)
+
     return new_node.to_dto()
   except NodeNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
