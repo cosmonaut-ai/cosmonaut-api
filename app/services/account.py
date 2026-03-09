@@ -17,6 +17,7 @@ from app.core.config import settings
 from app.models.entities.usage import UserUsage
 from app.models.entities.world_meta import WorldMeta
 from app.services.secret_manager import get_secret_value
+from app.services.user_progress import delete_all_user_progress
 
 if TYPE_CHECKING:
   from mypy_boto3_cognito_idp.client import CognitoIdentityProviderClient
@@ -41,8 +42,9 @@ def delete_account(user_id: str, cognito_username: str) -> None:
   Steps (order matters for safety):
   1. Cancel any active Stripe subscription
   2. Delete all user-owned worlds (nodes + vectors + metadata)
-  3. Delete the user's usage record
-  4. Delete the Cognito user
+  3. Delete all user progress records
+  4. Delete the user's usage record
+  5. Delete the Cognito user
 
   Args:
     user_id: The Cognito ``sub`` (UUID) of the user.
@@ -56,10 +58,16 @@ def delete_account(user_id: str, cognito_username: str) -> None:
   # 2. Delete all worlds owned by this user
   _delete_all_user_worlds(user_id)
 
-  # 3. Delete the usage record
+  # 3. Delete all progress records
+  try:
+    delete_all_user_progress(user_id)
+  except Exception:
+    logger.exception("Failed to delete progress records for user %s", user_id)
+
+  # 4. Delete the usage record
   _delete_usage_record(user_id)
 
-  # 4. Delete the Cognito user
+  # 5. Delete the Cognito user
   _delete_cognito_user(cognito_username)
 
   logger.info("Account deletion complete for user %s", user_id)
