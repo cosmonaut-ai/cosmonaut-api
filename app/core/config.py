@@ -70,6 +70,9 @@ class Settings(BaseSettings):
   SES_FROM_EMAIL: str = Field(
     default="", description="Verified SES sender address (e.g. Cosmonaut <noreply@cosmonaut-ai.com>)."
   )
+  SES_SUPPORT_EMAIL: str = Field(
+    default="support@cosmonaut-ai.com", description="Recipient address for feedback and support emails."
+  )
   SES_ENABLED: bool = Field(default=False, description="Enable SES email sending. Disabled in local/dev by default.")
 
   # Frontend
