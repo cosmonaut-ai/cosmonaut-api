@@ -561,8 +561,5 @@ def send_feedback_email(
     f"Message:\n{message}\n"
   )
 
-  support_email = (
-    settings.SES_FROM_EMAIL.replace("noreply@", "support@") if settings.SES_FROM_EMAIL else "support@cosmonaut-ai.com"
-  )
   html_body = _base_template(f"Feedback: {display_category}", body)
-  return _send_email(support_email, subject, html_body, text_body)
+  return _send_email(settings.SES_SUPPORT_EMAIL, subject, html_body, text_body)
