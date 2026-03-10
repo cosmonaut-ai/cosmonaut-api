@@ -80,7 +80,7 @@ class Settings(BaseSettings):
 
   # Dev access control
   DEV_ALLOWED_EMAILS: list[str] = Field(
-    default=["imatson9119@gmail.com", "ian@cosmonaut-ai.com"],
+    default=[],
     description="Email allowlist for the dev environment. Only these emails may access the API when ENV=dev.",
   )
 

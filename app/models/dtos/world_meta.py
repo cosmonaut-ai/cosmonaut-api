@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from app.models.dtos.base import DTOModel
 
@@ -46,8 +46,15 @@ class WorldCreateRequest(BaseModel):
 class WorldUpdateSharingRequest(BaseModel):
   """Payload for sharing a world with a user."""
 
-  shared_with: list[str] | None = None
+  shared_with: list[EmailStr] | None = Field(default=None, max_length=50)
   visibility: WorldVisibility | None = None
+
+  @field_validator("shared_with", mode="before")
+  @classmethod
+  def normalize_emails(cls, v: list[str] | None) -> list[str] | None:
+    if v is None:
+      return v
+    return [email.strip().lower() for email in v]
 
 
 class CharacterDTO(DTOModel):
