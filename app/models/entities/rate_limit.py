@@ -19,10 +19,12 @@ class RateLimitRecord(BaseCosmonautModel):
 
   Used for:
   - Feedback rate limiting: PK=RATE#FEEDBACK#{user_id}, SK=LIMIT
+  - Per-endpoint rate limiting: PK=RATE#{endpoint}#{user_id}, SK=LIMIT
   - Webhook idempotency: PK=WEBHOOK#{event_id}, SK=PROCESSED
   """
 
   expiration: NumberAttribute = NumberAttribute()
+  count: NumberAttribute = NumberAttribute(default=0)
 
   @classmethod
   def pk(cls, key: str) -> str:

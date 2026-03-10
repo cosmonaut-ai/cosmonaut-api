@@ -23,11 +23,12 @@ import app.services.pinecone as pinecone
 from app.core.config import settings
 from app.models.dtos.story_node import ChoiceDTO, GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
+from app.services.llm.sanitize import sanitize_llm_output, sanitize_user_input
 from app.services.pinecone import PineconeBranchFact
 from app.services.sqs import SQSSendError, send_node_analysis_message
 from app.services.usage import check_and_increment, release_quota
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
-from app.utils import extract_xml_block, extract_xml_json
+from app.utils import LLMOutputTruncatedError, extract_xml_block, extract_xml_json
 
 if TYPE_CHECKING:
   from app.models.entities.world_meta import WorldMeta
@@ -87,6 +88,21 @@ class InvalidProcessingStatusError(NodeServiceError):
     )
     self.node_id = node_id
     self.current_status = current_status
+
+
+ABSOLUTE_MAX_DEPTH = 100
+
+
+class DepthLimitReachedError(NodeServiceError):
+  """Raised when a node has reached the absolute maximum story depth."""
+
+  def __init__(self, world_id: str, node_id: str, depth: int):
+    super().__init__(
+      f"Story depth limit reached: node {node_id} is at depth {depth} (maximum is {ABSOLUTE_MAX_DEPTH})."
+    )
+    self.world_id = world_id
+    self.node_id = node_id
+    self.depth = depth
 
 
 # =============================================================================
@@ -238,6 +254,7 @@ async def _validate_and_prepare_choice(
   # generate-text path will use whatever context is available at that time.
 
   if custom_choice is not None:
+    custom_choice = sanitize_user_input(custom_choice)
     choice_index = len(node.choices)
     new_choice = ChoiceMap(
       label=custom_choice,
@@ -346,6 +363,18 @@ async def _stream_node_content(
   try:
     metadata = extract_xml_json(full_response_buffer, "metadata", llm.LLMNodeMetadata)
     yield "", full_response_buffer, metadata
+  except LLMOutputTruncatedError:
+    logger.warning("LLM output truncated by max_tokens -- extracting partial story text")
+    story_text = extract_xml_block(full_response_buffer, "story", streaming=False)
+    if story_text:
+      fallback_metadata = llm.LLMNodeMetadata(
+        choices=[],
+        story_summary="[Story truncated due to length limit]",
+        title="Continued...",
+      )
+      yield "", full_response_buffer, fallback_metadata
+    else:
+      raise ValueError("LLM output truncated before any story content was generated")
   except ValueError as e:
     logger.error(f"LLM failed to output expected XML tags. Full response: {full_response_buffer}")
     raise ValueError("LLM failed to output metadata tags") from e
@@ -365,7 +394,7 @@ async def _stream_next_node(
     Tuple of (chunk_text, full_buffer, metadata_if_complete)
   """
   user_message = llm.build_user_message(deps)
-  run_stream_ctx = llm.get_next_node_agent().run_stream(user_message, deps=deps)
+  run_stream_ctx = llm.get_next_node_agent().run_stream(user_message, deps=deps, model_settings={"max_tokens": 4096})
   async for item in _stream_node_content(run_stream_ctx):
     yield item
 
@@ -380,7 +409,9 @@ async def _stream_root_node(
   Yields:
     Tuple of (chunk_text, full_buffer, metadata_if_complete)
   """
-  run_stream_ctx = llm.get_root_node_agent().run_stream("Generate the first story node.", deps=deps)
+  run_stream_ctx = llm.get_root_node_agent().run_stream(
+    "Generate the first story node.", deps=deps, model_settings={"max_tokens": 4096}
+  )
   async for item in _stream_node_content(run_stream_ctx):
     yield item
 
@@ -416,6 +447,10 @@ async def choose(
 
   # Validate and prepare choice
   node = get_node_entity(world_id, node_id)
+
+  if node.depth >= ABSOLUTE_MAX_DEPTH:
+    raise DepthLimitReachedError(world_id, node_id, node.depth)
+
   choice_index = await _validate_and_prepare_choice(node, node_id, choice_index, custom_choice, user_id)
 
   selected_choice = node.choices[choice_index]
@@ -665,6 +700,9 @@ async def process_node(node: StoryNode) -> None:
     user_choice=parent_node.choices[node.choice_index].label if parent_node and node.choice_index else None,
   )
   facts = await llm.generate_facts_async(fact_deps)
+
+  facts.world_facts = [sanitize_llm_output(f) for f in facts.world_facts]
+  facts.branch_facts = [sanitize_llm_output(f) for f in facts.branch_facts]
 
   # Upsert node text to Pinecone
   pinecone.upsert_records(

@@ -17,7 +17,9 @@ from app.models.dtos.story_node import ChooseRequestDTO, GenerationStatus, Story
 from app.models.entities.story_node import StoryNode
 from app.models.voices import get_voice_by_id
 from app.services.audio import generate_and_store_audio
+from app.services.rate_limiter import RateLimitExceededError, check_rate_limit, raise_rate_limit_error
 from app.services.story_nodes import (
+  DepthLimitReachedError,
   InvalidChoiceError,
   InvalidProcessingStatusError,
   NodeNotFoundError,
@@ -148,6 +150,8 @@ async def choose(
       logger.warning("Failed to update progress for user %s in world %s", current_user.id, world_id, exc_info=True)
 
     return new_node.to_dto()
+  except DepthLimitReachedError as e:
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
   except NodeNotFoundError as e:
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
   except InvalidChoiceError as e:
@@ -178,6 +182,11 @@ async def generate_text(
   5. On error, sets generation_status to FAILED
   """
   require_world_read(world_id, current_user)
+
+  try:
+    check_rate_limit(current_user.id, "generate-text")
+  except RateLimitExceededError as e:
+    raise raise_rate_limit_error(e) from e
 
   # Validate node exists before starting stream.
   # Status validation is intentionally deferred to the service layer which uses
@@ -305,6 +314,11 @@ async def generate_node_audio(
     )
 
   require_world_read(world_id, current_user)
+
+  try:
+    check_rate_limit(current_user.id, "audio")
+  except RateLimitExceededError as e:
+    raise raise_rate_limit_error(e) from e
 
   # -- Fetch node --
   try:
