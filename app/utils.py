@@ -39,6 +39,10 @@ def extract_xml_block(content: str, tag: str, *, streaming: bool = False) -> str
   return None
 
 
+class LLMOutputTruncatedError(ValueError):
+  """Raised when LLM output appears to have been truncated by max_tokens."""
+
+
 def extract_xml_json(content: str, tag: str, model: type[T]) -> T:
   """Extract JSON content from an XML block and parse it into a Pydantic model.
 
@@ -51,10 +55,16 @@ def extract_xml_json(content: str, tag: str, model: type[T]) -> T:
       The parsed Pydantic model instance
 
   Raises:
+      LLMOutputTruncatedError: If the opening tag exists but the closing tag is missing
       ValueError: If the tag is not found or JSON parsing fails
   """
   extracted = extract_xml_block(content, tag, streaming=False)
   if extracted is None:
+    if f"<{tag}>" in content and f"</{tag}>" not in content:
+      raise LLMOutputTruncatedError(
+        f"LLM output appears truncated: <{tag}> opened but never closed. "
+        "This likely indicates the response hit the max_tokens limit."
+      )
     raise ValueError(f"XML tag <{tag}> not found in content")
 
   # Clean up potential markdown code blocks

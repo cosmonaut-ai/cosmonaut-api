@@ -78,13 +78,15 @@ def _build_system_prompt(ctx: RunContext[RootNodeDeps]) -> str:  # pyright: igno
   return f"""{SYSTEM_PROMPT}
 {family_friendly_note}
 
----
-WORLD CONTEXT (background—player hasn't seen this):
-{format_model_with_descriptions(ctx.deps.world_info)}
-
----
-NARRATOR PROFILE:
+## Narrator Profile:
+<narrator_data>
 {ctx.deps.narrator_profile}
+</narrator_data>
+
+## World Info (background—player hasn't seen this):
+<world_data>
+{format_model_with_descriptions(ctx.deps.world_info)}
+</world_data>
 """
 
 

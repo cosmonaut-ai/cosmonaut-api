@@ -13,6 +13,7 @@ from app.core.config import settings
 from app.core.security import User, get_current_user
 from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO, WorldUpdateSharingRequest
 from app.services.email import send_world_invite
+from app.services.rate_limiter import RateLimitExceededError, check_rate_limit, raise_rate_limit_error
 from app.services.usage import QuotaExceededError, StorageQuotaExceededError
 from app.services.worlds import WorldNotFoundError
 
@@ -65,6 +66,11 @@ async def get_world(
 )
 async def create_world(payload: WorldCreateRequest, user: User = Depends(get_current_user)) -> WorldMetaDTO:
   """Create a new world."""
+  try:
+    check_rate_limit(user.id, "create-world")
+  except RateLimitExceededError as e:
+    raise raise_rate_limit_error(e) from e
+
   try:
     world = world_service.create_world(payload, user.id)
   except StorageQuotaExceededError as e:
