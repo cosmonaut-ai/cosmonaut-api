@@ -116,7 +116,7 @@ _TIER_PRICE_MAP: dict[str, str] = {
 @router.get("/usage", response_model=UsageResponse, summary="Get current usage and quota info")
 async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResponse:
   """Return the authenticated user's tier, usage counters, and limits."""
-  usage = get_or_create_usage(current_user.id)
+  usage = get_or_create_usage(current_user.id, email=current_user.email)
   tier = str(usage.tier) if usage.tier else "FREE"
   limits = get_tier_limits(tier)
 
@@ -183,7 +183,7 @@ async def delete_user_account(current_user: User = Depends(get_current_user)) ->
   - Delete the Cognito user identity
   """
   try:
-    delete_account(user_id=current_user.id, cognito_username=current_user.username)
+    delete_account(user_id=current_user.id, cognito_username=current_user.username, email=current_user.email)
     return {"status": "deleted"}
   except ClientError:
     logger.exception("Account deletion failed for user %s", current_user.id)

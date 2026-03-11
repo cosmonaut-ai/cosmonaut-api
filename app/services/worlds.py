@@ -275,8 +275,10 @@ def delete_world(world_id: str) -> None:
     for item in items:
       batch.delete(item)
 
-  # Delete all records from Pinecone
-  pinecone.delete_records(filter={"world_id": world_id})
+  try:
+    pinecone.delete_records(filter={"world_id": world_id})
+  except Exception:
+    logger.exception("Failed to delete Pinecone records for world %s (non-fatal)", world_id)
 
   if author_id:
     _decrement_world_count(author_id)

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from aws_lambda_powertools import Logger
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pynamodb.exceptions import UpdateError
@@ -32,6 +32,8 @@ from app.services.worlds import WorldNotFoundError
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 router = APIRouter(prefix="/worlds", tags=["story-nodes"])
+
+MAX_NARRATION_CHARS = 3000
 
 
 class PaginatedNodesResponse(BaseModel):
@@ -165,6 +167,7 @@ async def choose(
   summary="Generate story text for an initialized node (streaming)",
 )
 async def generate_text(
+  request: Request,
   world_id: str = Path(..., description="Identifier for the world"),
   node_id: str = Path(..., description="Identifier for the node to generate text for"),
   current_user: User = Depends(get_current_user),
@@ -202,8 +205,10 @@ async def generate_text(
     try:
       first_chunk = True
       async for chunk in node_service.generate_text(world_id, node_id, user_id=current_user.id):
-        # Only strip leading whitespace from the very first chunk to avoid breaking SSE format
-        # Preserve all other whitespace including newlines for proper paragraph formatting
+        if await request.is_disconnected():
+          logger.info("Client disconnected during text generation for node %s", node_id)
+          return
+
         if first_chunk:
           chunk = chunk.lstrip()
           first_chunk = False
@@ -333,6 +338,13 @@ async def generate_node_audio(
       detail=f"Node {node_id} text has not been generated yet",
     )
 
+  text = str(node.text)
+  if len(text) > MAX_NARRATION_CHARS:
+    raise HTTPException(
+      status_code=status.HTTP_400_BAD_REQUEST,
+      detail=f"Node text exceeds the maximum of {MAX_NARRATION_CHARS:,} characters for audio narration",
+    )
+
   # -- Idempotency: return existing audio for this voice if present --
   existing_audio: dict[str, str] = dict(node.audio.attribute_values) if node.audio else {}
   if voice.id in existing_audio:
@@ -340,7 +352,7 @@ async def generate_node_audio(
 
   # -- Quota check --
   try:
-    check_and_increment(current_user.id, "audio")
+    check_and_increment(current_user.id, "audio", email=current_user.email)
   except QuotaExceededError as e:
     raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)) from e
 
@@ -370,7 +382,7 @@ async def generate_node_audio(
       condition=StoryNode.audio[voice.id].does_not_exist() | StoryNode.audio.does_not_exist(),  # type: ignore[union-attr]
     )
   except UpdateError:
-    # Another request already set the audio URL for this voice — re-fetch and return.
+    release_quota(current_user.id, "audio")
     node.refresh()
     refreshed_audio: dict[str, str] = dict(node.audio.attribute_values) if node.audio else {}
     if voice.id in refreshed_audio:
