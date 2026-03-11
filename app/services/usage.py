@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import hashlib
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Any, Literal
 
 from aws_lambda_powertools import Logger
 from pynamodb.exceptions import UpdateError
@@ -74,7 +74,7 @@ def _new_period_end(tier: str) -> datetime:
 # ---------------------------------------------------------------------------
 
 
-def _check_and_consume_tombstone(email: str) -> dict | None:
+def _check_and_consume_tombstone(email: str) -> dict[str, Any] | None:
   """Look up and delete a usage tombstone for the given email.
 
   Returns the carried-forward counters if a valid tombstone exists,
@@ -124,7 +124,9 @@ def get_or_create_usage(user_id: str, email: str | None = None) -> UserUsage:
       )
       logger.info(
         "Created usage for user %s from tombstone (period_active=%s, audio_carried=%d)",
-        user_id, period_still_active, carried["audio_narrations_used"],
+        user_id,
+        period_still_active,
+        carried["audio_narrations_used"],
       )
     else:
       usage = UserUsage(

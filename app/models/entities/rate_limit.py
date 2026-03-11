@@ -24,7 +24,7 @@ class RateLimitRecord(BaseCosmonautModel):
   """
 
   expiration: NumberAttribute = NumberAttribute()
-  count: NumberAttribute = NumberAttribute(default=0)
+  request_count: NumberAttribute = NumberAttribute(attr_name="count", default=0)
 
   @classmethod
   def pk(cls, key: str) -> str:

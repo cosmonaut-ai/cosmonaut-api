@@ -51,13 +51,13 @@ def check_rate_limit(user_id: str, endpoint: str) -> None:
   try:
     record = RateLimitRecord.get(pk, sk)
     if record.expiration and int(record.expiration) > now:
-      count = int(record.count) if record.count else 1
+      count = int(record.request_count) if record.request_count else 1
       if count >= max_requests:
         raise RateLimitExceededError(endpoint, max_requests, window_seconds)
-      record.count = count + 1
+      record.request_count = count + 1
       record.save()
     else:
-      record.count = 1
+      record.request_count = 1
       record.expiration = now + window_seconds
       record.save()
   except RateLimitRecord.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
@@ -65,7 +65,7 @@ def check_rate_limit(user_id: str, endpoint: str) -> None:
       PK=pk,
       SK=sk,
       expiration=now + window_seconds,
-      count=1,
+      request_count=1,
     )
     record.save()
 
