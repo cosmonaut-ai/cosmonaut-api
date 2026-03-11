@@ -82,13 +82,14 @@ def delete_objects_by_prefix(prefix: str) -> int:
     if objects:
       client.delete_objects(
         Bucket=bucket,
-        Delete={"Objects": [{"Key": obj["Key"]} for obj in objects]},
+        Delete={"Objects": [{"Key": obj["Key"]} for obj in objects if "Key" in obj]},
       )
       deleted += len(objects)
     if not response.get("IsTruncated"):
       break
     response = client.list_objects_v2(
-      Bucket=bucket, Prefix=prefix,
+      Bucket=bucket,
+      Prefix=prefix,
       ContinuationToken=response["NextContinuationToken"],
     )
   return deleted
