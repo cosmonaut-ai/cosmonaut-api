@@ -17,25 +17,25 @@ Story nodes can have AI-generated audio narrations via ElevenLabs TTS. Customers
 
 ### Available Voices
 
-| Internal ID  | Display Name |
-| ------------ | ------------ |
-| `riley`      | Riley        |
-| `katherine`  | Katherine    |
-| `paige`      | Paige        |
-| `peter`      | Peter        |
-| `theo`       | Theo         |
-| `michael`    | Michael      |
-| `jon`        | Jon          |
+| Internal ID | Display Name |
+| ----------- | ------------ |
+| `riley`     | Riley        |
+| `katherine` | Katherine    |
+| `paige`     | Paige        |
+| `peter`     | Peter        |
+| `theo`      | Theo         |
+| `michael`   | Michael      |
+| `jon`       | Jon          |
 
 ### Tier Limits
 
-| Tier       | Audio narrations per period | Period  | Reset behaviour                    |
-| ---------- | --------------------------- | ------- | ---------------------------------- |
-| FREE       | 20                          | 7 days  | **Never resets** (lifetime cap)    |
-| EXPLORER   | 60                          | 30 days | Resets each billing period         |
-| COSMONAUT  | 200                         | 30 days | Resets each billing period         |
+| Tier      | Audio narrations per period | Period  | Reset behaviour                 |
+| --------- | --------------------------- | ------- | ------------------------------- |
+| FREE      | 10                          | 7 days  | **Never resets** (lifetime cap) |
+| EXPLORER  | 60                          | 30 days | Resets each billing period      |
+| COSMONAUT | 200                         | 30 days | Resets each billing period      |
 
-> Free-tier audio is a one-time allowance — once the 20 narrations are used, the user must upgrade to generate more. Paid tiers get fresh quota each billing cycle.
+> Free-tier audio is a one-time allowance — once the 10 narrations are used, the user must upgrade to generate more. Paid tiers get fresh quota each billing cycle.
 
 ---
 
@@ -69,6 +69,7 @@ GET /voices/
 ```
 
 Each voice includes:
+
 - `id` -- internal identifier used in API requests.
 - `display_name` -- human-readable name for UI display.
 - `description` -- short blurb describing the voice character.
@@ -85,6 +86,7 @@ POST /worlds/{world_id}/nodes/{node_id}/audio
 **Auth**: Requires a valid JWT (same as all `/worlds` endpoints).
 
 **Preconditions**:
+
 - The node must exist.
 - The node's `generation_status` must be `"completed"` (i.e., text has been fully generated). If text is still streaming or hasn't been generated, the endpoint returns `400`.
 
@@ -96,9 +98,9 @@ POST /worlds/{world_id}/nodes/{node_id}/audio
 }
 ```
 
-| Field      | Type   | Required | Description                                        |
-| ---------- | ------ | -------- | -------------------------------------------------- |
-| `voice_id` | string | Yes      | Internal voice ID from the `/voices/` endpoint.    |
+| Field      | Type   | Required | Description                                     |
+| ---------- | ------ | -------- | ----------------------------------------------- |
+| `voice_id` | string | Yes      | Internal voice ID from the `/voices/` endpoint. |
 
 **Success response** (`200 OK`):
 
@@ -112,14 +114,14 @@ The `audio_url` is a permanent CDN link to the MP3 file. It can be used directly
 
 **Error responses**:
 
-| Status | Condition                             | Response `detail`                                  |
-| ------ | ------------------------------------- | -------------------------------------------------- |
-| `400`  | Unknown voice_id                      | `"Unknown voice_id: {voice_id}"`                   |
-| `400`  | Node text not yet generated           | `"Node {node_id} text has not been generated yet"` |
-| `403`  | User not authorized for this world    | `"You are not authorized to access world ..."`     |
-| `404`  | World or node not found               | `"World {id} not found"` / `"Node {id} not found"` |
-| `429`  | Audio quota exceeded                  | `"Quota exceeded: audio limit is {limit}"`         |
-| `500`  | ElevenLabs or S3 failure              | `"Audio generation failed"`                        |
+| Status | Condition                          | Response `detail`                                  |
+| ------ | ---------------------------------- | -------------------------------------------------- |
+| `400`  | Unknown voice_id                   | `"Unknown voice_id: {voice_id}"`                   |
+| `400`  | Node text not yet generated        | `"Node {node_id} text has not been generated yet"` |
+| `403`  | User not authorized for this world | `"You are not authorized to access world ..."`     |
+| `404`  | World or node not found            | `"World {id} not found"` / `"Node {id} not found"` |
+| `429`  | Audio quota exceeded               | `"Quota exceeded: audio limit is {limit}"`         |
+| `500`  | ElevenLabs or S3 failure           | `"Audio generation failed"`                        |
 
 > The `429` response is the key one for triggering the upgrade prompt on the frontend.
 
@@ -198,13 +200,16 @@ async function listVoices(): Promise<{ id: string; display_name: string }[]> {
 async function generateNodeAudio(
   worldId: string,
   nodeId: string,
-  voiceId: string
+  voiceId: string,
 ): Promise<{ audio_url: string }> {
-  const response = await fetch(`${API_BASE}/worlds/${worldId}/nodes/${nodeId}/audio`, {
-    method: 'POST',
-    headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-    body: JSON.stringify({ voice_id: voiceId }),
-  });
+  const response = await fetch(
+    `${API_BASE}/worlds/${worldId}/nodes/${nodeId}/audio`,
+    {
+      method: 'POST',
+      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
+      body: JSON.stringify({ voice_id: voiceId }),
+    },
+  );
 
   if (!response.ok) {
     if (response.status === 429) {
@@ -229,11 +234,13 @@ async function generateNodeAudio(
 In `StoryNodeView.svelte` (or equivalent component):
 
 **State**:
+
 - `selectedVoiceId: string` — the user's chosen voice.
 - `isGeneratingAudio: boolean` — true while the POST request is in flight.
 - Use the node's `audio` dict from the DTO to determine if audio already exists for the selected voice.
 
 **UI**:
+
 - Add a narration button (e.g., speaker/Volume2 icon) near the existing controls.
 - **Disable** the button when:
   - Text is still streaming (`isStreaming` or `isNodeGenerating`)
@@ -253,6 +260,7 @@ else:
 ```
 
 **Playback**:
+
 - Use a standard HTML `<audio>` element or a Svelte audio binding.
 - The CDN URL can be set as the `src` directly — no auth headers needed for playback.
 - Consider preloading: `<audio preload="none">` to avoid unnecessary bandwidth on page load.
