@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import urllib.parse
 import urllib.request
-from functools import lru_cache
 from typing import TYPE_CHECKING
+
+from cachetools import TTLCache, cached
 
 from app.core.config import settings
 
@@ -25,7 +27,11 @@ def get_ssm_client() -> SSMClient:
   return ssm_client
 
 
-@lru_cache(maxsize=None)
+_secret_cache: TTLCache[str, str] = TTLCache(maxsize=64, ttl=600)
+_cache_lock = threading.Lock()
+
+
+@cached(cache=_secret_cache, lock=_cache_lock)
 def get_secret_value(param_path: str) -> str:
   """
   Fetches a secret/parameter value from AWS SSM Parameter Store.
