@@ -10,6 +10,8 @@ from functools import lru_cache
 
 import httpx
 from aws_lambda_powertools import Logger
+from httpx import HTTPStatusError
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 from app.core.config import settings
 from app.services.s3 import upload_file
@@ -31,6 +33,21 @@ def _get_elevenlabs_api_key() -> str:
   return get_secret_value(settings.ELEVENLABS_API_KEY_PARAM)
 
 
+_RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _is_retryable(exc: BaseException) -> bool:
+  if isinstance(exc, HTTPStatusError):
+    return exc.response.status_code in _RETRYABLE_STATUS_CODES
+  return isinstance(exc, (ConnectionError, httpx.TimeoutException))
+
+
+@retry(
+  retry=retry_if_exception(_is_retryable),
+  stop=stop_after_attempt(3),
+  wait=wait_exponential(multiplier=2, max=15),
+  reraise=True,
+)
 def generate_audio(text: str, elevenlabs_voiceid: str) -> bytes:
   """Call ElevenLabs TTS and return raw MP3 bytes.
 

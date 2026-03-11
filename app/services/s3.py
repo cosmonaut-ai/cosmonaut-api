@@ -67,3 +67,29 @@ def upload_image(key: str, image_bytes: bytes, content_type: str = "image/png") 
     The full CDN URL for the uploaded image.
   """
   return upload_file(key=key, data=image_bytes, content_type=content_type)
+
+
+def delete_objects_by_prefix(prefix: str) -> int:
+  """Delete all S3 objects matching the given prefix. Returns count deleted."""
+  client = get_s3_client()
+  bucket = settings.STATIC_CONTENT_S3_BUCKET
+  if not bucket:
+    return 0
+  deleted = 0
+  response = client.list_objects_v2(Bucket=bucket, Prefix=prefix)
+  while True:
+    objects = response.get("Contents", [])
+    if objects:
+      client.delete_objects(
+        Bucket=bucket,
+        Delete={"Objects": [{"Key": obj["Key"]} for obj in objects if "Key" in obj]},
+      )
+      deleted += len(objects)
+    if not response.get("IsTruncated"):
+      break
+    response = client.list_objects_v2(
+      Bucket=bucket,
+      Prefix=prefix,
+      ContinuationToken=response["NextContinuationToken"],
+    )
+  return deleted

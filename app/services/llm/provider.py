@@ -109,6 +109,7 @@ def get_vertex_anthropic_provider() -> AnthropicProvider:
     region=settings.GCP_LOCATION,
     project_id=settings.GCP_PROJECT_ID,
     credentials=get_gcp_credentials(),
+    http_client=_create_retrying_client(),
   )
   return AnthropicProvider(anthropic_client=vertex_client)
 

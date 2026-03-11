@@ -70,6 +70,9 @@ class Settings(BaseSettings):
   SES_FROM_EMAIL: str = Field(
     default="", description="Verified SES sender address (e.g. Cosmonaut <noreply@cosmonaut-ai.com>)."
   )
+  SES_SUPPORT_EMAIL: str = Field(
+    default="support@cosmonaut-ai.com", description="Recipient address for feedback and support emails."
+  )
   SES_ENABLED: bool = Field(default=False, description="Enable SES email sending. Disabled in local/dev by default.")
 
   # Frontend
@@ -77,7 +80,7 @@ class Settings(BaseSettings):
 
   # Dev access control
   DEV_ALLOWED_EMAILS: list[str] = Field(
-    default=["imatson9119@gmail.com", "ian@cosmonaut-ai.com"],
+    default=[],
     description="Email allowlist for the dev environment. Only these emails may access the API when ENV=dev.",
   )
 
@@ -88,7 +91,7 @@ settings: Settings = Settings()
 # Tier limits (not environment-dependent; kept outside Settings)
 # ---------------------------------------------------------------------------
 TIER_LIMITS: dict[str, dict[str, int]] = {
-  "FREE": {"worlds": 3, "nodes": 30, "reset_days": 7, "saved_worlds": 5, "audio_limit": 20},
+  "FREE": {"worlds": 3, "nodes": 30, "reset_days": 7, "saved_worlds": 5, "audio_limit": 10},
   "EXPLORER": {"worlds": 20, "nodes": 500, "reset_days": 30, "saved_worlds": 50, "audio_limit": 60},
   "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30, "saved_worlds": 100, "audio_limit": 200},
 }

@@ -185,7 +185,7 @@ def _handle_checkout_completed(event: stripe.Event) -> None:
 
 
 def _handle_invoice_paid(event: stripe.Event) -> None:
-  """Renewal payment succeeded – reset counters, extend period."""
+  """Renewal payment succeeded – restore paid tier (if downgraded), reset counters, extend period."""
   invoice = event["data"]["object"]
   subscription_id = invoice.get("subscription")
   if not subscription_id:
@@ -200,6 +200,8 @@ def _handle_invoice_paid(event: stripe.Event) -> None:
 
   tier = _resolve_tier_from_subscription(sub) or "EXPLORER"
 
+  update_tier(user_id, tier)
+  update_user_tier(user_id, tier)
   reset_period(user_id)
   clear_pending_cancellation(user_id)
 
@@ -207,7 +209,7 @@ def _handle_invoice_paid(event: stripe.Event) -> None:
   if email:
     send_subscription_renewed(email, name, tier)
 
-  logger.info(f"Invoice paid (renewal): user={user_id}")
+  logger.info(f"Invoice paid (renewal): user={user_id} tier={tier}")
 
 
 def _handle_subscription_updated(event: stripe.Event) -> None:
@@ -338,7 +340,12 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
 
 
 def _handle_invoice_payment_failed(event: stripe.Event) -> None:
-  """Payment attempt failed – mark subscription as past_due for frontend visibility."""
+  """Payment attempt failed -- immediately downgrade to FREE tier limits.
+
+  The user retains their subscription_status as 'past_due' so the frontend
+  can display a payment update prompt. If Stripe's retry succeeds later,
+  the invoice.payment_succeeded handler will restore the paid tier.
+  """
   invoice = event["data"]["object"]
   subscription_id = invoice.get("subscription")
   if not subscription_id:
@@ -351,13 +358,18 @@ def _handle_invoice_payment_failed(event: stripe.Event) -> None:
     logger.warning(f"invoice.payment_failed: no user_id in subscription {subscription_id} metadata")
     return
 
+  update_tier(user_id, "FREE")
+  update_user_tier(user_id, "FREE")
+
+  # update_tier resets subscription_status to "active", so we must
+  # call update_subscription_status AFTER to ensure "past_due" sticks.
   update_subscription_status(user_id, "past_due")
 
   email, name = get_user_contact_info(user_id)
   if email:
     send_payment_failed(email, name)
 
-  logger.warning(f"Invoice payment failed: user={user_id} sub={subscription_id}")
+  logger.warning(f"Invoice payment failed: user={user_id} sub={subscription_id} -- downgraded to FREE")
 
 
 def _handle_subscription_deleted(event: stripe.Event) -> None:

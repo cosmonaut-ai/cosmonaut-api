@@ -14,6 +14,7 @@ import uuid
 from typing import Any, Callable
 
 from aws_lambda_powertools import Logger
+from pynamodb.exceptions import UpdateError
 from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
@@ -35,9 +36,17 @@ from app.models.dtos.world_meta import (
   WorldVisibility,
 )
 from app.models.entities.story_node import StoryNode
+from app.models.entities.usage import UserUsage
 from app.models.entities.world_meta import Character, Location, WorldMeta
+from app.services.llm.sanitize import sanitize_user_input
 from app.services.sqs import send_world_generation_message
-from app.services.usage import check_and_increment, check_storage_quota, release_quota
+from app.services.usage import (
+  StorageQuotaExceededError,
+  check_and_increment,
+  check_storage_quota,
+  get_or_create_usage,
+  release_quota,
+)
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
@@ -122,6 +131,42 @@ def get_world(world_id: str) -> WorldMeta:
   return get_world_entity(world_id)
 
 
+def _increment_world_count(user_id: str) -> None:
+  """Atomically increment the saved_world_count with a limit check.
+
+  Uses a DynamoDB conditional update to prevent the race condition where
+  two concurrent requests both pass the quota check.
+
+  Raises ``StorageQuotaExceededError`` when the user is at capacity.
+  """
+  from app.core.config import get_tier_limits
+
+  usage = get_or_create_usage(user_id)
+  tier = str(usage.tier) if usage.tier else "FREE"
+  saved_worlds_limit: int = get_tier_limits(tier)["saved_worlds"]
+
+  try:
+    usage.update(
+      actions=[UserUsage.saved_world_count.set((UserUsage.saved_world_count | 0) + 1)],
+      condition=(UserUsage.saved_world_count < saved_worlds_limit) | UserUsage.saved_world_count.does_not_exist(),
+    )
+  except UpdateError:
+    count = int(usage.saved_world_count) if usage.saved_world_count else 0
+    raise StorageQuotaExceededError("saved_worlds", saved_worlds_limit, count)
+
+
+def _decrement_world_count(user_id: str) -> None:
+  """Best-effort decrement of the saved world counter after deletion or failed creation."""
+  try:
+    usage = get_or_create_usage(user_id)
+    usage.update(
+      actions=[UserUsage.saved_world_count.set((UserUsage.saved_world_count | 0) - 1)],
+      condition=(UserUsage.saved_world_count > 0),
+    )
+  except Exception:
+    logger.warning(f"Failed to decrement world count for user {user_id}")
+
+
 def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
   """Create a new world metadata record.
 
@@ -130,24 +175,32 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
   Raises ``QuotaExceededError`` if the user has reached their periodic world-creation limit.
   """
 
-  # 1. Check storage quota (total saved worlds) — checked first so a periodic
-  #    slot isn't consumed when the user is already at storage capacity.
+  # 1. Optimistic pre-check for fast rejection (non-atomic).
   check_storage_quota(user_id)
 
-  # 2. Atomically reserve a periodic slot (worlds created this billing period).
+  # 2. Atomically increment saved_world_count with a condition check.
+  #    This is the actual enforcement that prevents the race condition.
+  _increment_world_count(user_id)
+
+  # 3. Atomically reserve a periodic slot (worlds created this billing period).
   #    Released below if the actual creation fails.
-  check_and_increment(user_id, "worlds")
+  try:
+    check_and_increment(user_id, "worlds")
+  except Exception:
+    _decrement_world_count(user_id)
+    raise
 
   try:
     world_id = str(uuid.uuid4())
 
     max_nodes = WORLD_LENGTH_MAX_NODES[create_request.world_length.value]
+    sanitized_prompt = sanitize_user_input(create_request.world_prompt)
 
     meta_dto = WorldMetaDTO(
       id=world_id,
       author_id=user_id,
       visibility=create_request.visibility,
-      world_prompt=create_request.world_prompt,
+      world_prompt=sanitized_prompt,
       generation_status=GenerationStatus.INITIALIZED,
       story_max_nodes=max_nodes,
       world_length=create_request.world_length.value,
@@ -159,6 +212,7 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
     meta.save()
     send_world_generation_message(world_id)
   except Exception:
+    _decrement_world_count(user_id)
     release_quota(user_id, "worlds")
     raise
 
@@ -211,7 +265,9 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
 
 
 def delete_world(world_id: str) -> None:
-  """Delete a world and any associated state (implementation pending)."""
+  """Delete a world and any associated state."""
+  world = get_world_entity(world_id)
+  author_id = str(world.author_id) if world.author_id else None
 
   pk, _sk = _world_keys(world_id)
   items = WorldMeta.query(pk)
@@ -219,8 +275,13 @@ def delete_world(world_id: str) -> None:
     for item in items:
       batch.delete(item)
 
-  # Delete all records from Pinecone
-  pinecone.delete_records(filter={"world_id": world_id})
+  try:
+    pinecone.delete_records(filter={"world_id": world_id})
+  except Exception:
+    logger.exception("Failed to delete Pinecone records for world %s (non-fatal)", world_id)
+
+  if author_id:
+    _decrement_world_count(author_id)
 
 
 async def generate_lore(world: WorldMeta) -> WorldMeta:
