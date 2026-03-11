@@ -55,7 +55,10 @@ async def get_world(
 ) -> WorldMetaDTO:
   """Retrieve a single world by its identifier."""
   world = require_world_read(world_id, user)
-  return world.to_dto()
+  dto = world.to_dto()
+  if world.author_id != user.id:
+    dto.shared_with = None
+  return dto
 
 
 @router.post(

@@ -49,3 +49,29 @@ class UserUsage(BaseCosmonautModel):
   @classmethod
   def sk(cls) -> str:
     return "USAGE"
+
+
+class UsageTombstone(BaseCosmonautModel):
+  """Tombstone preserving usage counters after account deletion.
+
+  Keyed by SHA-256 of the user's email. Used during re-registration to
+  carry forward unexpired quota usage, preventing free-tier abuse.
+  TTL is 1 year from deletion -- long enough to preserve the lifetime
+  audio narration cap across re-registration cycles.
+  """
+
+  email_hash: UnicodeAttribute = UnicodeAttribute()
+  worlds_created: NumberAttribute = NumberAttribute(default=0)
+  nodes_used: NumberAttribute = NumberAttribute(default=0)
+  audio_narrations_used: NumberAttribute = NumberAttribute(default=0)
+  period_end: UTCDateTimeAttribute = UTCDateTimeAttribute(null=True)
+  deleted_at: UTCDateTimeAttribute = UTCDateTimeAttribute()
+  expiration: NumberAttribute = NumberAttribute()
+
+  @classmethod
+  def pk(cls, email_hash: str) -> str:
+    return f"TOMBSTONE#{email_hash}"
+
+  @classmethod
+  def sk(cls) -> str:
+    return "USAGE"

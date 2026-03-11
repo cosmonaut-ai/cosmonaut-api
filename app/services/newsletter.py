@@ -12,6 +12,7 @@ from aws_lambda_powertools import Logger
 
 from app.core.config import settings
 from app.services.secret_manager import get_secret_value
+from app.utils.pii import redact_email
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
@@ -32,7 +33,7 @@ def subscribe(email: str) -> bool:
   """Subscribe an email to the Buttondown newsletter. Returns True on success."""
   api_key = _get_api_key()
   if not api_key:
-    logger.warning("Buttondown API key not configured; skipping subscribe for %s", email)
+    logger.warning("Buttondown API key not configured; skipping subscribe for %s", redact_email(email))
     return False
 
   try:
@@ -47,12 +48,12 @@ def subscribe(email: str) -> bool:
       timeout=10,
     )
     if resp.status_code in (200, 201):
-      logger.info("Subscribed %s to newsletter", email)
+      logger.info("Subscribed %s to newsletter", redact_email(email))
       return True
     logger.warning("Buttondown subscribe returned %s: %s", resp.status_code, resp.text)
     return False
   except Exception:
-    logger.exception("Failed to subscribe %s to newsletter", email)
+    logger.exception("Failed to subscribe %s to newsletter", redact_email(email))
     return False
 
 
@@ -60,7 +61,7 @@ def unsubscribe(email: str) -> bool:
   """Unsubscribe an email from the Buttondown newsletter. Returns True on success."""
   api_key = _get_api_key()
   if not api_key:
-    logger.warning("Buttondown API key not configured; skipping unsubscribe for %s", email)
+    logger.warning("Buttondown API key not configured; skipping unsubscribe for %s", redact_email(email))
     return False
 
   try:
@@ -70,13 +71,13 @@ def unsubscribe(email: str) -> bool:
       timeout=10,
     )
     if resp.status_code in (200, 204):
-      logger.info("Unsubscribed %s from newsletter", email)
+      logger.info("Unsubscribed %s from newsletter", redact_email(email))
       return True
     if resp.status_code == 404:
-      logger.info("User %s not found in newsletter (already unsubscribed)", email)
+      logger.info("User %s not found in newsletter (already unsubscribed)", redact_email(email))
       return True
     logger.warning("Buttondown unsubscribe returned %s: %s", resp.status_code, resp.text)
     return False
   except Exception:
-    logger.exception("Failed to unsubscribe %s from newsletter", email)
+    logger.exception("Failed to unsubscribe %s from newsletter", redact_email(email))
     return False

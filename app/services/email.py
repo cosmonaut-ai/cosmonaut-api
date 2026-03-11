@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 from aws_lambda_powertools import Logger
 
 from app.core.config import get_tier_limits, settings
+from app.utils.pii import redact_email
 
 if TYPE_CHECKING:
   from mypy_boto3_sesv2.client import SESV2Client
@@ -203,7 +204,7 @@ def _send_email(recipient_email: str, subject: str, html_body: str, text_body: s
   the calling operation.
   """
   if not settings.SES_FROM_EMAIL or not settings.SES_ENABLED:
-    logger.warning("SES not configured; skipping email to %s", recipient_email)
+    logger.warning("SES not configured; skipping email to %s", redact_email(recipient_email))
     return False
 
   if not recipient_email:
@@ -225,10 +226,10 @@ def _send_email(recipient_email: str, subject: str, html_body: str, text_body: s
         }
       },
     )
-    logger.info("Sent email '%s' to %s", subject, recipient_email)
+    logger.info("Sent email '%s' to %s", subject, redact_email(recipient_email))
     return True
   except Exception:
-    logger.exception("Failed to send email '%s' to %s", subject, recipient_email)
+    logger.exception("Failed to send email '%s' to %s", subject, redact_email(recipient_email))
     return False
 
 

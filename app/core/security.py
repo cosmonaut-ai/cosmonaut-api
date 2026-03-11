@@ -157,7 +157,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
 
     # Dev environment email allowlist — reject users not on the list.
     if settings.ENV == "dev" and user.email not in settings.DEV_ALLOWED_EMAILS:
-      logger.warning(f"Dev access denied for email: {user.email}")
+      logger.warning("Dev access denied for user %s", user.id)
       raise HTTPException(status_code=403, detail="Access denied: email not authorized for the dev environment")
 
     return user

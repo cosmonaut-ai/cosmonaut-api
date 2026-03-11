@@ -7,6 +7,7 @@ on first access (defaults to the FREE tier).
 
 from __future__ import annotations
 
+import hashlib
 from datetime import datetime, timedelta, timezone
 from typing import Literal
 
@@ -14,7 +15,7 @@ from aws_lambda_powertools import Logger
 from pynamodb.exceptions import UpdateError
 
 from app.core.config import get_tier_limits, settings
-from app.models.entities.usage import UserUsage
+from app.models.entities.usage import UsageTombstone, UserUsage
 
 logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
@@ -73,7 +74,30 @@ def _new_period_end(tier: str) -> datetime:
 # ---------------------------------------------------------------------------
 
 
-def get_or_create_usage(user_id: str) -> UserUsage:
+def _check_and_consume_tombstone(email: str) -> dict | None:
+  """Look up and delete a usage tombstone for the given email.
+
+  Returns the carried-forward counters if a valid tombstone exists,
+  or None if no tombstone is found.
+  """
+  email_hash = hashlib.sha256(email.lower().strip().encode()).hexdigest()
+  try:
+    tombstone = UsageTombstone.get(UsageTombstone.pk(email_hash), UsageTombstone.sk())
+  except UsageTombstone.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+    return None
+
+  result = {
+    "nodes_used": int(tombstone.nodes_used or 0),
+    "worlds_created": int(tombstone.worlds_created or 0),
+    "audio_narrations_used": int(tombstone.audio_narrations_used or 0),
+    "period_end": tombstone.period_end,
+  }
+
+  tombstone.delete()
+  return result
+
+
+def get_or_create_usage(user_id: str, email: str | None = None) -> UserUsage:
   """Return the ``UserUsage`` record, creating a FREE-tier default if absent.
 
   Also performs a *lazy period reset*: if ``period_end`` has passed the
@@ -82,18 +106,40 @@ def get_or_create_usage(user_id: str) -> UserUsage:
   try:
     usage = UserUsage.get(UserUsage.pk(user_id), UserUsage.sk())
   except UserUsage.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
-    usage = UserUsage(
-      PK=UserUsage.pk(user_id),
-      SK=UserUsage.sk(),
-      user_id=user_id,
-      tier="FREE",
-      nodes_used=0,
-      worlds_created=0,
-      audio_narrations_used=0,
-      period_end=_new_period_end("FREE"),
-    )
+    carried = _check_and_consume_tombstone(email) if email else None
+    now = datetime.now(timezone.utc)
+
+    if carried:
+      period_still_active = carried["period_end"] and carried["period_end"] > now
+
+      usage = UserUsage(
+        PK=UserUsage.pk(user_id),
+        SK=UserUsage.sk(),
+        user_id=user_id,
+        tier="FREE",
+        nodes_used=carried["nodes_used"] if period_still_active else 0,
+        worlds_created=carried["worlds_created"] if period_still_active else 0,
+        audio_narrations_used=carried["audio_narrations_used"],
+        period_end=carried["period_end"] if period_still_active else _new_period_end("FREE"),
+      )
+      logger.info(
+        "Created usage for user %s from tombstone (period_active=%s, audio_carried=%d)",
+        user_id, period_still_active, carried["audio_narrations_used"],
+      )
+    else:
+      usage = UserUsage(
+        PK=UserUsage.pk(user_id),
+        SK=UserUsage.sk(),
+        user_id=user_id,
+        tier="FREE",
+        nodes_used=0,
+        worlds_created=0,
+        audio_narrations_used=0,
+        period_end=_new_period_end("FREE"),
+      )
+      logger.info("Created default FREE usage record for user %s", user_id)
+
     usage.save()
-    logger.info(f"Created default FREE usage record for user {user_id}")
     return usage
 
   # Lazy period reset
@@ -114,7 +160,7 @@ def get_or_create_usage(user_id: str) -> UserUsage:
   return usage
 
 
-def check_storage_quota(user_id: str) -> None:
+def check_storage_quota(user_id: str, email: str | None = None) -> None:
   """Ensure the user has room for another saved world.
 
   Uses the ``saved_world_count`` counter on the UserUsage record for an
@@ -123,7 +169,7 @@ def check_storage_quota(user_id: str) -> None:
 
   Raises ``StorageQuotaExceededError`` when the user is at capacity.
   """
-  usage = get_or_create_usage(user_id)
+  usage = get_or_create_usage(user_id, email=email)
   tier = str(usage.tier) if usage.tier else "FREE"
   limits = get_tier_limits(tier)
   saved_worlds_limit: int = limits["saved_worlds"]
@@ -133,7 +179,7 @@ def check_storage_quota(user_id: str) -> None:
     raise StorageQuotaExceededError("saved_worlds", saved_worlds_limit, count)
 
 
-def check_and_increment(user_id: str, metric: Literal["worlds", "nodes", "audio"]) -> None:
+def check_and_increment(user_id: str, metric: Literal["worlds", "nodes", "audio"], email: str | None = None) -> None:
   """Atomically increment *metric* if the user is within their tier's quota.
 
   Raises ``QuotaExceededError`` when the limit has been reached.
@@ -142,7 +188,7 @@ def check_and_increment(user_id: str, metric: Literal["worlds", "nodes", "audio"
   perform a DynamoDB *conditional update* so the increment only succeeds when
   the current counter value is below the tier limit.
   """
-  usage = get_or_create_usage(user_id)
+  usage = get_or_create_usage(user_id, email=email)
   tier = str(usage.tier) if usage.tier else "FREE"
   limits = get_tier_limits(tier)
   limit_key = _METRIC_LIMIT_KEY[metric]
