@@ -25,9 +25,7 @@ class GSI2Model(GlobalSecondaryIndex):  # type: ignore[type-arg]
   GSI2SK: UnicodeAttribute = UnicodeAttribute(range_key=True)
 
   class Meta:  # type: ignore[misc]
-    projection = IncludeProjection(
-      ["node_title", "node_choices", "node_parent_id", "node_generation_status", "node_id"]
-    )
+    projection = IncludeProjection(["node_title", "node_choices", "node_parent_id", "generation_status", "node_id"])
 
 
 class ChoiceMap(MapAttribute[str, UnicodeAttribute]):
