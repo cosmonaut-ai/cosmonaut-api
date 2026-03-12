@@ -11,7 +11,7 @@ class VectorMetadata(DTOModel):
   """Optional metadata stored alongside a vector."""
 
   # Allow arbitrary key/value metadata; validated as a mapping.
-  model_config = {"arbitrary_types_allowed": True}
+  model_config = {"arbitrary_types_allowed": True}  # noqa: RUF012
 
 
 class VectorUpsertItem(DTOModel):

@@ -1,18 +1,16 @@
 from __future__ import annotations
 
 import json
-import logging
-from typing import TYPE_CHECKING, Any, Dict
+from typing import TYPE_CHECKING, Any
 
 from botocore.exceptions import ClientError
 
+from app.core.config import settings
+from app.core.observability import logger
+
 if TYPE_CHECKING:
   from mypy_boto3_sqs.client import SQSClient
-
-from app.core.config import settings
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload
-
-logger = logging.getLogger(__name__)
 
 
 class SQSSendError(Exception):
@@ -36,7 +34,7 @@ def get_sqs_client() -> SQSClient:
   return sqs
 
 
-def send_message(queue_url: str, message: Dict[str, Any], delay_seconds: int = 0) -> str:
+def send_message(queue_url: str, message: dict[str, Any], delay_seconds: int = 0) -> str:
   """Send a JSON-serializable dict to SQS.
 
   Returns:

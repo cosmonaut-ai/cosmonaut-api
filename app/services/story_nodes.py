@@ -11,16 +11,19 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import uuid
-from typing import TYPE_CHECKING, Any, AsyncContextManager, AsyncGenerator
+from collections.abc import AsyncGenerator
+from contextlib import AbstractAsyncContextManager
+from typing import TYPE_CHECKING, Any
 
-from aws_lambda_powertools import Logger
 from pynamodb.exceptions import UpdateError
 from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
-from app.core.config import settings
+from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
+from app.core.observability import MetricUnit, logger, metrics, tracer
 from app.models.dtos.story_node import ChoiceDTO, GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
 from app.services.llm.sanitize import sanitize_llm_output, sanitize_user_input
@@ -29,18 +32,17 @@ from app.services.sqs import SQSSendError, send_node_analysis_message
 from app.services.usage import check_and_increment, release_quota
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
 from app.utils import LLMOutputTruncatedError, extract_xml_block, extract_xml_json
+from app.utils.pii import truncate_for_log
 
 if TYPE_CHECKING:
   from app.models.entities.world_meta import WorldMeta
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 
 class NodeServiceError(Exception):
   """Base exception for node service failures."""
 
 
-class NodeProcessingError(NodeServiceError):
+class NodeProcessingError(NodeServiceError, ConflictError):
   """Raised when a node is not in the COMPLETED state."""
 
   def __init__(self, node_id: str):
@@ -48,7 +50,7 @@ class NodeProcessingError(NodeServiceError):
     self.node_id = node_id
 
 
-class NodeNotFoundError(NodeServiceError):
+class NodeNotFoundError(NodeServiceError, NotFoundError):
   """Raised when a node cannot be found."""
 
   def __init__(self, world_id: str, node_id: str):
@@ -57,7 +59,7 @@ class NodeNotFoundError(NodeServiceError):
     self.node_id = node_id
 
 
-class InvalidChoiceError(NodeServiceError):
+class InvalidChoiceError(NodeServiceError, BadRequestError):
   """Raised when a choice index is out of bounds."""
 
   def __init__(self, node_id: str, choice_index: int, max_index: int):
@@ -67,7 +69,7 @@ class InvalidChoiceError(NodeServiceError):
     self.max_index = max_index
 
 
-class InvalidGenerationStatusError(NodeServiceError):
+class InvalidGenerationStatusError(NodeServiceError, ConflictError):
   """Raised when trying to generate text for a node with invalid generation status."""
 
   def __init__(self, node_id: str, current_status: GenerationStatus, allowed_statuses: list[GenerationStatus]):
@@ -78,7 +80,7 @@ class InvalidGenerationStatusError(NodeServiceError):
     self.allowed_statuses = allowed_statuses
 
 
-class InvalidProcessingStatusError(NodeServiceError):
+class InvalidProcessingStatusError(NodeServiceError, BadRequestError):
   """Raised when trying to retry processing for a node that is not in FAILED status."""
 
   def __init__(self, node_id: str, current_status: StoryNodeProcessingStatus):
@@ -93,7 +95,7 @@ class InvalidProcessingStatusError(NodeServiceError):
 ABSOLUTE_MAX_DEPTH = 100
 
 
-class DepthLimitReachedError(NodeServiceError):
+class DepthLimitReachedError(NodeServiceError, ForbiddenError):
   """Raised when a node has reached the absolute maximum story depth."""
 
   def __init__(self, world_id: str, node_id: str, depth: int):
@@ -169,6 +171,7 @@ def _node_keys(world_id: str, node_id: str) -> tuple[str, str]:
   return (StoryNode.pk(world_id), StoryNode.sk(node_id))
 
 
+@tracer.capture_method
 def get_node_entity(world_id: str, node_id: str) -> StoryNode:
   """Internal: fetch node entity for service composition."""
   pk, sk = _node_keys(world_id, node_id)
@@ -178,6 +181,7 @@ def get_node_entity(world_id: str, node_id: str) -> StoryNode:
     raise NodeNotFoundError(world_id, node_id) from e
 
 
+@tracer.capture_method
 def list_nodes(
   world_id: str,
   limit: int = 100,
@@ -201,10 +205,8 @@ def list_nodes(
 
   last_evaluated_key = None
   if cursor:
-    try:
+    with contextlib.suppress(Exception):
       last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
-    except Exception:
-      pass
 
   results: ResultIterator[StoryNode] = StoryNode.GSI2.query(  # type: ignore[reportUnknownReturnType]
     hash_key=pk,
@@ -264,7 +266,7 @@ async def _validate_and_prepare_choice(
     )
     node.choices.append(new_choice)
     node.save()
-    logger.info(f"Added custom choice at index {choice_index}: {custom_choice}")
+    logger.info("Added custom choice at index %s: %s", choice_index, truncate_for_log(custom_choice))
   else:
     if choice_index is None:
       raise InvalidChoiceError(node_id, -1, len(node.choices) - 1 if node.choices else -1)
@@ -302,7 +304,7 @@ def _build_previous_text(
 
 def _build_next_node_deps(
   node: StoryNode,
-  world_meta: "WorldMeta",
+  world_meta: WorldMeta,
   selected_choice: ChoiceMap,
 ) -> llm.NextNodeDeps:
   """Build the dependencies for next node generation."""
@@ -334,8 +336,8 @@ def _build_next_node_deps(
 
 
 async def _stream_node_content(
-  run_stream_ctx: AsyncContextManager[Any],
-) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None], None]:
+  run_stream_ctx: AbstractAsyncContextManager[Any],
+) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None]]:
   """Shared streaming loop: buffer response, extract <story> content, yield metadata at end.
 
   Yields:
@@ -374,16 +376,16 @@ async def _stream_node_content(
       )
       yield "", full_response_buffer, fallback_metadata
     else:
-      raise ValueError("LLM output truncated before any story content was generated")
+      raise ValueError("LLM output truncated before any story content was generated") from None
   except ValueError as e:
-    logger.error(f"LLM failed to output expected XML tags. Full response: {full_response_buffer}")
+    logger.error("LLM failed to output expected XML tags. Full response: %s", truncate_for_log(full_response_buffer))
     raise ValueError("LLM failed to output metadata tags") from e
 
 
 async def _stream_next_node(
   deps: llm.NextNodeDeps,
   world_id: str,
-) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None], None]:
+) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None]]:
   """Stream next node content via LLM.
 
   The agent's system prompt contains only static content (instructions + world
@@ -401,7 +403,7 @@ async def _stream_next_node(
 
 async def _stream_root_node(
   deps: llm.RootNodeDeps,
-) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None], None]:
+) -> AsyncGenerator[tuple[str, str, llm.LLMNodeMetadata | None]]:
   """Stream root node content via LLM.
 
   Similar to _stream_next_node but uses the root node agent with different prompts.
@@ -421,6 +423,7 @@ async def _stream_root_node(
 # =============================================================================
 
 
+@tracer.capture_method
 async def choose(
   world_id: str,
   node_id: str,
@@ -443,7 +446,12 @@ async def choose(
   Returns:
     The initialized or existing story node
   """
-  logger.info(f"Choosing node {node_id} with choice_index={choice_index}, custom_choice={custom_choice}")
+  logger.info(
+    "Choosing node %s with choice_index=%s, custom_choice=%s",
+    node_id,
+    choice_index,
+    truncate_for_log(custom_choice) if custom_choice else None,
+  )
 
   # Validate and prepare choice
   node = get_node_entity(world_id, node_id)
@@ -503,11 +511,12 @@ async def choose(
 # =============================================================================
 
 
+@tracer.capture_method
 async def generate_text(
   world_id: str,
   node_id: str,
   user_id: str | None = None,
-) -> AsyncGenerator[str, None]:
+) -> AsyncGenerator[str]:
   """Generate story text for an initialized or failed node.
 
   For root nodes (node_id == "0"), uses the root node agent.
@@ -553,7 +562,7 @@ async def generate_text(
     if current_status == GenerationStatus.COMPLETED and node.text:
       yield node.text
       return
-    raise InvalidGenerationStatusError(node_id, current_status, allowed_statuses)
+    raise InvalidGenerationStatusError(node_id, current_status, allowed_statuses) from None
 
   # Enforce node quota after winning the status transition so that losing
   # concurrent requests (or retries after a network error) do not waste quota.
@@ -627,6 +636,7 @@ async def generate_text(
     ]
     node.generation_status = GenerationStatus.COMPLETED.value
     node.save()
+    metrics.add_metric(name="StoryNodeGenerated", unit=MetricUnit.Count, value=1)
 
     # Enqueue async fact extraction.  This is non-critical: a failure leaves
     # the node in PENDING processing_status which can be retried via the
@@ -651,6 +661,7 @@ async def generate_text(
 # =============================================================================
 
 
+@tracer.capture_method
 async def process_node(node: StoryNode) -> None:
   """Process a node: extract facts and upsert to Pinecone."""
   world_id = node.world_id
@@ -776,7 +787,7 @@ def retry_processing(world_id: str, node_id: str) -> StoryNode:
   except UpdateError:
     # Re-read to get the actual status for the error message
     node = get_node_entity(world_id, node_id)
-    raise InvalidProcessingStatusError(node_id, StoryNodeProcessingStatus(node.processing_status))
+    raise InvalidProcessingStatusError(node_id, StoryNodeProcessingStatus(node.processing_status)) from None
 
   send_node_analysis_message(world_id, node_id)
   logger.info(f"Re-enqueued failed node {node_id} in world {world_id} for processing")

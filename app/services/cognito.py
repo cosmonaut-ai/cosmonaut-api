@@ -4,14 +4,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from aws_lambda_powertools import Logger
-
 from app.core.config import settings
+from app.core.observability import logger, tracer
 
 if TYPE_CHECKING:
   from mypy_boto3_cognito_idp.client import CognitoIdentityProviderClient
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 _cognito_client: CognitoIdentityProviderClient | None = None
 
@@ -46,6 +43,7 @@ def _resolve_cognito_username(client: CognitoIdentityProviderClient, user_id: st
   return None
 
 
+@tracer.capture_method
 def get_user_contact_info(user_id: str) -> tuple[str, str]:
   """Return ``(email, name)`` for a Cognito user identified by ``sub``.
 
@@ -78,6 +76,7 @@ def get_user_contact_info(user_id: str) -> tuple[str, str]:
     return "", ""
 
 
+@tracer.capture_method
 def update_user_tier(user_id: str, tier: str) -> None:
   """Update the ``custom:tier`` attribute on a Cognito user.
 

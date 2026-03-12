@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-from typing import Any, ClassVar, Dict, List, Optional
+from datetime import UTC, datetime
+from typing import Any, ClassVar
 
 from pynamodb.attributes import (
   UnicodeAttribute,
@@ -52,19 +52,19 @@ class BaseCosmonautModel(Model):
   PK: ClassVar[UnicodeAttribute] = UnicodeAttribute(hash_key=True)
   SK: ClassVar[UnicodeAttribute] = UnicodeAttribute(range_key=True)
 
-  created_at: UTCDateTimeAttribute = UTCDateTimeAttribute(default_for_new=lambda: datetime.now(timezone.utc), null=True)
-  updated_at: UTCDateTimeAttribute = UTCDateTimeAttribute(default_for_new=lambda: datetime.now(timezone.utc), null=True)
+  created_at: UTCDateTimeAttribute = UTCDateTimeAttribute(default_for_new=lambda: datetime.now(UTC), null=True)
+  updated_at: UTCDateTimeAttribute = UTCDateTimeAttribute(default_for_new=lambda: datetime.now(UTC), null=True)
 
   # -- Timestamp management ---------------------------------------------------
 
   def save(  # type: ignore[override]
     self,
-    condition: Optional[Condition] = None,
+    condition: Condition | None = None,
     *,
     add_version_condition: bool = True,
-  ) -> Dict[str, Any]:
+  ) -> dict[str, Any]:
     """Persist the item, automatically maintaining timestamps."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     if not self.created_at:
       self.created_at = now
     self.updated_at = now
@@ -73,14 +73,14 @@ class BaseCosmonautModel(Model):
 
   def update(  # type: ignore[override]
     self,
-    actions: List[Action],
-    condition: Optional[Condition] = None,
+    actions: list[Action],
+    condition: Condition | None = None,
     *,
     add_version_condition: bool = True,
   ) -> Any:
     """Apply an update expression, automatically refreshing ``updated_at``."""
     actions = list(actions)
-    actions.append(BaseCosmonautModel.updated_at.set(datetime.now(timezone.utc)))
+    actions.append(BaseCosmonautModel.updated_at.set(datetime.now(UTC)))
     return super().update(actions=actions, condition=condition, add_version_condition=add_version_condition)
 
   def _on_save(self) -> None:

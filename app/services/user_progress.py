@@ -6,12 +6,8 @@ entity, which records the most recently visited node for each user-world pair.
 
 from __future__ import annotations
 
-from aws_lambda_powertools import Logger
-
-from app.core.config import settings
+from app.core.observability import logger
 from app.models.entities.user_progress import UserProgress
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 
 def update_progress(user_id: str, world_id: str, node_id: str) -> None:

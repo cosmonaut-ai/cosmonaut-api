@@ -1,9 +1,8 @@
-from functools import lru_cache
-from typing import Any, Dict, List, cast
+from typing import Any, cast
 
 import httpx
 import jwt
-from aws_lambda_powertools import Logger
+from cachetools import TTLCache
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from fastapi import HTTPException, Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -11,8 +10,7 @@ from jwt.algorithms import RSAAlgorithm
 from pydantic import BaseModel
 
 from app.core.config import settings
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
+from app.core.observability import logger
 
 
 # --- Data Models ---
@@ -22,7 +20,7 @@ class User(BaseModel):
   id: str
   email: str
   username: str
-  groups: List[str] = []
+  groups: list[str] = []
   tier: str = "FREE"
   stripe_customer_id: str | None = None
 
@@ -32,11 +30,20 @@ class User(BaseModel):
 
 
 # --- JWKS Management ---
-@lru_cache()
-def get_jwks() -> Dict[str, Any]:
+_jwks_cache: TTLCache[str, dict[str, Any]] = TTLCache(maxsize=1, ttl=3600)
+_JWKS_CACHE_KEY = "jwks"
+
+
+def get_jwks() -> dict[str, Any]:
+  """Fetch the Cognito JWKS, cached for 1 hour (TTL-based).
+
+  Unlike ``@lru_cache``, the TTL cache ensures that key rotations are
+  picked up automatically without requiring a Lambda cold start.
   """
-  Fetches and caches the JSON Web Key Set from Cognito.
-  """
+  cached = _jwks_cache.get(_JWKS_CACHE_KEY)
+  if cached is not None:
+    return cached
+
   if not settings.COGNITO_USER_POOL_ID:
     return {"keys": []}
 
@@ -45,10 +52,12 @@ def get_jwks() -> Dict[str, Any]:
     with httpx.Client(timeout=5.0) as client:
       response = client.get(url)
       response.raise_for_status()
-      return response.json()
+      data: dict[str, Any] = response.json()
+      _jwks_cache[_JWKS_CACHE_KEY] = data
+      return data
   except Exception as e:
     logger.error(f"Failed to fetch JWKS: {e}")
-    raise HTTPException(status_code=500, detail="Authentication service unavailable")
+    raise HTTPException(status_code=500, detail="Authentication service unavailable") from e
 
 
 # --- Validation Logic ---
@@ -79,14 +88,14 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
     unverified_header = jwt.get_unverified_header(token_str)
     jwks = get_jwks()
 
-    rsa_key: Dict[str, Any] = {}
+    rsa_key: dict[str, Any] = {}
 
     # Get keys and cast them so strict mode knows they are dicts
     raw_keys = jwks.get("keys", [])
-    key_list: List[Dict[str, Any]] = []
+    key_list: list[dict[str, Any]] = []
 
     if isinstance(raw_keys, list):
-      key_list = cast(List[Dict[str, Any]], raw_keys)
+      key_list = cast(list[dict[str, Any]], raw_keys)
 
     for key in key_list:
       if key.get("kid") == unverified_header.get("kid"):
@@ -141,10 +150,10 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
 
     # C. Parse Groups
     raw_groups = payload.get("cognito:groups", [])
-    groups: List[str] = []
+    groups: list[str] = []
 
     if isinstance(raw_groups, list):
-      groups = [str(g) for g in cast(List[Any], raw_groups)]
+      groups = [str(g) for g in cast(list[Any], raw_groups)]
 
     user = User(
       id=payload["sub"],
@@ -160,14 +169,15 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       logger.warning("Dev access denied for user %s", user.id)
       raise HTTPException(status_code=403, detail="Access denied: email not authorized for the dev environment")
 
+    logger.append_keys(user_id=user.id)
     return user
 
   except jwt.ExpiredSignatureError:
     logger.warning("Token has expired")
-    raise HTTPException(status_code=401, detail="Token has expired")
+    raise HTTPException(status_code=401, detail="Token has expired") from None
   except jwt.InvalidTokenError as e:
     logger.warning(f"Invalid token: {e}")
-    raise HTTPException(status_code=401, detail=f"Invalid token: {str(e)}")
-  except Exception:
+    raise HTTPException(status_code=401, detail=f"Invalid token: {e!s}") from e
+  except Exception as e:
     logger.exception("Unexpected Auth Error")
-    raise HTTPException(status_code=500, detail="Authentication error")
+    raise HTTPException(status_code=500, detail="Authentication error") from e

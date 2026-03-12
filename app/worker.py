@@ -1,12 +1,12 @@
 import asyncio
-from typing import Any, Callable, Dict, Iterable, List, cast
+from collections.abc import Callable, Iterable
+from typing import Any, cast
 
-from aws_lambda_powertools import Logger, Tracer
 from aws_lambda_powertools.utilities.data_classes import SQSEvent, event_source  # type: ignore[import-untyped]
 from pydantic import TypeAdapter
 from pynamodb.exceptions import UpdateError
 
-from app.core.config import settings
+from app.core.observability import logger, tracer
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
 from app.models.dtos.story_node import StoryNodeProcessingStatus
 from app.models.dtos.world_meta import GenerationStatus
@@ -18,13 +18,10 @@ from app.services.sqs import SQSSendError, send_world_image_generation_message
 # Concurrency cap for processing messages in parallel within a Lambda invocation.
 BATCH_CONCURRENCY = 5
 
-# Initialize Powertools
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
-tracer = Tracer(service=settings.POWERTOOLS_SERVICE_NAME)
 sqs_payload_adapter: TypeAdapter[SQSPayload] = TypeAdapter(SQSPayload)
 
 # Provide a typed wrapper for the event source decorator to satisfy type checkers.
-HandlerReturn = Dict[str, Any]
+HandlerReturn = dict[str, Any]
 HandlerFunc = Callable[[SQSEvent, Any], HandlerReturn]
 EventDecorator = Callable[[HandlerFunc], HandlerFunc]
 _event_source: Callable[..., Any] = cast(Callable[..., Any], event_source)
@@ -45,7 +42,7 @@ def handler(event: SQSEvent, context: Any) -> HandlerReturn:
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
-  failed_message_ids: List[str] = loop.run_until_complete(_process_batch(event.records))
+  failed_message_ids: list[str] = loop.run_until_complete(_process_batch(event.records))
 
   # Return the AWS-standard partial batch failure response so that only failed
   # messages are retried.  The previous format ("failed_message_ids") was not
@@ -56,7 +53,7 @@ def handler(event: SQSEvent, context: Any) -> HandlerReturn:
   }
 
 
-async def _process_batch(records: Iterable[Any]) -> List[str]:
+async def _process_batch(records: Iterable[Any]) -> list[str]:
   """
   Process SQS records concurrently with a bounded semaphore to avoid resource saturation.
   Returns message_ids that failed (for partial batch failure).

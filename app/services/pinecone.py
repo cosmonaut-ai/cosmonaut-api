@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, ConfigDict
 
 from app.core.config import settings
+from app.core.observability import tracer
 from app.services.secret_manager import get_secret_value
 
 if TYPE_CHECKING:
@@ -65,6 +66,7 @@ def get_index() -> "Index":
   return index
 
 
+@tracer.capture_method
 def upsert_records(records: list[PineconeRecord]) -> "UpsertResponse":
   index = get_index()
   return index.upsert_records(
@@ -72,6 +74,7 @@ def upsert_records(records: list[PineconeRecord]) -> "UpsertResponse":
   )
 
 
+@tracer.capture_method
 def search_records(
   query: str,
   top_k: int = 10,

@@ -3,25 +3,24 @@ from typing import Literal
 from urllib.parse import urlparse
 
 import stripe
-from aws_lambda_powertools import Logger
 from botocore.exceptions import ClientError
 from fastapi import APIRouter, Body, Depends, HTTPException, Response
-from pydantic import BaseModel, field_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.core.cloudfront import create_signed_cookies
 from app.core.config import get_tier_limits, settings
+from app.core.observability import logger
 from app.core.security import User, get_current_user
 from app.models.entities.rate_limit import RateLimitRecord
 from app.services.account import delete_account
 from app.services.email import send_feedback_email
 from app.services.newsletter import subscribe, unsubscribe
 from app.services.secret_manager import get_secret_value
+from app.services.stripe_client import create_billing_portal_session, create_checkout_session
 from app.services.usage import get_or_create_usage
 from app.services.worlds import count_user_worlds
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 
 # ---------------------------------------------------------------------------
@@ -72,7 +71,7 @@ class UsageResponse(BaseModel):
 
 class FeedbackRequest(BaseModel):
   category: Literal["bug", "feature", "feedback", "other"]
-  message: str
+  message: str = Field(..., min_length=10, max_length=10000)
 
 
 class NewsletterRequest(BaseModel):
@@ -90,7 +89,7 @@ async def create_session(response: Response, current_user: User = Depends(get_cu
     private_key = get_secret_value(settings.CLOUDFRONT_PRIVATE_KEY_PARAM)
   except (ValueError, OSError, ClientError):
     logger.error("Could not retrieve signing key", exc_info=True)
-    raise HTTPException(status_code=500, detail="Could not retrieve signing key")
+    raise HTTPException(status_code=500, detail="Could not retrieve signing key") from None
 
   resource_url = f"https://*{settings.COOKIE_DOMAIN}/*"
   cookies = create_signed_cookies(resource_url, settings.CLOUDFRONT_KEY_PAIR_ID, private_key)
@@ -154,14 +153,11 @@ async def create_checkout(
   if not price_id:
     raise HTTPException(status_code=400, detail=f"No Stripe price configured for tier {payload.tier}")
 
-  stripe.api_key = get_secret_value(settings.STRIPE_API_KEY_PARAM)
-
   try:
-    session = stripe.checkout.Session.create(
-      mode="subscription",
-      line_items=[{"price": price_id, "quantity": 1}],
-      client_reference_id=current_user.id,
-      customer_email=current_user.email if current_user.email else "",
+    checkout_url = create_checkout_session(
+      price_id=price_id,
+      user_id=current_user.id,
+      customer_email=current_user.email or "",
       success_url=payload.success_url,
       cancel_url=payload.cancel_url,
     )
@@ -169,7 +165,7 @@ async def create_checkout(
     logger.error(f"Stripe checkout session creation failed: {e}")
     raise HTTPException(status_code=502, detail="Failed to create checkout session") from e
 
-  return CheckoutResponse(checkout_url=session.url or "")
+  return CheckoutResponse(checkout_url=checkout_url)
 
 
 @router.delete("/account", status_code=200, summary="Permanently delete user account")
@@ -183,11 +179,11 @@ async def delete_user_account(current_user: User = Depends(get_current_user)) ->
   - Delete the Cognito user identity
   """
   try:
-    delete_account(user_id=current_user.id, cognito_username=current_user.username, email=current_user.email)
+    await delete_account(user_id=current_user.id, cognito_username=current_user.username, email=current_user.email)
     return {"status": "deleted"}
   except ClientError:
     logger.exception("Account deletion failed for user %s", current_user.id)
-    raise HTTPException(status_code=500, detail="Account deletion failed. Please contact support.")
+    raise HTTPException(status_code=500, detail="Account deletion failed. Please contact support.") from None
 
 
 @router.post("/billing-portal", response_model=BillingPortalResponse, summary="Create a Stripe Billing Portal session")
@@ -201,22 +197,13 @@ async def create_billing_portal(
   if not usage.stripe_customer_id:
     raise HTTPException(status_code=400, detail="No active subscription found")
 
-  stripe.api_key = get_secret_value(settings.STRIPE_API_KEY_PARAM)
-
   try:
-    customer_id = str(usage.stripe_customer_id)
-    if settings.STRIPE_PORTAL_CONFIG_ID:
-      session = stripe.billing_portal.Session.create(
-        customer=customer_id,
-        configuration=settings.STRIPE_PORTAL_CONFIG_ID,
-      )
-    else:
-      session = stripe.billing_portal.Session.create(customer=customer_id)
+    portal_url = create_billing_portal_session(customer_id=str(usage.stripe_customer_id))
   except stripe.StripeError as e:
     logger.error(f"Stripe billing portal session creation failed: {e}")
     raise HTTPException(status_code=502, detail="Failed to create billing portal session") from e
 
-  return BillingPortalResponse(portal_url=session.url or "")
+  return BillingPortalResponse(portal_url=portal_url)
 
 
 # ---------------------------------------------------------------------------
@@ -287,8 +274,8 @@ async def update_newsletter(
   email = current_user.email
   if email:
     if payload.opted_in:
-      subscribe(email)
+      await subscribe(email)
     else:
-      unsubscribe(email)
+      await unsubscribe(email)
 
   return {"status": "subscribed" if payload.opted_in else "unsubscribed"}

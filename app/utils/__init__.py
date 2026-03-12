@@ -1,7 +1,7 @@
 """Shared utilities for services layer."""
 
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TypeVar
 
 from pydantic import BaseModel
@@ -43,7 +43,7 @@ class LLMOutputTruncatedError(ValueError):
   """Raised when LLM output appears to have been truncated by max_tokens."""
 
 
-def extract_xml_json(content: str, tag: str, model: type[T]) -> T:
+def extract_xml_json[T: BaseModel](content: str, tag: str, model: type[T]) -> T:
   """Extract JSON content from an XML block and parse it into a Pydantic model.
 
   Args:
@@ -130,8 +130,8 @@ def coerce_datetime(value: str | datetime | None) -> datetime:
   elif value:
     dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
   else:
-    dt = datetime.now(timezone.utc)
+    dt = datetime.now(UTC)
 
   if dt.tzinfo is None:
-    dt = dt.replace(tzinfo=timezone.utc)
+    dt = dt.replace(tzinfo=UTC)
   return dt

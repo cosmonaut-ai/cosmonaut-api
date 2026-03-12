@@ -8,23 +8,22 @@ on first access (defaults to the FREE tier).
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import Any, Literal
 
-from aws_lambda_powertools import Logger
 from pynamodb.exceptions import UpdateError
 
-from app.core.config import get_tier_limits, settings
+from app.core.config import get_tier_limits
+from app.core.errors import QuotaError, StorageQuotaError
+from app.core.observability import MetricUnit, logger, metrics, tracer
 from app.models.entities.usage import UsageTombstone, UserUsage
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 # ---------------------------------------------------------------------------
 # Exceptions
 # ---------------------------------------------------------------------------
 
 
-class QuotaExceededError(Exception):
+class QuotaExceededError(QuotaError):
   """Raised when a user has reached their tier's usage limit."""
 
   def __init__(self, metric: str, limit: int):
@@ -33,7 +32,7 @@ class QuotaExceededError(Exception):
     self.limit = limit
 
 
-class StorageQuotaExceededError(Exception):
+class StorageQuotaExceededError(StorageQuotaError):
   """Raised when a user has reached their tier's storage limit for saved worlds."""
 
   def __init__(self, metric: str, limit: int, current: int):
@@ -66,7 +65,7 @@ _METRIC_LIMIT_KEY = {
 def _new_period_end(tier: str) -> datetime:
   """Calculate the next period end timestamp for *tier*."""
   reset_days = get_tier_limits(tier)["reset_days"]
-  return datetime.now(timezone.utc) + timedelta(days=reset_days)
+  return datetime.now(UTC) + timedelta(days=reset_days)
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +96,7 @@ def _check_and_consume_tombstone(email: str) -> dict[str, Any] | None:
   return result
 
 
+@tracer.capture_method
 def get_or_create_usage(user_id: str, email: str | None = None) -> UserUsage:
   """Return the ``UserUsage`` record, creating a FREE-tier default if absent.
 
@@ -107,7 +107,7 @@ def get_or_create_usage(user_id: str, email: str | None = None) -> UserUsage:
     usage = UserUsage.get(UserUsage.pk(user_id), UserUsage.sk())
   except UserUsage.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
     carried = _check_and_consume_tombstone(email) if email else None
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
 
     if carried:
       period_still_active = carried["period_end"] and carried["period_end"] > now
@@ -145,7 +145,7 @@ def get_or_create_usage(user_id: str, email: str | None = None) -> UserUsage:
     return usage
 
   # Lazy period reset
-  now = datetime.now(timezone.utc)
+  now = datetime.now(UTC)
   if usage.period_end and now > usage.period_end:
     tier = str(usage.tier) if usage.tier else "FREE"
     usage.nodes_used = 0
@@ -181,6 +181,7 @@ def check_storage_quota(user_id: str, email: str | None = None) -> None:
     raise StorageQuotaExceededError("saved_worlds", saved_worlds_limit, count)
 
 
+@tracer.capture_method
 def check_and_increment(user_id: str, metric: Literal["worlds", "nodes", "audio"], email: str | None = None) -> None:
   """Atomically increment *metric* if the user is within their tier's quota.
 
@@ -205,6 +206,8 @@ def check_and_increment(user_id: str, metric: Literal["worlds", "nodes", "audio"
       condition=((attr < limit_value) | attr.does_not_exist()),
     )
   except UpdateError as exc:
+    metrics.add_metric(name="QuotaExceeded", unit=MetricUnit.Count, value=1)
+    metrics.add_dimension(name="metric_type", value=metric)
     logger.error(f"Quota exceeded for {metric} for user {user_id} with limit {limit_value}", exc_info=True)
     raise QuotaExceededError(metric, limit_value) from exc
 
@@ -232,7 +235,7 @@ def update_subscription_status(user_id: str, subscription_status: str) -> UserUs
   """Persist the raw Stripe subscription status for frontend visibility."""
   usage = get_or_create_usage(user_id)
   usage.subscription_status = subscription_status
-  usage.updated_at = datetime.now(timezone.utc)
+  usage.updated_at = datetime.now(UTC)
   usage.save()
   logger.info(f"Updated subscription_status for user {user_id} to {subscription_status}")
   return usage
@@ -249,7 +252,7 @@ def update_tier(
   Clears any pending cancellation state.
   """
   usage = get_or_create_usage(user_id)
-  now = datetime.now(timezone.utc)
+  now = datetime.now(UTC)
 
   usage.tier = tier
   if stripe_customer_id is not None:
@@ -276,7 +279,7 @@ def set_pending_cancellation(user_id: str, cancellation_date: datetime) -> UserU
   usage.pending_cancellation = True
   usage.cancellation_date = cancellation_date
   usage.subscription_status = "active"
-  usage.updated_at = datetime.now(timezone.utc)
+  usage.updated_at = datetime.now(UTC)
   usage.save()
   logger.info(f"Set pending cancellation for user {user_id} (ends {cancellation_date.isoformat()})")
   return usage
@@ -289,7 +292,7 @@ def clear_pending_cancellation(user_id: str) -> UserUsage:
     usage.pending_cancellation = False
     usage.cancellation_date = None  # type: ignore[assignment]
     usage.subscription_status = "active"
-    usage.updated_at = datetime.now(timezone.utc)
+    usage.updated_at = datetime.now(UTC)
     usage.save()
     logger.info(f"Cleared pending cancellation for user {user_id}")
   return usage
@@ -300,7 +303,7 @@ def set_pending_plan_change(user_id: str, pending_tier: str, effective_date: dat
   usage = get_or_create_usage(user_id)
   usage.pending_tier = pending_tier
   usage.pending_tier_date = effective_date
-  usage.updated_at = datetime.now(timezone.utc)
+  usage.updated_at = datetime.now(UTC)
   usage.save()
   logger.info(f"Set pending plan change for user {user_id}: {pending_tier} on {effective_date.isoformat()}")
   return usage
@@ -312,7 +315,7 @@ def clear_pending_plan_change(user_id: str) -> UserUsage:
   if usage.pending_tier:
     usage.pending_tier = None  # type: ignore[assignment]
     usage.pending_tier_date = None  # type: ignore[assignment]
-    usage.updated_at = datetime.now(timezone.utc)
+    usage.updated_at = datetime.now(UTC)
     usage.save()
     logger.info(f"Cleared pending plan change for user {user_id}")
   return usage
@@ -322,7 +325,7 @@ def reset_period(user_id: str) -> UserUsage:
   """Reset usage counters and extend the billing period (e.g. on renewal)."""
   usage = get_or_create_usage(user_id)
   tier = str(usage.tier) if usage.tier else "FREE"
-  now = datetime.now(timezone.utc)
+  now = datetime.now(UTC)
 
   usage.nodes_used = 0
   usage.worlds_created = 0

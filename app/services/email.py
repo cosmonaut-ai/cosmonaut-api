@@ -11,15 +11,12 @@ import html
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from aws_lambda_powertools import Logger
-
 from app.core.config import get_tier_limits, settings
+from app.core.observability import logger
 from app.utils.pii import redact_email
 
 if TYPE_CHECKING:
   from mypy_boto3_sesv2.client import SESV2Client
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 _ses_client: SESV2Client | None = None
 
