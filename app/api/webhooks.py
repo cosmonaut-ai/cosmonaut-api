@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import time
 from collections.abc import Callable
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any, cast
 
 import stripe
-from aws_lambda_powertools import Logger
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app.core.config import PRICE_TO_TIER, settings
+from app.core.observability import MetricUnit, logger, metrics
 from app.models.entities.rate_limit import RateLimitRecord
 from app.services.cognito import get_user_contact_info, update_user_tier
 from app.services.email import (
@@ -38,8 +38,6 @@ from app.services.usage import (
   update_subscription_status,
   update_tier,
 )
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
@@ -234,12 +232,10 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
   # -- Active with scheduled cancellation (cancel_at OR cancel_at_period_end) --
   if sub_status == "active" and (cancel_at_period_end or cancel_at):
     if cancel_at:
-      cancel_dt = datetime.fromtimestamp(cancel_at, tz=timezone.utc)
+      cancel_dt = datetime.fromtimestamp(cancel_at, tz=UTC)
     else:
       period_end_ts = subscription.get("current_period_end")
-      cancel_dt = (
-        datetime.fromtimestamp(period_end_ts, tz=timezone.utc) if period_end_ts else datetime.now(timezone.utc)
-      )
+      cancel_dt = datetime.fromtimestamp(period_end_ts, tz=UTC) if period_end_ts else datetime.now(UTC)
 
     # Idempotency: Stripe often fires multiple subscription.updated events
     # in quick succession (e.g. cancel_at_period_end + schedule attachment).
@@ -290,9 +286,7 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
         effective_ts = pending_update.get("expires_at")
 
     if pending_tier:
-      effective_dt = (
-        datetime.fromtimestamp(effective_ts, tz=timezone.utc) if effective_ts else datetime.now(timezone.utc)
-      )
+      effective_dt = datetime.fromtimestamp(effective_ts, tz=UTC) if effective_ts else datetime.now(UTC)
       set_pending_plan_change(user_id, pending_tier, effective_dt)
 
       email, name = get_user_contact_info(user_id)
@@ -440,10 +434,11 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
     except RateLimitRecord.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
       pass
 
-  handler = _EVENT_HANDLERS.get(event_type)
-  if handler:
+  handler_fn = _EVENT_HANDLERS.get(event_type)
+  if handler_fn:
     try:
-      handler(event)
+      handler_fn(event)
+      metrics.add_metric(name="WebhookProcessed", unit=MetricUnit.Count, value=1)
       # Mark as processed only after successful handling
       if event_id:
         record = RateLimitRecord(

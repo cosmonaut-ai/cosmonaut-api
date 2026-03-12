@@ -184,9 +184,7 @@ class WorldMeta(BaseCosmonautModel):
   def can_user_read(self, user_id: str, user_email: str | None = None) -> bool:
     if self.visibility == WorldVisibility.PUBLIC or self.author_id == user_id:
       return True
-    if user_email and user_email in (self.shared_with or []):
-      return True
-    return False
+    return bool(user_email and user_email in (self.shared_with or []))
 
   def can_user_write(self, user_id: str) -> bool:
     return self.author_id == user_id

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from aws_lambda_powertools import Logger
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -11,39 +10,26 @@ from pynamodb.exceptions import UpdateError
 import app.services.story_nodes as node_service
 import app.services.user_progress as progress_service
 from app.api.dependencies import require_world_read
-from app.core.config import settings
+from app.core.observability import logger
 from app.core.security import User, get_current_user
+from app.models.dtos.base import PaginatedResponse
 from app.models.dtos.story_node import ChooseRequestDTO, GenerationStatus, StoryNodeDTO
 from app.models.entities.story_node import StoryNode
 from app.models.voices import get_voice_by_id
 from app.services.audio import generate_and_store_audio
-from app.services.rate_limiter import RateLimitExceededError, check_rate_limit, raise_rate_limit_error
-from app.services.story_nodes import (
-  DepthLimitReachedError,
-  InvalidChoiceError,
-  InvalidProcessingStatusError,
-  NodeNotFoundError,
-  NodeProcessingError,
-  NodeServiceError,
-)
+from app.services.rate_limiter import check_rate_limit
+from app.services.story_nodes import NodeServiceError
 from app.services.usage import QuotaExceededError, check_and_increment, release_quota
 from app.services.worlds import WorldNotFoundError
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 router = APIRouter(prefix="/worlds", tags=["story-nodes"])
 
 MAX_NARRATION_CHARS = 3000
 
 
-class PaginatedNodesResponse(BaseModel):
-  nodes: list[StoryNodeDTO]
-  next_cursor: str | None = None
-
-
 @router.get(
   "/{world_id}/nodes/",
-  response_model=PaginatedNodesResponse,
+  response_model=PaginatedResponse[StoryNodeDTO],
   response_model_exclude_none=True,
   summary="List nodes in a world (paginated)",
 )
@@ -52,12 +38,12 @@ async def list_nodes(
   current_user: User = Depends(get_current_user),
   limit: int = Query(100, ge=1, le=500, description="Maximum number of nodes to return"),
   cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
-) -> PaginatedNodesResponse:
+) -> PaginatedResponse[StoryNodeDTO]:
   """Return story nodes for a given world with optional pagination."""
   require_world_read(world_id, current_user)
   nodes, next_cursor = node_service.list_nodes(world_id, limit=limit, cursor=cursor)
-  return PaginatedNodesResponse(
-    nodes=[node.to_dto() for node in nodes],
+  return PaginatedResponse[StoryNodeDTO](
+    items=[node.to_dto() for node in nodes],
     next_cursor=next_cursor,
   )
 
@@ -74,11 +60,8 @@ async def get_node(
 ) -> StoryNodeDTO:
   """Retrieve a single story node by its identifier."""
   require_world_read(world_id, current_user)
-  try:
-    node = node_service.get_node(world_id, node_id)
-    return node.to_dto()
-  except NodeNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+  node = node_service.get_node(world_id, node_id)
+  return node.to_dto()
 
 
 class ProgressResponse(BaseModel):
@@ -137,29 +120,20 @@ async def choose(
     )
 
   require_world_read(world_id, current_user)
+  new_node = await node_service.choose(
+    world_id,
+    node_id,
+    choice_index=request.choice_index,
+    custom_choice=request.custom_choice,
+    user_id=current_user.id,
+  )
+
   try:
-    new_node = await node_service.choose(
-      world_id,
-      node_id,
-      choice_index=request.choice_index,
-      custom_choice=request.custom_choice,
-      user_id=current_user.id,
-    )
+    progress_service.update_progress(current_user.id, world_id, str(new_node.id))
+  except Exception:
+    logger.warning("Failed to update progress for user %s in world %s", current_user.id, world_id, exc_info=True)
 
-    try:
-      progress_service.update_progress(current_user.id, world_id, str(new_node.id))
-    except Exception:
-      logger.warning("Failed to update progress for user %s in world %s", current_user.id, world_id, exc_info=True)
-
-    return new_node.to_dto()
-  except DepthLimitReachedError as e:
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
-  except NodeNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-  except InvalidChoiceError as e:
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
-  except NodeProcessingError as e:
-    raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e)) from e
+  return new_node.to_dto()
 
 
 @router.post(
@@ -185,20 +159,13 @@ async def generate_text(
   5. On error, sets generation_status to FAILED
   """
   require_world_read(world_id, current_user)
-
-  try:
-    check_rate_limit(current_user.id, "generate-text")
-  except RateLimitExceededError as e:
-    raise raise_rate_limit_error(e) from e
+  check_rate_limit(current_user.id, "generate-text")
 
   # Validate node exists before starting stream.
   # Status validation is intentionally deferred to the service layer which uses
   # an atomic DynamoDB conditional write to prevent race conditions between
   # concurrent requests.
-  try:
-    node_service.get_node(world_id, node_id)
-  except NodeNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+  node_service.get_node(world_id, node_id)
 
   async def event_generator():
     """Wrap the story node stream in SSE format for better Lambda/Mangum compatibility."""
@@ -221,13 +188,13 @@ async def generate_text(
       # Send a done event to signal completion
       yield "data: [DONE]\n\n"
     except QuotaExceededError as e:
-      yield f"event: error\ndata: {str(e)}\n\n"
+      yield f"event: error\ndata: {e!s}\n\n"
     except NodeServiceError as e:
       # Catches NodeNotFoundError, NodeProcessingError, InvalidChoiceError,
       # InvalidGenerationStatusError, and any future NodeServiceError subclasses.
-      yield f"event: error\ndata: {str(e)}\n\n"
+      yield f"event: error\ndata: {e!s}\n\n"
     except WorldNotFoundError as e:
-      yield f"event: error\ndata: {str(e)}\n\n"
+      yield f"event: error\ndata: {e!s}\n\n"
     except Exception as e:
       # Intentional catch-all: unexpected errors during streaming (e.g. LLM metadata
       # parse failure, network timeouts) must emit an SSE error event instead of
@@ -262,13 +229,8 @@ async def retry_processing(
   processing_status=FAILED can be retried.
   """
   require_world_read(world_id, current_user)
-  try:
-    node = node_service.retry_processing(world_id, node_id)
-    return node.to_dto()
-  except NodeNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
-  except InvalidProcessingStatusError as e:
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e)) from e
+  node = node_service.retry_processing(world_id, node_id)
+  return node.to_dto()
 
 
 # ---------------------------------------------------------------------------
@@ -319,17 +281,10 @@ async def generate_node_audio(
     )
 
   require_world_read(world_id, current_user)
-
-  try:
-    check_rate_limit(current_user.id, "audio")
-  except RateLimitExceededError as e:
-    raise raise_rate_limit_error(e) from e
+  check_rate_limit(current_user.id, "audio")
 
   # -- Fetch node --
-  try:
-    node = node_service.get_node(world_id, node_id)
-  except NodeNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+  node = node_service.get_node(world_id, node_id)
 
   # Node must have completed text generation
   if GenerationStatus(node.generation_status) != GenerationStatus.COMPLETED:
@@ -350,15 +305,12 @@ async def generate_node_audio(
   if voice.id in existing_audio:
     return AudioResponse(audio_url=existing_audio[voice.id])
 
-  # -- Quota check --
-  try:
-    check_and_increment(current_user.id, "audio", email=current_user.email)
-  except QuotaExceededError as e:
-    raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)) from e
+  # -- Quota check (QuotaExceededError is handled by the global AppError handler) --
+  check_and_increment(current_user.id, "audio", email=current_user.email)
 
   # -- Generate & upload audio --
   try:
-    cdn_url = generate_and_store_audio(
+    cdn_url = await generate_and_store_audio(
       world_id=world_id,
       node_id=node_id,
       text=str(node.text),
