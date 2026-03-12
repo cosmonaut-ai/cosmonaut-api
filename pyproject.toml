@@ -23,6 +23,7 @@ dependencies = [
     "stripe>=11.0.0",
     "httpx>=0.28.0",
     "cachetools>=6.2.4",
+    "sentry-sdk[fastapi]>=2.54.0",
 ]
 
 

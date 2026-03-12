@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
 import nest_asyncio  # type: ignore[import-untyped]
+import sentry_sdk
 from aws_lambda_powertools.metrics import MetricUnit
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
@@ -22,6 +23,14 @@ from app.core.config import settings
 from app.core.errors import AppError, RateLimitError
 from app.core.observability import logger, metrics, tracer
 from app.core.security import get_current_user
+
+if settings.ENV == "prod":
+  sentry_sdk.init(
+    dsn=settings.SENTRY_DSN,
+    environment=settings.ENV,
+    send_default_pii=True,
+    traces_sample_rate=0.1,
+  )
 
 app = FastAPI(title="Cosmonaut AI API", version="0.1.0")
 
