@@ -12,7 +12,7 @@ from functools import lru_cache
 from typing import Literal
 
 from anthropic import AsyncAnthropicVertex
-from httpx import AsyncClient, HTTPStatusError, Response
+from httpx import AsyncClient, HTTPStatusError, Response, Timeout
 from pydantic_ai import ModelSettings
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
 from pydantic_ai.models.google import GoogleModel
@@ -62,7 +62,7 @@ def _create_retrying_client() -> AsyncClient:
     ),
     validate_response=_should_retry,
   )
-  return AsyncClient(transport=transport)
+  return AsyncClient(transport=transport, timeout=Timeout(settings.VERTEX_TIMEOUT_S))
 
 
 # =============================================================================

@@ -63,6 +63,12 @@ class Settings(BaseSettings):
   STRIPE_PRICE_COSMONAUT: str = Field(default="", description="Stripe Price ID for the Cosmonaut tier.")
   STRIPE_PORTAL_CONFIG_ID: str = Field(default="", description="Stripe Customer Portal configuration ID.")
 
+  # Sentry
+  SENTRY_DSN: str = Field(
+    default="https://4de72bd8aec9c93d2242f42253ecbc94@o4511032796905472.ingest.us.sentry.io/4511032803459072",
+    description="Sentry DSN for error tracking.",
+  )
+
   # Buttondown newsletter
   BUTTONDOWN_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Buttondown API key.")
 
