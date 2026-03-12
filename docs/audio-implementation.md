@@ -32,8 +32,8 @@ Story nodes can have AI-generated audio narrations via ElevenLabs TTS. Customers
 | Tier      | Audio narrations per period | Period  | Reset behaviour                 |
 | --------- | --------------------------- | ------- | ------------------------------- |
 | FREE      | 10                          | 7 days  | **Never resets** (lifetime cap) |
-| EXPLORER  | 60                          | 30 days | Resets each billing period      |
-| COSMONAUT | 200                         | 30 days | Resets each billing period      |
+| EXPLORER  | 30                          | 30 days | Resets each billing period      |
+| COSMONAUT | 150                         | 30 days | Resets each billing period      |
 
 > Free-tier audio is a one-time allowance — once the 10 narrations are used, the user must upgrade to generate more. Paid tiers get fresh quota each billing cycle.
 
@@ -145,7 +145,7 @@ The existing usage endpoint includes audio fields:
   "worlds_stored": 3,
   "worlds_stored_limit": 50,
   "audio_narrations_used": 12,
-  "audio_narrations_limit": 60,
+  "audio_narrations_limit": 30,
   "period_end": "2026-03-08T00:00:00+00:00",
   "pending_cancellation": false,
   "cancellation_date": null,
@@ -270,7 +270,7 @@ else:
 Display audio usage alongside existing usage meters:
 
 ```
-Audio narrations: 12 / 60
+Audio narrations: 12 / 30
 ```
 
 ### 5. Clean Up
