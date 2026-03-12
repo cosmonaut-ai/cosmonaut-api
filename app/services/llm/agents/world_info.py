@@ -99,7 +99,7 @@ async def generate_world_info(world_prompt: str, *, family_friendly: bool = Fals
   deps = WorldInfoDeps(family_friendly=family_friendly)
   sanitized = sanitize_user_input(world_prompt)
   wrapped = f"<user_story_concept>\n{sanitized}\n</user_story_concept>"
-  result = await _agent.run(wrapped, deps=deps, model_settings={"max_tokens": 4096})
+  result = await _agent.run(wrapped, deps=deps, model_settings={"max_tokens": 8192})
   raw_output = result.output
 
   # Extract world_info JSON from XML response
