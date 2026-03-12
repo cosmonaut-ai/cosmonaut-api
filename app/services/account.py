@@ -8,14 +8,14 @@ and Stripe (subscriptions).
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import stripe
-from aws_lambda_powertools import Logger
 
 import app.services.pinecone as pinecone_service
 from app.core.config import settings
+from app.core.observability import logger
 from app.models.entities.usage import UsageTombstone, UserUsage
 from app.models.entities.world_meta import WorldMeta
 from app.services.newsletter import unsubscribe as newsletter_unsubscribe
@@ -25,8 +25,6 @@ from app.services.user_progress import delete_all_user_progress
 
 if TYPE_CHECKING:
   from mypy_boto3_cognito_idp.client import CognitoIdentityProviderClient
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 _cognito_client: CognitoIdentityProviderClient | None = None
 
@@ -40,7 +38,7 @@ def _get_cognito_client() -> CognitoIdentityProviderClient:
   return _cognito_client
 
 
-def delete_account(user_id: str, cognito_username: str, email: str | None = None) -> None:
+async def delete_account(user_id: str, cognito_username: str, email: str | None = None) -> None:
   """Permanently delete a user account and all associated data.
 
   Steps (order matters for safety):
@@ -64,7 +62,7 @@ def delete_account(user_id: str, cognito_username: str, email: str | None = None
   # 2. Unsubscribe from newsletter
   if email:
     try:
-      newsletter_unsubscribe(email)
+      await newsletter_unsubscribe(email)
     except Exception:
       logger.exception("Failed to unsubscribe newsletter for user %s", user_id)
 
@@ -174,7 +172,7 @@ def _tombstone_usage_record(user_id: str, email: str) -> None:
     return
 
   email_hash = hashlib.sha256(email.lower().strip().encode()).hexdigest()
-  now = datetime.now(timezone.utc)
+  now = datetime.now(UTC)
   ttl_epoch = int((now + timedelta(days=_TOMBSTONE_TTL_DAYS)).timestamp())
 
   tombstone = UsageTombstone(

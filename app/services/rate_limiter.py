@@ -7,22 +7,19 @@ block if count exceeds the limit.
 
 import time
 
-from aws_lambda_powertools import Logger
-from fastapi import HTTPException, status
-
-from app.core.config import settings
+from app.core.errors import RateLimitError
 from app.models.entities.rate_limit import RateLimitRecord
 
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
-
-class RateLimitExceededError(Exception):
+class RateLimitExceededError(RateLimitError):
   def __init__(self, endpoint: str, limit: int, window_seconds: int):
     self.endpoint = endpoint
     self.limit = limit
     self.window_seconds = window_seconds
-    self.retry_after = window_seconds
-    super().__init__(f"Rate limit exceeded for {endpoint}: max {limit} requests per {window_seconds}s")
+    super().__init__(
+      f"Rate limit exceeded for {endpoint}: max {limit} requests per {window_seconds}s",
+      retry_after=window_seconds,
+    )
 
 
 RATE_LIMITS: dict[str, tuple[int, int]] = {
@@ -68,12 +65,3 @@ def check_rate_limit(user_id: str, endpoint: str) -> None:
       request_count=1,
     )
     record.save()
-
-
-def raise_rate_limit_error(e: RateLimitExceededError) -> HTTPException:
-  """Convert a RateLimitExceededError to an HTTP 429 response."""
-  return HTTPException(
-    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-    detail=str(e),
-    headers={"Retry-After": str(e.retry_after)},
-  )

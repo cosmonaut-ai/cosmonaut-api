@@ -2,46 +2,31 @@
 
 from __future__ import annotations
 
-from typing import NoReturn
-
-from aws_lambda_powertools import Logger
-from fastapi import APIRouter, Depends, HTTPException, Path, status
+from fastapi import APIRouter, Depends, Path, Query, status
 
 import app.services.worlds as world_service
 from app.api.dependencies import require_world_read, require_world_write
 from app.core.config import settings
+from app.core.observability import logger
 from app.core.security import User, get_current_user
+from app.models.dtos.base import PaginatedResponse
 from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO, WorldUpdateSharingRequest
 from app.services.email import send_world_invite
-from app.services.rate_limiter import RateLimitExceededError, check_rate_limit, raise_rate_limit_error
-from app.services.usage import QuotaExceededError, StorageQuotaExceededError
-from app.services.worlds import WorldNotFoundError
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
+from app.services.rate_limiter import check_rate_limit
 
 router = APIRouter(prefix="/worlds", tags=["worlds"])
 
-_NOT_IMPLEMENTED = HTTPException(
-  status_code=status.HTTP_501_NOT_IMPLEMENTED,
-  detail="Worlds controller is scaffolded only; implement persistence and business logic.",
-)
 
-
-def _raise_not_implemented() -> NoReturn:
-  """Consistently signal that the route is not yet implemented."""
-
-  raise _NOT_IMPLEMENTED
-
-
-@router.get("/", response_model=list[WorldMetaDTO], summary="List available worlds")
-async def list_worlds(user: User = Depends(get_current_user)) -> list[WorldMetaDTO]:
-  """Return a discoverable set of worlds (paged feed TBD)."""
+@router.get("/", response_model=PaginatedResponse[WorldMetaDTO], summary="List available worlds")
+async def list_worlds(
+  user: User = Depends(get_current_user),
+  limit: int = Query(50, ge=1, le=200, description="Maximum number of worlds to return"),
+  cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
+) -> PaginatedResponse[WorldMetaDTO]:
+  """Return worlds for the authenticated user with cursor-based pagination."""
   logger.info(f"Listing worlds for user {user.id}")
-  try:
-    worlds = world_service.list_worlds(user.id)
-    return [world.to_dto() for world in worlds]
-  except NotImplementedError:
-    _raise_not_implemented()
+  worlds, next_cursor = world_service.list_worlds(user.id, limit, cursor)
+  return PaginatedResponse(items=[world.to_dto() for world in worlds], next_cursor=next_cursor)
 
 
 @router.get(
@@ -69,17 +54,8 @@ async def get_world(
 )
 async def create_world(payload: WorldCreateRequest, user: User = Depends(get_current_user)) -> WorldMetaDTO:
   """Create a new world."""
-  try:
-    check_rate_limit(user.id, "create-world")
-  except RateLimitExceededError as e:
-    raise raise_rate_limit_error(e) from e
-
-  try:
-    world = world_service.create_world(payload, user.id)
-  except StorageQuotaExceededError as e:
-    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e)) from e
-  except QuotaExceededError as e:
-    raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=str(e)) from e
+  check_rate_limit(user.id, "create-world")
+  world = world_service.create_world(payload, user.id)
   return world.to_dto()
 
 
@@ -95,14 +71,8 @@ async def update_world(
 ) -> WorldMetaDTO:
   """Apply partial updates to an existing world."""
   require_world_write(world_id, user)
-
-  try:
-    world = world_service.update_world(world_id, payload)
-    return world.to_dto()
-  except NotImplementedError:
-    _raise_not_implemented()
-  except WorldNotFoundError as e:
-    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e)) from e
+  world = world_service.update_world(world_id, payload)
+  return world.to_dto()
 
 
 @router.delete(

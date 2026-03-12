@@ -10,16 +10,19 @@ Architecture:
 
 from __future__ import annotations
 
+import contextlib
 import uuid
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
-from aws_lambda_powertools import Logger
 from pynamodb.exceptions import UpdateError
 from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
-from app.core.config import WORLD_LENGTH_MAX_NODES, settings
+from app.core.config import WORLD_LENGTH_MAX_NODES
+from app.core.errors import NotFoundError
+from app.core.observability import MetricUnit, logger, metrics, tracer
 from app.models.dtos.story_node import (
   GenerationStatus as NodeGenerationStatus,
 )
@@ -47,9 +50,6 @@ from app.services.usage import (
   get_or_create_usage,
   release_quota,
 )
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
-
 
 # =============================================================================
 # Entity to LLM Model Conversion
@@ -91,7 +91,7 @@ class WorldServiceError(Exception):
   """Base exception for world service failures."""
 
 
-class WorldNotFoundError(WorldServiceError):
+class WorldNotFoundError(WorldServiceError, NotFoundError):
   """Raised when a world cannot be found."""
 
   def __init__(self, world_id: str):
@@ -104,6 +104,7 @@ def _world_keys(world_id: str) -> tuple[str, str]:
   return (WorldMeta.pk(world_id), WorldMeta.sk())
 
 
+@tracer.capture_method
 def get_world_entity(world_id: str) -> WorldMeta:
   """Fetch world entity for service composition (public for cross-service use)."""
   pk, sk = _world_keys(world_id)
@@ -119,11 +120,47 @@ def count_user_worlds(user_id: str) -> int:
   return WorldMeta.GSI1.count(hash_key=gsi1_pk)  # type: ignore[reportUnknownMemberType]
 
 
-def list_worlds(user_id: str) -> list[WorldMeta]:
-  """Return a discoverable set of worlds (paged feed TBD)."""
+@tracer.capture_method
+def list_worlds(
+  user_id: str,
+  limit: int = 50,
+  cursor: str | None = None,
+) -> tuple[list[WorldMeta], str | None]:
+  """Return worlds for a user with cursor-based pagination, ordered by most recent first.
+
+  Args:
+    user_id: Owner identifier.
+    limit: Maximum number of worlds to return per page (default 50).
+    cursor: Opaque pagination token from a previous response.
+
+  Returns:
+    Tuple of (worlds, next_cursor). ``next_cursor`` is None when there are
+    no more pages.
+  """
+  import base64
+  import json
+
   gsi1_pk = WorldMeta.gsi1_pk(user_id)
-  worlds: ResultIterator[WorldMeta] = WorldMeta.GSI1.query(hash_key=gsi1_pk, scan_index_forward=False)  # type: ignore[reportUnknownReturnType]
-  return list(worlds)
+
+  last_evaluated_key = None
+  if cursor:
+    with contextlib.suppress(Exception):
+      last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
+
+  worlds: ResultIterator[WorldMeta] = WorldMeta.GSI1.query(  # type: ignore[reportUnknownReturnType]
+    hash_key=gsi1_pk,
+    scan_index_forward=False,
+    page_size=limit,
+    limit=limit,
+    last_evaluated_key=last_evaluated_key,
+  )
+  items = list(worlds)
+
+  next_cursor: str | None = None
+  if worlds.last_evaluated_key:
+    next_cursor = base64.urlsafe_b64encode(json.dumps(worlds.last_evaluated_key).encode()).decode()
+
+  return items, next_cursor
 
 
 def get_world(world_id: str) -> WorldMeta:
@@ -152,7 +189,7 @@ def _increment_world_count(user_id: str) -> None:
     )
   except UpdateError:
     count = int(usage.saved_world_count) if usage.saved_world_count else 0
-    raise StorageQuotaExceededError("saved_worlds", saved_worlds_limit, count)
+    raise StorageQuotaExceededError("saved_worlds", saved_worlds_limit, count) from None
 
 
 def _decrement_world_count(user_id: str) -> None:
@@ -167,6 +204,7 @@ def _decrement_world_count(user_id: str) -> None:
     logger.warning(f"Failed to decrement world count for user {user_id}")
 
 
+@tracer.capture_method
 def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
   """Create a new world metadata record.
 
@@ -216,6 +254,7 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
     release_quota(user_id, "worlds")
     raise
 
+  metrics.add_metric(name="WorldCreated", unit=MetricUnit.Count, value=1)
   return meta
 
 
@@ -264,6 +303,7 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
   return world
 
 
+@tracer.capture_method
 def delete_world(world_id: str) -> None:
   """Delete a world and any associated state."""
   world = get_world_entity(world_id)
@@ -284,8 +324,9 @@ def delete_world(world_id: str) -> None:
     _decrement_world_count(author_id)
 
 
+@tracer.capture_method
 async def generate_lore(world: WorldMeta) -> WorldMeta:
-  """Generate lore for a world (LLM integration TBD)."""
+  """Generate lore for a world via LLM."""
 
   is_family_friendly = world.family_friendly == "true"
   llm_world_info: llm.LLMWorldInfo = await llm.generate_world_info(
@@ -317,6 +358,7 @@ async def generate_lore(world: WorldMeta) -> WorldMeta:
   return world
 
 
+@tracer.capture_method
 async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
   """Generate a narrator profile for a world."""
 

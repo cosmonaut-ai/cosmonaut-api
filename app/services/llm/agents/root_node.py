@@ -11,49 +11,14 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
 from app.services.llm.agents.prompts import (
-  CHOICE_GUIDELINES,
   FAMILY_FRIENDLY_INSTRUCTIONS,
-  METADATA_GUIDELINES,
-  NARRATIVE_CONSTRAINTS,
-  OUTPUT_FORMAT,
-  PROSE_QUALITY,
-  STORY_TEXT_RULES,
+  build_root_node_system_prompt,
 )
 from app.services.llm.models import LLMWorldInfo
 from app.services.llm.provider import get_storytelling_model
 from app.services.llm.utils import format_model_with_descriptions
 
-ROOT_NODE_PREAMBLE = """
-You are a storyteller for an interactive story where players choose their own path. Generate the opening scene that hooks the player.
-"""  # noqa: E501
-
-ROOT_NODE_TASK = """
-## Your Task
-Create an engaging first scene that:
-- Establishes the immediate situation with sensory detail
-- Introduces a compelling hook — one of:
-  - A **question** (mystery: something is wrong or unexplained)
-  - A **disruption** (action: normalcy is shattered)
-  - A **dilemma** (moral: a choice with no clear right answer)
-- Presents the player with their first meaningful choices
-- Sets up the context for the world and story
-
-## Story Text
-- 300 words max
-- 1-3 paragraphs, addressing the player as "you"
-- Do NOT provide endings for the root node — this is the beginning.
-"""
-
-SYSTEM_PROMPT = (
-  ROOT_NODE_PREAMBLE
-  + ROOT_NODE_TASK
-  + STORY_TEXT_RULES
-  + PROSE_QUALITY
-  + NARRATIVE_CONSTRAINTS
-  + CHOICE_GUIDELINES
-  + METADATA_GUIDELINES
-  + OUTPUT_FORMAT
-)
+SYSTEM_PROMPT = build_root_node_system_prompt()
 
 
 class RootNodeDeps(BaseModel):

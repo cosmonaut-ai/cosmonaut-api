@@ -13,3 +13,8 @@ class DTOModel(BaseModel):
   """Base DTO with sensible defaults for API responses."""
 
   model_config = ConfigDict(populate_by_name=True)
+
+
+class PaginatedResponse[T](DTOModel):
+  items: list[T]
+  next_cursor: str | None = None

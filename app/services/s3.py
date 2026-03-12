@@ -6,15 +6,13 @@ file bytes to the configured bucket, returning the public CDN URL.
 
 from __future__ import annotations
 
-import logging
 from typing import TYPE_CHECKING
 
 from app.core.config import settings
+from app.core.observability import logger, tracer
 
 if TYPE_CHECKING:
   from mypy_boto3_s3.client import S3Client
-
-logger = logging.getLogger(__name__)
 
 s3: S3Client | None = None
 
@@ -28,6 +26,7 @@ def get_s3_client() -> S3Client:
   return s3
 
 
+@tracer.capture_method
 def upload_file(
   key: str, data: bytes, content_type: str, cache_control: str = "public, max-age=31536000, immutable"
 ) -> str:
@@ -69,6 +68,7 @@ def upload_image(key: str, image_bytes: bytes, content_type: str = "image/png") 
   return upload_file(key=key, data=image_bytes, content_type=content_type)
 
 
+@tracer.capture_method
 def delete_objects_by_prefix(prefix: str) -> int:
   """Delete all S3 objects matching the given prefix. Returns count deleted."""
   client = get_s3_client()

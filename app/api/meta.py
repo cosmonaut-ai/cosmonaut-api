@@ -4,14 +4,12 @@ from __future__ import annotations
 
 from html import escape
 
-from aws_lambda_powertools import Logger
 from fastapi import APIRouter, Path
 from fastapi.responses import HTMLResponse
 
 from app.core.config import settings
+from app.core.observability import logger
 from app.services.worlds import WorldNotFoundError, get_world_entity
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
 
 router = APIRouter(prefix="/meta", tags=["meta"])
 

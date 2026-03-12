@@ -1,7 +1,7 @@
 """Utilities for generating CloudFront Signed Cookies."""
 
 import base64
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TypedDict
 
 
@@ -55,7 +55,7 @@ def create_signed_cookies(
   Returns:
       A dictionary of cookie names to values.
   """
-  expires = int((datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)).timestamp())
+  expires = int((datetime.now(UTC) + timedelta(minutes=expire_minutes)).timestamp())
 
   # 1. Create Policy (Custom Policy allows wildcards)
   policy_json = f"""{{

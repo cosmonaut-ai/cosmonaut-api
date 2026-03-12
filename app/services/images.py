@@ -8,18 +8,17 @@ from __future__ import annotations
 
 from functools import lru_cache
 
-from aws_lambda_powertools import Logger
 from google.genai import Client as GenAIClient
 from google.genai import types
 
 import app.services.llm as llm
 from app.core.config import settings
 from app.core.gcp_auth import get_gcp_credentials
+from app.core.observability import logger, tracer
 from app.models.entities.world_meta import WorldMeta
 from app.services.s3 import upload_image
 from app.services.worlds import world_meta_to_llm_world_info
-
-logger = Logger(service=settings.POWERTOOLS_SERVICE_NAME)
+from app.utils.pii import truncate_for_log
 
 IMAGEN_MODEL = "imagen-4.0-generate-001"
 IMAGE_SIZE = "1024x1024"
@@ -37,6 +36,7 @@ def _get_genai_client() -> GenAIClient:
   )
 
 
+@tracer.capture_method
 async def generate_world_image(world: WorldMeta) -> WorldMeta:
   """Generate a cover image for a world and persist it.
 
@@ -55,7 +55,9 @@ async def generate_world_image(world: WorldMeta) -> WorldMeta:
   # 1. Build an LLM-friendly representation and craft the image prompt
   world_info = world_meta_to_llm_world_info(world)
   image_prompt = await llm.generate_image_prompt(world_info)
-  logger.info(f"Crafted image prompt for world {world.id}", extra={"image_prompt": image_prompt})
+  logger.info(
+    "Crafted image prompt for world %s", world.id, extra={"image_prompt_preview": truncate_for_log(image_prompt)}
+  )
 
   # 2. Generate image via Imagen 3
   client = _get_genai_client()

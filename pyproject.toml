@@ -40,5 +40,11 @@ indent-width = 2
 target-version = "py313"
 
 [tool.ruff.lint]
-select = ["E", "F", "I"]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "T20", "ASYNC"]
+ignore = [
+  "B008",    # FastAPI uses Depends()/Body()/Query()/Path() in function defaults by design
+  "RUF002",  # EN DASH in docstrings is intentional style
+  "RUF003",  # EN DASH in comments is intentional style
+  "SIM108",  # Ternary operator not always more readable
+]
 fixable = ["ALL"]
