@@ -39,6 +39,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv export --frozen --no-dev --no-emit-project -o requirements.txt && \
     uv pip install --system -r requirements.txt
 
+# Sentry release tracking (git SHA set at build time via --build-arg)
+ARG SENTRY_RELEASE=""
+ENV SENTRY_RELEASE=${SENTRY_RELEASE}
+
 # Copy application source
 COPY app ./app
 

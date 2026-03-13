@@ -2,11 +2,25 @@ import asyncio
 from collections.abc import Callable, Iterable
 from typing import Any, cast
 
+import sentry_sdk
 from aws_lambda_powertools.utilities.data_classes import SQSEvent, event_source  # type: ignore[import-untyped]
 from pydantic import TypeAdapter
 from pynamodb.exceptions import UpdateError
+from sentry_sdk.integrations.aws_lambda import AwsLambdaIntegration
 
+from app.core.config import settings
 from app.core.observability import logger, tracer
+
+if settings.ENV != "local":
+  sentry_sdk.init(
+    dsn=settings.SENTRY_DSN,
+    environment=settings.ENV,
+    release=settings.SENTRY_RELEASE or None,
+    send_default_pii=True,
+    traces_sample_rate=0.1,
+    enable_logs=True,
+    integrations=[AwsLambdaIntegration(timeout_warning=True)],
+  )
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
 from app.models.dtos.story_node import StoryNodeProcessingStatus
 from app.models.dtos.world_meta import GenerationStatus
