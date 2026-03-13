@@ -6,21 +6,9 @@ import sentry_sdk
 from aws_lambda_powertools.utilities.data_classes import SQSEvent, event_source  # type: ignore[import-untyped]
 from pydantic import TypeAdapter
 from pynamodb.exceptions import UpdateError
-from sentry_sdk.integrations.aws_lambda import AwsLambdaIntegration
 
-from app.core.config import settings
 from app.core.observability import logger, tracer
-
-if settings.ENV != "local":
-  sentry_sdk.init(
-    dsn=settings.SENTRY_DSN,
-    environment=settings.ENV,
-    release=settings.SENTRY_RELEASE or None,
-    send_default_pii=True,
-    traces_sample_rate=0.1,
-    enable_logs=True,
-    integrations=[AwsLambdaIntegration(timeout_warning=True)],
-  )
+from app.core.sentry import init_sentry
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
 from app.models.dtos.story_node import StoryNodeProcessingStatus
 from app.models.dtos.world_meta import GenerationStatus
@@ -28,6 +16,8 @@ from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
 from app.services import images, story_nodes, worlds
 from app.services.sqs import SQSSendError, send_world_image_generation_message
+
+init_sentry()
 
 # Concurrency cap for processing messages in parallel within a Lambda invocation.
 BATCH_CONCURRENCY = 5
@@ -78,10 +68,16 @@ async def _process_batch(records: Iterable[Any]) -> list[str]:
     async with semaphore:
       try:
         payload: SQSPayload = sqs_payload_adapter.validate_json(record.body)
+        sentry_sdk.set_tag("task_type", payload.task_type)
+        if hasattr(payload, "world_id"):
+          sentry_sdk.set_tag("world_id", payload.world_id)
+        if hasattr(payload, "node_id"):
+          sentry_sdk.set_tag("node_id", getattr(payload, "node_id", None) or "")
         logger.info(f"Processing task: {payload.task_type}", extra={"payload": payload})
         await _process_task(payload)
         return None
-      except Exception:
+      except Exception as e:
+        sentry_sdk.capture_exception(e)
         logger.exception(f"Failed to process message {record.message_id}")
         return record.message_id
 
