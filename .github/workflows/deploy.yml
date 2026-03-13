@@ -83,6 +83,8 @@ jobs:
           platforms: linux/arm64
           provenance: false
           sbom: false
+          build-args: |
+            SENTRY_RELEASE=${{ github.sha }}
           tags: |
             467508858251.dkr.ecr.us-east-2.amazonaws.com/${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo:${{ github.sha }}
             467508858251.dkr.ecr.us-east-2.amazonaws.com/${{ env.ECR_REPO_BASE }}-${{ env.ENV_NAME }}-repo:latest

@@ -11,6 +11,7 @@ from aws_lambda_powertools.metrics import MetricUnit
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from sentry_sdk.integrations.aws_lambda import AwsLambdaIntegration
 from starlette.responses import JSONResponse
 
 from app.api.auth import router as auth_router
@@ -24,12 +25,15 @@ from app.core.errors import AppError, RateLimitError
 from app.core.observability import logger, metrics, tracer
 from app.core.security import get_current_user
 
-if settings.ENV == "prod":
+if settings.ENV != "local":
   sentry_sdk.init(
     dsn=settings.SENTRY_DSN,
     environment=settings.ENV,
+    release=settings.SENTRY_RELEASE or None,
     send_default_pii=True,
     traces_sample_rate=0.1,
+    enable_logs=True,
+    integrations=[AwsLambdaIntegration(timeout_warning=True)],
   )
 
 app = FastAPI(title="Cosmonaut AI API", version="0.1.0")
@@ -38,6 +42,8 @@ app = FastAPI(title="Cosmonaut AI API", version="0.1.0")
 @app.exception_handler(AppError)
 async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
   """Map domain exceptions to structured JSON error responses."""
+  if exc.status_code >= 500:
+    sentry_sdk.capture_exception(exc)
   headers: dict[str, str] = {}
   if isinstance(exc, RateLimitError):
     headers["Retry-After"] = str(exc.retry_after)
@@ -75,10 +81,11 @@ app.add_middleware(
 
 @app.middleware("http")
 async def inject_logger_context(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
-  """Attach a request identifier to structured logs for correlation."""
+  """Attach a request identifier to structured logs and Sentry scope for correlation."""
 
   request_id = request.headers.get("x-request-id") or str(uuid4())
   logger.append_keys(request_id=request_id, request_path=request.url.path)
+  sentry_sdk.set_tag("request_id", request_id)
   try:
     response: Response = await call_next(request)
   finally:
