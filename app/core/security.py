@@ -2,6 +2,7 @@ from typing import Any, cast
 
 import httpx
 import jwt
+import sentry_sdk
 from cachetools import TTLCache
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
 from fastapi import HTTPException, Request, Security
@@ -170,6 +171,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       raise HTTPException(status_code=403, detail="Access denied: email not authorized for the dev environment")
 
     logger.append_keys(user_id=user.id)
+    sentry_sdk.set_user({"id": user.id, "email": user.email, "username": user.username})
     return user
 
   except jwt.ExpiredSignatureError:

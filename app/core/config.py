@@ -65,8 +65,12 @@ class Settings(BaseSettings):
 
   # Sentry
   SENTRY_DSN: str = Field(
-    default="https://4de72bd8aec9c93d2242f42253ecbc94@o4511032796905472.ingest.us.sentry.io/4511032803459072",
+    default="https://c5d14c5beb3255cd0490147bda119bf8@o4511032796905472.ingest.us.sentry.io/4511037416800256",
     description="Sentry DSN for error tracking.",
+  )
+  SENTRY_RELEASE: str = Field(
+    default="",
+    description="Git SHA or version tag for Sentry release tracking. Set at build time via Docker ARG.",
   )
 
   # Buttondown newsletter
