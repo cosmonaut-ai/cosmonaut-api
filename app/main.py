@@ -11,7 +11,6 @@ from aws_lambda_powertools.metrics import MetricUnit
 from fastapi import Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from sentry_sdk.integrations.aws_lambda import AwsLambdaIntegration
 from starlette.responses import JSONResponse
 
 from app.api.auth import router as auth_router
@@ -24,17 +23,9 @@ from app.core.config import settings
 from app.core.errors import AppError, RateLimitError
 from app.core.observability import logger, metrics, tracer
 from app.core.security import get_current_user
+from app.core.sentry import init_sentry
 
-if settings.ENV != "local":
-  sentry_sdk.init(
-    dsn=settings.SENTRY_DSN,
-    environment=settings.ENV,
-    release=settings.SENTRY_RELEASE or None,
-    send_default_pii=True,
-    traces_sample_rate=0.1,
-    enable_logs=True,
-    integrations=[AwsLambdaIntegration(timeout_warning=True)],
-  )
+init_sentry()
 
 app = FastAPI(title="Cosmonaut AI API", version="0.1.0")
 
@@ -66,6 +57,17 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     error_obj["errors"] = [{"loc": e["loc"], "msg": e["msg"]} for e in exc.errors()]
   content: dict[str, object] = {"error": error_obj}
   return JSONResponse(status_code=422, content=content)
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+  """Catch-all for unhandled exceptions that bypass AppError/validation handlers."""
+  sentry_sdk.capture_exception(exc)
+  logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+  return JSONResponse(
+    status_code=500,
+    content={"error": {"code": "INTERNAL_ERROR", "message": "An unexpected error occurred."}},
+  )
 
 
 # Configure CORS
