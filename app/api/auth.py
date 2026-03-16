@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from app.core.cloudfront import create_signed_cookies
 from app.core.config import get_tier_limits, settings
-from app.core.observability import logger
+from app.core.observability import MetricUnit, logger, metrics
 from app.core.security import User, get_current_user
 from app.models.entities.rate_limit import RateLimitRecord
 from app.services.account import delete_account
@@ -99,6 +99,7 @@ async def create_session(response: Response, current_user: User = Depends(get_cu
       key=key, value=value, httponly=True, secure=True, samesite="none", domain=settings.COOKIE_DOMAIN
     )
 
+  metrics.add_metric(name="AuthSessionCreated", unit=MetricUnit.Count, value=1)
   return {"status": "session_created"}
 
 

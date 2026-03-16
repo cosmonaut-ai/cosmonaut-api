@@ -3,11 +3,12 @@ from collections.abc import Callable, Iterable
 from typing import Any, cast
 
 import sentry_sdk
+from aws_lambda_powertools.metrics import MetricUnit
 from aws_lambda_powertools.utilities.data_classes import SQSEvent, event_source  # type: ignore[import-untyped]
 from pydantic import TypeAdapter
 from pynamodb.exceptions import UpdateError
 
-from app.core.observability import logger, tracer
+from app.core.observability import logger, metrics, tracer
 from app.core.sentry import init_sentry
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
 from app.models.dtos.story_node import StoryNodeProcessingStatus
@@ -34,6 +35,7 @@ sqs_event_source: EventDecorator = cast(EventDecorator, _event_source(data_class
 
 @tracer.capture_lambda_handler
 @logger.inject_lambda_context(log_event=True)
+@metrics.log_metrics
 @sqs_event_source
 def handler(event: SQSEvent, context: Any) -> HandlerReturn:
   """
@@ -79,6 +81,7 @@ async def _process_batch(records: Iterable[Any]) -> list[str]:
       except Exception as e:
         sentry_sdk.capture_exception(e)
         logger.exception(f"Failed to process message {record.message_id}")
+        metrics.add_metric(name="WorkerTaskFailed", unit=MetricUnit.Count, value=1)
         return record.message_id
 
   results = await asyncio.gather(*(_process_record(record) for record in records))
@@ -213,6 +216,7 @@ async def _generate_world_image(payload: GenerateWorldImagePayload):
 
   try:
     await images.generate_world_image(world)
+    metrics.add_metric(name="WorldImageGenerated", unit=MetricUnit.Count, value=1)
     logger.info(f"World {world_id} image generation complete.")
   except Exception as e:
     logger.exception(f"Error generating image for world {world_id}: {e}")
