@@ -10,7 +10,7 @@ from pynamodb.exceptions import UpdateError
 import app.services.story_nodes as node_service
 import app.services.user_progress as progress_service
 from app.api.dependencies import require_world_read
-from app.core.observability import logger
+from app.core.observability import MetricUnit, logger, metrics
 from app.core.security import User, get_current_user
 from app.models.dtos.base import PaginatedResponse
 from app.models.dtos.story_node import ChooseRequestDTO, GenerationStatus, StoryNodeDTO
@@ -166,6 +166,7 @@ async def generate_text(
   # an atomic DynamoDB conditional write to prevent race conditions between
   # concurrent requests.
   node_service.get_node(world_id, node_id)
+  metrics.add_metric(name="StoryNodeStreamStarted", unit=MetricUnit.Count, value=1)
 
   async def event_generator():
     """Wrap the story node stream in SSE format for better Lambda/Mangum compatibility."""

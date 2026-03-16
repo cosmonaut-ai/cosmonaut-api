@@ -35,6 +35,8 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
   """Map domain exceptions to structured JSON error responses."""
   if exc.status_code >= 500:
     sentry_sdk.capture_exception(exc)
+  metrics.add_metric(name="AppError", unit=MetricUnit.Count, value=1)
+  metrics.add_dimension(name="status_code", value=str(exc.status_code))
   headers: dict[str, str] = {}
   if isinstance(exc, RateLimitError):
     headers["Retry-After"] = str(exc.retry_after)
@@ -64,6 +66,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
   """Catch-all for unhandled exceptions that bypass AppError/validation handlers."""
   sentry_sdk.capture_exception(exc)
   logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
+  metrics.add_metric(name="UnhandledError", unit=MetricUnit.Count, value=1)
   return JSONResponse(
     status_code=500,
     content={"error": {"code": "INTERNAL_ERROR", "message": "An unexpected error occurred."}},
@@ -92,6 +95,7 @@ async def inject_logger_context(request: Request, call_next: Callable[[Request],
     response: Response = await call_next(request)
   finally:
     logger.remove_keys(["request_id", "request_path", "user_id"])
+    metrics.flush_metrics()
   return response
 
 
