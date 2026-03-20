@@ -67,7 +67,7 @@ security = HTTPBearer(auto_error=False)
 
 def get_current_user(request: Request, token: HTTPAuthorizationCredentials | None = Security(security)) -> User:
   # 1. Happy Path: Mock Auth (Dev Only)
-  if settings.MOCK_AUTH and settings.ENV in ["local", "dev"]:
+  if settings.MOCK_AUTH and settings.ENV in ["local"]:
     logger.info("Using mock authentication")
     return User(
       id="a1abe550-30e1-70ce-4198-6e782be7e643",
