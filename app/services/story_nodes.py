@@ -396,7 +396,7 @@ async def _stream_next_node(
     Tuple of (chunk_text, full_buffer, metadata_if_complete)
   """
   user_message = llm.build_user_message(deps)
-  run_stream_ctx = llm.get_next_node_agent().run_stream(user_message, deps=deps, model_settings={"max_tokens": 8192})
+  run_stream_ctx = llm.get_next_node_agent().run_stream(user_message, deps=deps, model_settings={"max_tokens": 16384})
   async for item in _stream_node_content(run_stream_ctx):
     yield item
 
@@ -412,7 +412,7 @@ async def _stream_root_node(
     Tuple of (chunk_text, full_buffer, metadata_if_complete)
   """
   run_stream_ctx = llm.get_root_node_agent().run_stream(
-    "Generate the first story node.", deps=deps, model_settings={"max_tokens": 8192}
+    "Generate the first story node.", deps=deps, model_settings={"max_tokens": 16384}
   )
   async for item in _stream_node_content(run_stream_ctx):
     yield item
