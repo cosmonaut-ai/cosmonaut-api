@@ -401,7 +401,7 @@ def delete_sessions_for_world(root_world_id: str) -> None:
 
   for session in sessions:
     session_id = str(session.id)
-    members: list[str] = [str(m) for m in session.members] if session.members else []
+    members = [str(m) for m in session.members] if session.members else []  # type: ignore[reportUnknownVariableType]
 
     for member_id in members:
       try:

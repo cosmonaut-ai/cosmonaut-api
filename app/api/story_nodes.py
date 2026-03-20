@@ -18,6 +18,7 @@ from app.models.entities.story_node import StoryNode
 from app.models.voices import get_voice_by_id
 from app.services.audio import generate_and_store_audio
 from app.services.rate_limiter import check_rate_limit
+from app.services.sessions import find_or_create_session, update_session_progress
 from app.services.story_nodes import NodeServiceError
 from app.services.usage import QuotaExceededError, check_and_increment, release_quota
 from app.services.worlds import WorldNotFoundError
@@ -123,8 +124,6 @@ async def choose(
 
   session = None
   try:
-    from app.services.sessions import find_or_create_session
-
     session = find_or_create_session(world_id, current_user.id, world=world)
   except Exception:
     logger.warning("Failed to find/create session for choose dual-write", exc_info=True)
@@ -145,8 +144,6 @@ async def choose(
 
   if session:
     try:
-      from app.services.sessions import update_session_progress
-
       update_session_progress(
         session_id=str(session.id),
         root_world_id=world_id,
@@ -186,8 +183,6 @@ async def generate_text(
 
   session = None
   try:
-    from app.services.sessions import find_or_create_session
-
     session = find_or_create_session(world_id, current_user.id, world=world)
   except Exception:
     logger.warning("Failed to find/create session for generate-text dual-write", exc_info=True)
