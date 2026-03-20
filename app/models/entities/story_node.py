@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from functools import cached_property
 
-from pynamodb.attributes import BooleanAttribute, ListAttribute, MapAttribute, UnicodeAttribute
+from pynamodb.attributes import BooleanAttribute, ListAttribute, MapAttribute, NumberAttribute, UnicodeAttribute
 from pynamodb.indexes import GlobalSecondaryIndex, IncludeProjection
 
 from app.models.dtos.story_node import (
@@ -108,6 +108,9 @@ class StoryNode(BaseCosmonautModel):
 
   audio: MapAttribute[str, str] = MapAttribute(default=dict, null=True)
 
+  source_session_id: UnicodeAttribute = UnicodeAttribute(null=True)
+  next_custom_choice_index: NumberAttribute = NumberAttribute(null=True)
+
   @cached_property
   def ancestors(self) -> list[str]:
     """Get the ancestors of the node, in order from root to self."""
@@ -179,6 +182,7 @@ class StoryNode(BaseCosmonautModel):
       processing_status=StoryNodeProcessingStatus(self.processing_status),
       generation_status=GenerationStatus(self.generation_status),
       audio=dict(self.audio.attribute_values) if self.audio else {},
+      source_session_id=self.source_session_id,
       created_at=self.created_at if self.created_at else None,
       updated_at=self.updated_at if self.updated_at else None,
     )
@@ -219,6 +223,7 @@ class StoryNode(BaseCosmonautModel):
       generation_status=GenerationStatus(dto.generation_status).value,
       context=StoryNodeContext.from_dto(dto.context) if dto.context else None,
       audio=dto.audio if dto.audio else None,
+      source_session_id=dto.source_session_id,
     )
 
   @classmethod

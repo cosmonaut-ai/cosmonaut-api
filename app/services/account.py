@@ -75,6 +75,14 @@ async def delete_account(user_id: str, cognito_username: str, email: str | None 
   except Exception:
     logger.exception("Failed to delete progress records for user %s", user_id)
 
+  # 4b. Delete all session memberships for this user
+  try:
+    from app.services.sessions import delete_user_memberships
+
+    delete_user_memberships(user_id)
+  except Exception:
+    logger.exception("Failed to delete session memberships for user %s", user_id)
+
   # 5. Tombstone the usage record (preserves quota for re-registration abuse prevention)
   if email:
     _tombstone_usage_record(user_id, email)

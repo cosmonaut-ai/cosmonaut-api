@@ -59,3 +59,15 @@ class StorageQuotaError(AppError):
 class ExternalServiceError(AppError):
   status_code = 502
   code = "EXTERNAL_SERVICE_ERROR"
+
+
+class SessionNotFoundError(NotFoundError):
+  code = "SESSION_NOT_FOUND"
+
+
+class SessionAccessDeniedError(ForbiddenError):
+  code = "SESSION_ACCESS_DENIED"
+
+
+class WrongSessionForNodeError(ForbiddenError):
+  code = "WRONG_SESSION_FOR_NODE"

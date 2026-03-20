@@ -19,6 +19,8 @@ class ChoiceDTO(DTOModel):
   is_created: bool = False
   is_custom: bool = False
   creator: str | None = None  # User ID for custom choices
+  creator_email: str | None = None
+  creator_display_name: str | None = None
 
 
 class ChooseRequestDTO(DTOModel):
@@ -69,6 +71,7 @@ class StoryNodeDTO(DTOModel):
   ancestors: list[str] = Field(default_factory=list)
   created_at: datetime | None = None
   updated_at: datetime | None = None
+  source_session_id: str | None = None
   processing_status: StoryNodeProcessingStatus = StoryNodeProcessingStatus.PENDING
   generation_status: GenerationStatus = GenerationStatus.INITIALIZED
   audio: dict[str, str] = Field(default_factory=dict)

@@ -182,12 +182,32 @@ async def _generate_world(payload: GenerateWorldPayload):
     # 3. Initialize Root Node (without text generation)
     # Text will be generated when the client calls /generate-text
     logger.info("Initializing Root Node...")
-    worlds.initialize_root_node(world)
+    root_node = worlds.initialize_root_node(world)
 
     world.generation_status = GenerationStatus.COMPLETED
     logger.info(f"World {world_id} generation complete.")
 
-    # 4. Enqueue image generation (fire-and-forget, non-blocking).
+    # 4. Update session membership with populated world metadata + create root NodeSession
+    try:
+      from app.services.sessions import create_node_session, get_session_for_user, update_membership_metadata
+
+      session = get_session_for_user(str(world.author_id), world_id)
+      if session:
+        update_membership_metadata(
+          user_id=str(world.author_id),
+          root_world_id=world_id,
+          session_id=str(session.id),
+          world=world,
+        )
+        create_node_session(
+          session_id=str(session.id),
+          node_id=str(root_node.id),
+          root_world_id=world_id,
+        )
+    except Exception:
+      logger.warning("Failed to update session data for world %s (non-fatal)", world_id, exc_info=True)
+
+    # 5. Enqueue image generation (fire-and-forget, non-blocking).
     # An SQS failure here must not undo the successful world generation.
     try:
       send_world_image_generation_message(world_id)
@@ -218,6 +238,21 @@ async def _generate_world_image(payload: GenerateWorldImagePayload):
     await images.generate_world_image(world)
     metrics.add_metric(name="WorldImageGenerated", unit=MetricUnit.Count, value=1)
     logger.info(f"World {world_id} image generation complete.")
+
+    try:
+      from app.services.sessions import get_session_for_user, update_membership_metadata
+
+      session = get_session_for_user(str(world.author_id), world_id)
+      if session:
+        update_membership_metadata(
+          user_id=str(world.author_id),
+          root_world_id=world_id,
+          session_id=str(session.id),
+          world=world,
+        )
+    except Exception:
+      logger.warning("Failed to update session image metadata for world %s (non-fatal)", world_id, exc_info=True)
+
   except Exception as e:
     logger.exception(f"Error generating image for world {world_id}: {e}")
     raise
