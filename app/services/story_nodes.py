@@ -25,9 +25,11 @@ import app.services.pinecone as pinecone
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.core.observability import MetricUnit, logger, metrics, tracer
 from app.models.dtos.story_node import ChoiceDTO, GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
+from app.models.entities.node_session import BaseChoiceStateMap, CustomChoiceMap
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
 from app.services.llm.sanitize import sanitize_llm_output, sanitize_user_input
 from app.services.pinecone import PineconeBranchFact
+from app.services.sessions import create_node_session, get_node_session
 from app.services.sqs import SQSSendError, send_node_analysis_message
 from app.services.usage import check_and_increment, release_quota
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
@@ -507,8 +509,6 @@ async def choose(
 
   if session_id:
     try:
-      from app.services.sessions import create_node_session, get_node_session
-
       create_node_session(
         session_id=session_id,
         node_id=new_node_id,
@@ -520,8 +520,6 @@ async def choose(
       parent_ns = get_node_session(session_id, node_id)
       if parent_ns:
         if custom_choice is not None:
-          from app.models.entities.node_session import CustomChoiceMap
-
           custom_map = CustomChoiceMap(
             label=custom_choice,
             target_node_id=new_node_id,
@@ -679,12 +677,8 @@ async def generate_text(
 
     if session_id:
       try:
-        from app.services.sessions import get_node_session
-
         ns = get_node_session(session_id, node_id)
         if ns:
-          from app.models.entities.node_session import BaseChoiceStateMap
-
           ns.title = metadata.title
           ns.base_choice_states = [BaseChoiceStateMap(is_explored=False) for _ in metadata.choices]
           ns.save()

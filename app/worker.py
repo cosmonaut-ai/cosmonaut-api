@@ -16,6 +16,7 @@ from app.models.dtos.world_meta import GenerationStatus
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
 from app.services import images, story_nodes, worlds
+from app.services.sessions import create_node_session, get_session_for_user, update_membership_metadata
 from app.services.sqs import SQSSendError, send_world_image_generation_message
 
 init_sentry()
@@ -189,8 +190,6 @@ async def _generate_world(payload: GenerateWorldPayload):
 
     # 4. Update session membership with populated world metadata + create root NodeSession
     try:
-      from app.services.sessions import create_node_session, get_session_for_user, update_membership_metadata
-
       session = get_session_for_user(str(world.author_id), world_id)
       if session:
         update_membership_metadata(
@@ -240,8 +239,6 @@ async def _generate_world_image(payload: GenerateWorldImagePayload):
     logger.info(f"World {world_id} image generation complete.")
 
     try:
-      from app.services.sessions import get_session_for_user, update_membership_metadata
-
       session = get_session_for_user(str(world.author_id), world_id)
       if session:
         update_membership_metadata(

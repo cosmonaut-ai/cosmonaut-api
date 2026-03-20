@@ -21,6 +21,7 @@ from app.models.entities.world_meta import WorldMeta
 from app.services.newsletter import unsubscribe as newsletter_unsubscribe
 from app.services.s3 import delete_objects_by_prefix
 from app.services.secret_manager import get_secret_value
+from app.services.sessions import delete_sessions_for_world, delete_user_memberships
 from app.services.user_progress import delete_all_user_progress
 
 if TYPE_CHECKING:
@@ -77,8 +78,6 @@ async def delete_account(user_id: str, cognito_username: str, email: str | None 
 
   # 4b. Delete all session memberships for this user
   try:
-    from app.services.sessions import delete_user_memberships
-
     delete_user_memberships(user_id)
   except Exception:
     logger.exception("Failed to delete session memberships for user %s", user_id)
@@ -152,6 +151,12 @@ def _delete_all_user_worlds(user_id: str) -> None:
           logger.info("Deleted %d S3 objects for world %s", count, world_id)
       except Exception:
         logger.exception("Failed to delete S3 objects for world %s", world_id)
+
+      # Delete all sessions associated with this world
+      try:
+        delete_sessions_for_world(world_id)
+      except Exception:
+        logger.exception("Failed to delete sessions for world %s", world_id)
 
     except Exception:
       logger.exception("Failed to delete world %s for user %s", world_id, user_id)
