@@ -430,6 +430,7 @@ async def choose(
   choice_index: int | None = None,
   custom_choice: str | None = None,
   user_id: str | None = None,
+  session_id: str | None = None,
 ) -> StoryNode:
   """Choose a story node option and initialize the next node without generating text.
 
@@ -503,6 +504,43 @@ async def choose(
   node.save()
 
   logger.info(f"Initialized new node {new_node_id} with generation_status=INITIALIZED")
+
+  if session_id:
+    try:
+      from app.services.sessions import create_node_session, get_node_session
+
+      create_node_session(
+        session_id=session_id,
+        node_id=new_node_id,
+        root_world_id=world_id,
+        title=None,
+        base_choice_count=0,
+      )
+
+      parent_ns = get_node_session(session_id, node_id)
+      if parent_ns:
+        if custom_choice is not None:
+          from app.models.entities.node_session import CustomChoiceMap
+
+          custom_map = CustomChoiceMap(
+            label=custom_choice,
+            target_node_id=new_node_id,
+            is_explored=True,
+            creator_id=user_id or "",
+          )
+          parent_ns.custom_choices.append(custom_map)
+          parent_ns.save()
+        elif choice_index < len(parent_ns.base_choice_states):
+          parent_ns.base_choice_states[choice_index].is_explored = True
+          parent_ns.save()
+    except Exception:
+      logger.warning(
+        "Failed to dual-write session data for choose (session=%s, node=%s)",
+        session_id,
+        node_id,
+        exc_info=True,
+      )
+
   return new_node
 
 
@@ -516,6 +554,7 @@ async def generate_text(
   world_id: str,
   node_id: str,
   user_id: str | None = None,
+  session_id: str | None = None,
 ) -> AsyncGenerator[str]:
   """Generate story text for an initialized or failed node.
 
@@ -637,6 +676,25 @@ async def generate_text(
     node.generation_status = GenerationStatus.COMPLETED.value
     node.save()
     metrics.add_metric(name="StoryNodeGenerated", unit=MetricUnit.Count, value=1)
+
+    if session_id:
+      try:
+        from app.services.sessions import get_node_session
+
+        ns = get_node_session(session_id, node_id)
+        if ns:
+          from app.models.entities.node_session import BaseChoiceStateMap
+
+          ns.title = metadata.title
+          ns.base_choice_states = [BaseChoiceStateMap(is_explored=False) for _ in metadata.choices]
+          ns.save()
+      except Exception:
+        logger.warning(
+          "Failed to update NodeSession after text generation (session=%s, node=%s)",
+          session_id,
+          node_id,
+          exc_info=True,
+        )
 
     # Enqueue async fact extraction.  This is non-critical: a failure leaves
     # the node in PENDING processing_status which can be retried via the

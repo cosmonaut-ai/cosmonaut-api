@@ -32,6 +32,7 @@ dev = [
     "boto3-stubs[all]>=1.42.18",
     "httpx",
     "pytest",
+    "ty>=0.0.24",
     "uvicorn>=0.38.0",
 ]
 

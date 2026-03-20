@@ -119,19 +119,42 @@ async def choose(
       detail="Exactly one of 'choice_index' or 'custom_choice' must be provided",
     )
 
-  require_world_read(world_id, current_user)
+  world = require_world_read(world_id, current_user)
+
+  session = None
+  try:
+    from app.services.sessions import find_or_create_session
+
+    session = find_or_create_session(world_id, current_user.id, world=world)
+  except Exception:
+    logger.warning("Failed to find/create session for choose dual-write", exc_info=True)
+
   new_node = await node_service.choose(
     world_id,
     node_id,
     choice_index=request.choice_index,
     custom_choice=request.custom_choice,
     user_id=current_user.id,
+    session_id=str(session.id) if session else None,
   )
 
   try:
     progress_service.update_progress(current_user.id, world_id, str(new_node.id))
   except Exception:
     logger.warning("Failed to update progress for user %s in world %s", current_user.id, world_id, exc_info=True)
+
+  if session:
+    try:
+      from app.services.sessions import update_session_progress
+
+      update_session_progress(
+        session_id=str(session.id),
+        root_world_id=world_id,
+        user_id=current_user.id,
+        node_id=str(new_node.id),
+      )
+    except Exception:
+      logger.warning("Failed to dual-write session progress", exc_info=True)
 
   return new_node.to_dto()
 
@@ -158,8 +181,16 @@ async def generate_text(
   4. Updates the node with generated text, title, choices, and sets generation_status to COMPLETED
   5. On error, sets generation_status to FAILED
   """
-  require_world_read(world_id, current_user)
+  world = require_world_read(world_id, current_user)
   check_rate_limit(current_user.id, "generate-text")
+
+  session = None
+  try:
+    from app.services.sessions import find_or_create_session
+
+    session = find_or_create_session(world_id, current_user.id, world=world)
+  except Exception:
+    logger.warning("Failed to find/create session for generate-text dual-write", exc_info=True)
 
   # Validate node exists before starting stream.
   # Status validation is intentionally deferred to the service layer which uses
@@ -172,7 +203,9 @@ async def generate_text(
     """Wrap the story node stream in SSE format for better Lambda/Mangum compatibility."""
     try:
       first_chunk = True
-      async for chunk in node_service.generate_text(world_id, node_id, user_id=current_user.id):
+      async for chunk in node_service.generate_text(
+        world_id, node_id, user_id=current_user.id, session_id=str(session.id) if session else None
+      ):
         if await request.is_disconnected():
           logger.info("Client disconnected during text generation for node %s", node_id)
           return
