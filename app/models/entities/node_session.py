@@ -47,6 +47,7 @@ class NodeSession(BaseCosmonautModel):
   session_id: UnicodeAttribute = UnicodeAttribute()
   root_world_id: UnicodeAttribute = UnicodeAttribute()
   title: UnicodeAttribute = UnicodeAttribute(null=True)
+  parent_id: UnicodeAttribute = UnicodeAttribute(null=True)
   base_choice_states: ListAttribute[BaseChoiceStateMap] = ListAttribute(of=BaseChoiceStateMap, default=list)
   custom_choices: ListAttribute[CustomChoiceMap] = ListAttribute(of=CustomChoiceMap, default=list)
 

@@ -199,6 +199,7 @@ def create_node_session(
   root_world_id: str,
   title: str | None = None,
   base_choice_count: int = 0,
+  parent_id: str | None = None,
 ) -> NodeSession:
   """Create a NodeSession for a node within a session.
 
@@ -211,6 +212,7 @@ def create_node_session(
     session_id=session_id,
     root_world_id=root_world_id,
     title=title,
+    parent_id=parent_id,
     base_choice_states=[BaseChoiceStateMap(is_explored=False) for _ in range(base_choice_count)],
   )
   ns.save()
@@ -331,7 +333,10 @@ def update_membership_metadata(
   if world.generation_status:
     actions.append(SessionMembership.generation_status.set(world.generation_status))
   if world.created_at:
-    actions.append(SessionMembership.root_created_at.set(world.created_at))
+    created_at_str = world.created_at.isoformat() if hasattr(world.created_at, "isoformat") else str(world.created_at)
+    actions.append(SessionMembership.root_created_at.set(created_at_str))
+  if world.root_node_id:
+    actions.append(SessionMembership.root_node_id.set(world.root_node_id))
 
   if not actions:
     return
@@ -455,8 +460,12 @@ def _create_membership(
     membership.world_length = world.world_length
     membership.world_image_url = world.world_image_url
     membership.world_image_alt_text = world.world_image_alt_text
-    membership.root_created_at = world.created_at
+    if world.created_at:
+      membership.root_created_at = (
+        world.created_at.isoformat() if hasattr(world.created_at, "isoformat") else str(world.created_at)
+      )
     membership.generation_status = world.generation_status
+    membership.root_node_id = world.root_node_id
 
   membership.save()
   return membership
