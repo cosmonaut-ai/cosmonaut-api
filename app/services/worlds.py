@@ -42,6 +42,7 @@ from app.models.entities.story_node import StoryNode
 from app.models.entities.usage import UserUsage
 from app.models.entities.world_meta import Character, Location, WorldMeta
 from app.services.llm.sanitize import sanitize_user_input
+from app.services.sessions import create_session, delete_sessions_for_world
 from app.services.sqs import send_world_generation_message
 from app.services.usage import (
   StorageQuotaExceededError,
@@ -255,6 +256,12 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
     raise
 
   metrics.add_metric(name="WorldCreated", unit=MetricUnit.Count, value=1)
+
+  try:
+    create_session(root_world_id=world_id, creator_id=user_id, members=[user_id], world=meta)
+  except Exception:
+    logger.warning("Failed to create session for world %s (non-fatal)", world_id, exc_info=True)
+
   return meta
 
 
@@ -319,6 +326,11 @@ def delete_world(world_id: str) -> None:
     pinecone.delete_records(filter={"world_id": world_id})
   except Exception:
     logger.exception("Failed to delete Pinecone records for world %s (non-fatal)", world_id)
+
+  try:
+    delete_sessions_for_world(world_id)
+  except Exception:
+    logger.warning("Failed to delete sessions for world %s (non-fatal)", world_id, exc_info=True)
 
   if author_id:
     _decrement_world_count(author_id)

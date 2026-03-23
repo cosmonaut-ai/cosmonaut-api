@@ -25,9 +25,11 @@ import app.services.pinecone as pinecone
 from app.core.errors import BadRequestError, ConflictError, ForbiddenError, NotFoundError
 from app.core.observability import MetricUnit, logger, metrics, tracer
 from app.models.dtos.story_node import ChoiceDTO, GenerationStatus, StoryNodeDTO, StoryNodeProcessingStatus
+from app.models.entities.node_session import BaseChoiceStateMap, CustomChoiceMap
 from app.models.entities.story_node import ChoiceMap, StoryNode, StoryNodeContext
 from app.services.llm.sanitize import sanitize_llm_output, sanitize_user_input
 from app.services.pinecone import PineconeBranchFact
+from app.services.sessions import create_node_session, get_node_session
 from app.services.sqs import SQSSendError, send_node_analysis_message
 from app.services.usage import check_and_increment, release_quota
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
@@ -430,6 +432,7 @@ async def choose(
   choice_index: int | None = None,
   custom_choice: str | None = None,
   user_id: str | None = None,
+  session_id: str | None = None,
 ) -> StoryNode:
   """Choose a story node option and initialize the next node without generating text.
 
@@ -503,6 +506,39 @@ async def choose(
   node.save()
 
   logger.info(f"Initialized new node {new_node_id} with generation_status=INITIALIZED")
+
+  if session_id:
+    try:
+      create_node_session(
+        session_id=session_id,
+        node_id=new_node_id,
+        root_world_id=world_id,
+        title=None,
+        base_choice_count=0,
+      )
+
+      parent_ns = get_node_session(session_id, node_id)
+      if parent_ns:
+        if custom_choice is not None:
+          custom_map = CustomChoiceMap(
+            label=custom_choice,
+            target_node_id=new_node_id,
+            is_explored=True,
+            creator_id=user_id or "",
+          )
+          parent_ns.custom_choices.append(custom_map)
+          parent_ns.save()
+        elif choice_index < len(parent_ns.base_choice_states):
+          parent_ns.base_choice_states[choice_index].is_explored = True
+          parent_ns.save()
+    except Exception:
+      logger.warning(
+        "Failed to dual-write session data for choose (session=%s, node=%s)",
+        session_id,
+        node_id,
+        exc_info=True,
+      )
+
   return new_node
 
 
@@ -516,6 +552,7 @@ async def generate_text(
   world_id: str,
   node_id: str,
   user_id: str | None = None,
+  session_id: str | None = None,
 ) -> AsyncGenerator[str]:
   """Generate story text for an initialized or failed node.
 
@@ -637,6 +674,21 @@ async def generate_text(
     node.generation_status = GenerationStatus.COMPLETED.value
     node.save()
     metrics.add_metric(name="StoryNodeGenerated", unit=MetricUnit.Count, value=1)
+
+    if session_id:
+      try:
+        ns = get_node_session(session_id, node_id)
+        if ns:
+          ns.title = metadata.title
+          ns.base_choice_states = [BaseChoiceStateMap(is_explored=False) for _ in metadata.choices]
+          ns.save()
+      except Exception:
+        logger.warning(
+          "Failed to update NodeSession after text generation (session=%s, node=%s)",
+          session_id,
+          node_id,
+          exc_info=True,
+        )
 
     # Enqueue async fact extraction.  This is non-critical: a failure leaves
     # the node in PENDING processing_status which can be retried via the
