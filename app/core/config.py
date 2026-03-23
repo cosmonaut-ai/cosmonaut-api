@@ -90,7 +90,7 @@ class Settings(BaseSettings):
 
   # Session migration
   USE_SESSIONS: bool = Field(
-    default=False,
+    default=True,
     description="Enable session-based routing. When False, all requests use legacy world_id paths.",
   )
 
