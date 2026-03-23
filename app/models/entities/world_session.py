@@ -8,8 +8,19 @@ from pynamodb.attributes import (
   NumberAttribute,
   UnicodeAttribute,
 )
+from pynamodb.indexes import GlobalSecondaryIndex, KeysOnlyProjection
 
 from app.models.entities.base import BaseCosmonautModel
+
+
+class GSI3Model(GlobalSecondaryIndex):  # type: ignore[type-arg]
+  """Global secondary index for looking up all sessions belonging to a root world."""
+
+  GSI3PK: UnicodeAttribute = UnicodeAttribute(hash_key=True)
+  GSI3SK: UnicodeAttribute = UnicodeAttribute(range_key=True)
+
+  class Meta:  # type: ignore[misc]
+    projection = KeysOnlyProjection()
 
 
 class WorldSession(BaseCosmonautModel):
@@ -22,8 +33,11 @@ class WorldSession(BaseCosmonautModel):
   Shares the SESSION# partition with NodeSession items (SK = NODE#{node_id}),
   enabling efficient queries for all session data within a single partition.
 
-  GSI3 attributes are populated now but the index is deferred to Phase 6.
+  GSI3 (ROOTWORLD#{root_world_id} -> SESSION#{session_id}) enables efficient
+  lookup of all sessions for a root world during world deletion cascade.
   """
+
+  GSI3: GSI3Model = GSI3Model()
 
   id: UnicodeAttribute = UnicodeAttribute()
   root_world_id: UnicodeAttribute = UnicodeAttribute()

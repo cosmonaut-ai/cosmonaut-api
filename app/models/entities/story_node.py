@@ -5,7 +5,6 @@ from __future__ import annotations
 from functools import cached_property
 
 from pynamodb.attributes import BooleanAttribute, ListAttribute, MapAttribute, NumberAttribute, UnicodeAttribute
-from pynamodb.indexes import GlobalSecondaryIndex, IncludeProjection
 
 from app.models.dtos.story_node import (
   ChoiceDTO,
@@ -16,16 +15,6 @@ from app.models.dtos.story_node import (
 )
 from app.models.entities.base import BaseCosmonautModel
 from app.utils import base52_to_number, number_to_base52
-
-
-class GSI2Model(GlobalSecondaryIndex):  # type: ignore[type-arg]
-  """Global secondary index for story nodes by world ID."""
-
-  GSI2PK: UnicodeAttribute = UnicodeAttribute(hash_key=True)
-  GSI2SK: UnicodeAttribute = UnicodeAttribute(range_key=True)
-
-  class Meta:  # type: ignore[misc]
-    projection = IncludeProjection(["node_title", "node_choices", "node_parent_id", "generation_status", "node_id"])
 
 
 class ChoiceMap(MapAttribute[str, UnicodeAttribute]):
@@ -88,11 +77,6 @@ class StoryNode(BaseCosmonautModel):
   - 0aacda2aaA
   - root (0) -> 1st choice (a) -> 1st (a) -> 3rd (c) -> 4th (d)-> 1st (a) -> 53rd (2aa) -> 53rd (A)
   """
-
-  GSI2: GSI2Model = GSI2Model()
-
-  GSI2PK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI2PK", null=True)
-  GSI2SK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI2SK", null=True)
 
   id: UnicodeAttribute = UnicodeAttribute(attr_name="node_id")
   world_id: UnicodeAttribute = UnicodeAttribute()
@@ -194,8 +178,6 @@ class StoryNode(BaseCosmonautModel):
     return StoryNode(
       PK=cls.pk(dto.world_id),
       SK=cls.sk(dto.id),
-      GSI2PK=cls.gsi2_pk(dto.world_id),
-      GSI2SK=cls.gsi2_sk(dto.id),
       id=dto.id,
       world_id=dto.world_id,
       text=dto.text,
@@ -232,12 +214,4 @@ class StoryNode(BaseCosmonautModel):
 
   @classmethod
   def sk(cls, node_id: str) -> str:
-    return f"NODE#{node_id}"
-
-  @classmethod
-  def gsi2_pk(cls, world_id: str) -> str:
-    return f"WORLD#{world_id}"
-
-  @classmethod
-  def gsi2_sk(cls, node_id: str) -> str:
     return f"NODE#{node_id}"

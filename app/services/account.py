@@ -16,13 +16,13 @@ import stripe
 import app.services.pinecone as pinecone_service
 from app.core.config import settings
 from app.core.observability import logger
+from app.models.entities.session_membership import SessionMembership
 from app.models.entities.usage import UsageTombstone, UserUsage
 from app.models.entities.world_meta import WorldMeta
 from app.services.newsletter import unsubscribe as newsletter_unsubscribe
 from app.services.s3 import delete_objects_by_prefix
 from app.services.secret_manager import get_secret_value
-from app.services.sessions import delete_sessions_for_world, delete_user_memberships
-from app.services.user_progress import delete_all_user_progress
+from app.services.sessions import delete_session, delete_sessions_for_world, delete_user_memberships
 
 if TYPE_CHECKING:
   from mypy_boto3_cognito_idp.client import CognitoIdentityProviderClient
@@ -45,8 +45,8 @@ async def delete_account(user_id: str, cognito_username: str, email: str | None 
   Steps (order matters for safety):
   1. Cancel any active Stripe subscription and delete the customer
   2. Unsubscribe from newsletter
-  3. Delete all user-owned worlds (nodes + vectors + S3 objects + metadata)
-  4. Delete all user progress records
+  3. Delete all user-owned worlds (nodes + vectors + S3 objects + metadata + sessions)
+  4. Delete all remaining session data (sessions for non-owned worlds + memberships)
   5. Tombstone the usage record (preserves quota for re-registration abuse prevention)
   6. Delete the Cognito user
 
@@ -70,19 +70,31 @@ async def delete_account(user_id: str, cognito_username: str, email: str | None 
   # 3. Delete all worlds owned by this user
   _delete_all_user_worlds(user_id)
 
-  # 4. Delete all progress records
+  # 4. Delete all session data for this user (WorldSession + NodeSession partitions,
+  # then the SessionMembership records). For owned worlds, step 3 already deleted
+  # sessions via delete_sessions_for_world; delete_session handles that no-op gracefully.
   try:
-    delete_all_user_progress(user_id)
-  except Exception:
-    logger.exception("Failed to delete progress records for user %s", user_id)
-
-  # 4b. Delete all session memberships for this user
-  try:
+    memberships = list(
+      SessionMembership.query(
+        SessionMembership.pk(user_id),
+        SessionMembership.SK.startswith("SMEMBER#"),
+      )
+    )
+    for membership in memberships:
+      try:
+        delete_session(str(membership.session_id))
+      except Exception:
+        logger.warning(
+          "Failed to delete session %s for user %s (non-fatal)",
+          membership.session_id,
+          user_id,
+          exc_info=True,
+        )
     delete_user_memberships(user_id)
   except Exception:
-    logger.exception("Failed to delete session memberships for user %s", user_id)
+    logger.exception("Failed to delete session data for user %s", user_id)
 
-  # 5. Tombstone the usage record (preserves quota for re-registration abuse prevention)
+  # 5. Tombstone the usage record
   if email:
     _tombstone_usage_record(user_id, email)
   else:

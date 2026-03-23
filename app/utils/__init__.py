@@ -119,6 +119,41 @@ def base52_to_number(base52_string: str) -> int:
 
 
 ##################################################################
+# N O D E   I D   U T I L I T I E S
+##################################################################
+
+
+def derive_parent_id(node_id: str) -> str | None:
+  """Derive the parent node ID from a StoryNode ID using the base-52 encoding scheme.
+
+  Node IDs encode their full ancestry path. For example, "0abc" represents
+  root (0) -> choice a -> choice b -> choice c. The parent of "0abc" is "0ab".
+  Multi-character choices are prefixed with a digit indicating their length
+  (e.g., "2aa" is a single two-character choice segment).
+
+  Returns None for root nodes (id == "0").
+  """
+  ancestors: list[str] = []
+  build_id = ""
+  i = 0
+  while i < len(node_id):
+    char = node_id[i]
+    if char.isdigit():
+      if char == "0":
+        build_id += "0"
+      else:
+        build_id += node_id[i + 1 : i + int(char) + 1]
+      i += int(char) + 1
+    else:
+      build_id += char
+      i += 1
+    ancestors.append(build_id)
+  if len(ancestors) > 1:
+    return ancestors[-2]
+  return None
+
+
+##################################################################
 # D A T E T I M E   U T I L I T I E S
 ##################################################################
 

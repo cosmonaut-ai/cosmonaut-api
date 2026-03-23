@@ -70,7 +70,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
   if settings.MOCK_AUTH and settings.ENV in ["local"]:
     logger.info("Using mock authentication")
     return User(
-      id="a1abe550-30e1-70ce-4198-6e782be7e643",
+      id="91abb530-d0e1-7026-5de3-faaa13eefa9f",
       email="imatson9119@gmail.com",
       username="CosmonautDev",
       groups=["Owner"],

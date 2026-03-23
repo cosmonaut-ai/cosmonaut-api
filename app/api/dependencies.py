@@ -14,27 +14,6 @@ from app.services.sessions import find_or_create_session, get_session
 from app.services.worlds import get_world_entity
 
 
-def require_world_read(world_id: str, user: User) -> WorldMeta:
-  """Fetch the world and verify read access. Raises 404 if not found, 403 if unauthorized."""
-  world = get_world_entity(world_id)
-  if not world.can_user_read(user.id, user.email):
-    raise ForbiddenError(f"You are not authorized to access world {world_id}")
-  return world
-
-
-def require_world_write(world_id: str, user: User) -> WorldMeta:
-  """Fetch the world and verify write access. Raises 404 if not found, 403 if unauthorized."""
-  world = get_world_entity(world_id)
-  if not world.can_user_write(user.id):
-    raise ForbiddenError(f"You are not authorized to modify world {world_id}")
-  return world
-
-
-# =============================================================================
-# Session-aware access control (Phase 4)
-# =============================================================================
-
-
 def require_session_read(world_id: str, user: User) -> tuple[WorldSession, WorldMeta]:
   """Resolve world_id (which may be a session_id or root_world_id), verify access.
 
@@ -75,6 +54,7 @@ def membership_to_world_dto(membership: SessionMembership) -> WorldMetaDTO:
   """Construct a WorldMetaDTO from denormalized SessionMembership fields."""
   return WorldMetaDTO(
     id=str(membership.session_id),
+    shareable_id=str(membership.root_world_id),
     title=membership.title,
     description=membership.description,
     genre=membership.genre,
@@ -83,6 +63,7 @@ def membership_to_world_dto(membership: SessionMembership) -> WorldMetaDTO:
     world_image_url=membership.world_image_url,
     world_image_alt_text=membership.world_image_alt_text,
     world_length=membership.world_length,
+    family_friendly=membership.family_friendly == "true" if membership.family_friendly else None,
     created_at=str(membership.root_created_at) if membership.root_created_at else None,
     author_id=str(membership.user_id) if membership.role == "owner" else None,
     visibility=None,
