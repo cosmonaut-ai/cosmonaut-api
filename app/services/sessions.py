@@ -337,6 +337,8 @@ def update_membership_metadata(
     actions.append(SessionMembership.root_created_at.set(created_at_str))
   if world.root_node_id:
     actions.append(SessionMembership.root_node_id.set(world.root_node_id))
+  if world.family_friendly is not None:
+    actions.append(SessionMembership.family_friendly.set(world.family_friendly))
 
   if not actions:
     return
@@ -394,19 +396,20 @@ def delete_user_memberships(user_id: str) -> None:
 def delete_sessions_for_world(root_world_id: str) -> None:
   """Delete all sessions associated with a root world.
 
-  Phase 2 approach: scans the table filtering on root_world_id and SK=META.
-  Acceptable for small volume (typically 1-5 sessions per world).
-  Will be replaced by a GSI3 query in Phase 6.
+  Uses GSI3 (ROOTWORLD#{root_world_id} -> SESSION#{session_id}) to
+  efficiently find sessions without a full table scan.
   """
-  sessions: list[WorldSession] = list(
-    WorldSession.scan(
-      (WorldSession.SK == "META") & (WorldSession.root_world_id == root_world_id),
-    )
-  )
+  gsi3_pk = WorldSession.gsi3_pk(root_world_id)
+  gsi3_results = list(WorldSession.GSI3.query(hash_key=gsi3_pk))
 
-  for session in sessions:
-    session_id = str(session.id)
-    members = [str(m) for m in session.members] if session.members else []  # type: ignore[reportUnknownVariableType]
+  for result in gsi3_results:
+    session_id = str(result.PK).removeprefix("SESSION#")
+
+    try:
+      session = get_session(session_id)
+      members = [str(m) for m in session.members] if session.members else []  # type: ignore[reportUnknownVariableType]
+    except SessionNotFoundError:
+      members = []
 
     for member_id in members:
       try:
@@ -425,8 +428,8 @@ def delete_sessions_for_world(root_world_id: str) -> None:
 
     delete_session(session_id)
 
-  if sessions:
-    logger.info("Deleted %d sessions for world %s", len(sessions), root_world_id)
+  if gsi3_results:
+    logger.info("Deleted %d sessions for world %s", len(gsi3_results), root_world_id)
 
 
 # =============================================================================
@@ -466,6 +469,7 @@ def _create_membership(
       )
     membership.generation_status = world.generation_status
     membership.root_node_id = world.root_node_id
+    membership.family_friendly = world.family_friendly
 
   membership.save()
   return membership

@@ -76,6 +76,11 @@ class ValidationResult:
   choice_state_checks: int = 0
   choice_state_mismatches: int = 0
 
+  # Phase 4 field checks
+  node_sessions_missing_parent_id: int = 0
+  memberships_missing_root_node_id: int = 0
+  memberships_missing_family_friendly: int = 0
+
   errors: list[str] = field(default_factory=list)
 
   @property
@@ -90,6 +95,9 @@ class ValidationResult:
       and self.source_session_invalid == 0
       and self.author_node_sessions_missing == 0
       and self.choice_state_mismatches == 0
+      and self.node_sessions_missing_parent_id == 0
+      and self.memberships_missing_root_node_id == 0
+      and self.memberships_missing_family_friendly == 0
       and len(self.errors) == 0
     )
 
@@ -285,6 +293,11 @@ def check_7_8_node_session_coverage(result: ValidationResult, world_sessions: di
           f"but StoryNode has {len(base_choices)} base choices"
         )
 
+      # Check 9: NodeSession.parent_id populated for non-root nodes
+      if node_id != "0" and ns.parent_id is None:
+        result.node_sessions_missing_parent_id += 1
+        result.errors.append(f"NodeSession {node_id} in session {session_id} missing parent_id")
+
   log.info(
     "  Check 7: %d expected, %d found, %d missing",
     result.author_node_sessions_expected,
@@ -295,6 +308,33 @@ def check_7_8_node_session_coverage(result: ValidationResult, world_sessions: di
     "  Check 8: %d checked, %d mismatches",
     result.choice_state_checks,
     result.choice_state_mismatches,
+  )
+  log.info("  Check 9: %d NodeSessions missing parent_id", result.node_sessions_missing_parent_id)
+
+
+def check_10_membership_metadata(result: ValidationResult, world_sessions: dict[str, tuple[str, str]]) -> None:
+  """Check 10: SessionMembership has Phase 4 denormalized fields populated."""
+  log.info("Check 10: SessionMembership Phase 4 metadata (root_node_id, family_friendly)")
+
+  for world_id, (session_id, author_id) in world_sessions.items():
+    try:
+      membership = SessionMembership.get(
+        SessionMembership.pk(author_id),
+        SessionMembership.sk(world_id, session_id),
+      )
+      if membership.root_node_id is None:
+        result.memberships_missing_root_node_id += 1
+        result.errors.append(f"SessionMembership (user={author_id}, world={world_id}) missing root_node_id")
+      if membership.family_friendly is None:
+        result.memberships_missing_family_friendly += 1
+        result.errors.append(f"SessionMembership (user={author_id}, world={world_id}) missing family_friendly")
+    except SessionMembership.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+      pass  # Already caught by check_2
+
+  log.info(
+    "  %d missing root_node_id, %d missing family_friendly",
+    result.memberships_missing_root_node_id,
+    result.memberships_missing_family_friendly,
   )
 
 
@@ -332,6 +372,10 @@ def print_report(result: ValidationResult) -> None:
     result.choice_state_checks,
     result.choice_state_mismatches,
   )
+  log.info("Phase 4 fields:")
+  log.info("  NodeSessions missing parent_id:       %d", result.node_sessions_missing_parent_id)
+  log.info("  Memberships missing root_node_id:     %d", result.memberships_missing_root_node_id)
+  log.info("  Memberships missing family_friendly:  %d", result.memberships_missing_family_friendly)
 
   if result.errors:
     log.info("")
@@ -359,6 +403,7 @@ def main() -> None:
   check_3_progress_alignment(result, world_sessions)
   check_4_5_6_story_nodes(result, world_sessions)
   check_7_8_node_session_coverage(result, world_sessions)
+  check_10_membership_metadata(result, world_sessions)
 
   print_report(result)
 

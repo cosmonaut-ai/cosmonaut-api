@@ -11,14 +11,12 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager
 from typing import TYPE_CHECKING, Any
 
 from pynamodb.exceptions import UpdateError
-from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
@@ -221,46 +219,6 @@ def get_node_entity(world_id: str, node_id: str) -> StoryNode:
     raise NodeNotFoundError(world_id, node_id) from e
 
 
-@tracer.capture_method
-def list_nodes(
-  world_id: str,
-  limit: int = 100,
-  cursor: str | None = None,
-) -> tuple[list[StoryNode], str | None]:
-  """Return nodes for a given world with cursor-based pagination.
-
-  Args:
-    world_id: The world identifier.
-    limit: Maximum number of nodes to return (default 100).
-    cursor: Opaque pagination token from a previous response.
-
-  Returns:
-    Tuple of (nodes, next_cursor).  ``next_cursor`` is None when there
-    are no more pages.
-  """
-  import base64
-  import json
-
-  pk = StoryNode.gsi2_pk(world_id)
-
-  last_evaluated_key = None
-  if cursor:
-    with contextlib.suppress(Exception):
-      last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
-
-  results: ResultIterator[StoryNode] = StoryNode.GSI2.query(  # type: ignore[reportUnknownReturnType]
-    hash_key=pk,
-    page_size=limit,
-    limit=limit,
-    last_evaluated_key=last_evaluated_key,
-  )
-  nodes = list(results)
-  next_cursor: str | None = None
-  if results.last_evaluated_key:
-    next_cursor = base64.urlsafe_b64encode(json.dumps(results.last_evaluated_key).encode()).decode()
-  return nodes, next_cursor
-
-
 def get_node(world_id: str, node_id: str) -> StoryNode:
   """Fetch a single node by identifier."""
   return get_node_entity(world_id, node_id)
@@ -276,48 +234,6 @@ def get_node_entities(world_id: str, node_ids: list[str]) -> list[StoryNode]:
 # =============================================================================
 # Choose Flow - Helper Functions
 # =============================================================================
-
-
-async def _validate_and_prepare_choice(
-  node: StoryNode,
-  node_id: str,
-  choice_index: int | None,
-  custom_choice: str | None,
-  user_id: str | None,
-) -> int:
-  """Validate choice and prepare node for selection.
-
-  Returns:
-    Tuple of (choice_index, is_custom_choice)
-  """
-
-  # The choose flow only needs the node to exist and have valid choices.
-  # Processing status (fact extraction) is not required here -- the
-  # generate-text path will use whatever context is available at that time.
-
-  if custom_choice is not None:
-    custom_choice = sanitize_user_input(custom_choice)
-    choice_index = len(node.choices)
-    new_choice = ChoiceMap(
-      label=custom_choice,
-      target=node.get_child_id(choice_index),
-      is_custom=True,
-      creator=user_id,
-    )
-    node.choices.append(new_choice)
-    node.save()
-    logger.info("Added custom choice at index %s: %s", choice_index, truncate_for_log(custom_choice))
-  else:
-    if choice_index is None:
-      raise InvalidChoiceError(node_id, -1, len(node.choices) - 1 if node.choices else -1)
-    if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
-      max_index = len(node.choices) - 1 if node.choices else -1
-      raise InvalidChoiceError(node_id, choice_index, max_index)
-    # No save() needed here — the node is not modified when selecting an
-    # existing choice by index.  The is_created flag is set later in choose().
-    logger.info(f"Selected existing choice at index {choice_index}")
-
-  return choice_index
 
 
 def _build_previous_text(
@@ -458,130 +374,7 @@ async def _stream_root_node(
 
 
 # =============================================================================
-# Main Choose Function
-# =============================================================================
-
-
-@tracer.capture_method
-async def choose(
-  world_id: str,
-  node_id: str,
-  choice_index: int | None = None,
-  custom_choice: str | None = None,
-  user_id: str | None = None,
-  session_id: str | None = None,
-) -> StoryNode:
-  """Choose a story node option and initialize the next node without generating text.
-
-  If the node already exists, returns the existing node.
-  If the node doesn't exist, creates a new node with INITIALIZED generation status.
-
-  Args:
-    world_id: The world identifier
-    node_id: The current node identifier
-    choice_index: Index of an existing choice (mutually exclusive with custom_choice)
-    custom_choice: Free text custom choice (mutually exclusive with choice_index)
-    user_id: User ID for tracking custom choice creator
-
-  Returns:
-    The initialized or existing story node
-  """
-  logger.info(
-    "Choosing node %s with choice_index=%s, custom_choice=%s",
-    node_id,
-    choice_index,
-    truncate_for_log(custom_choice) if custom_choice else None,
-  )
-
-  # Validate and prepare choice
-  node = get_node_entity(world_id, node_id)
-
-  if node.depth >= ABSOLUTE_MAX_DEPTH:
-    raise DepthLimitReachedError(world_id, node_id, node.depth)
-
-  choice_index = await _validate_and_prepare_choice(node, node_id, choice_index, custom_choice, user_id)
-
-  selected_choice = node.choices[choice_index]
-  new_node_id = selected_choice.target or node.get_child_id(choice_index)
-
-  # Return existing node if already created
-  if selected_choice.is_created:
-    logger.info(f"Returning existing node {new_node_id} for choice {choice_index}")
-    try:
-      return get_node_entity(world_id, new_node_id)
-    except NodeNotFoundError:
-      logger.error(f"New node {new_node_id} not found even though parent choice is created. Continuing.")
-
-  # Create new initialized node (without text).
-  # NOTE: These two writes are intentionally non-transactional.  If the process
-  # crashes between them, the child node exists but ``is_created`` on the parent
-  # remains False.  A retry will overwrite the child (same deterministic ID,
-  # still INITIALIZED with no content) and then set ``is_created``.  This is safe
-  # and avoids the added latency/complexity of DynamoDB TransactWriteItems.
-  parent_choice_dto = ChoiceDTO(
-    label=selected_choice.label,
-    outcome=selected_choice.outcome,
-    target=selected_choice.target,
-    is_created=bool(selected_choice.is_created),
-    is_custom=bool(selected_choice.is_custom),
-    creator=selected_choice.creator,
-  )
-  new_node_dto = StoryNodeDTO(
-    id=new_node_id,
-    world_id=world_id,
-    text=None,
-    story_summary=None,
-    title=None,
-    choices=[],
-    parent_choice=parent_choice_dto,
-    processing_status=StoryNodeProcessingStatus.PENDING,
-    generation_status=GenerationStatus.INITIALIZED,
-  )
-  new_node = StoryNode.from_dto(new_node_dto)
-  new_node.save()
-  node.choices[choice_index].is_created = True
-  node.save()
-
-  logger.info(f"Initialized new node {new_node_id} with generation_status=INITIALIZED")
-
-  if session_id:
-    try:
-      create_node_session(
-        session_id=session_id,
-        node_id=new_node_id,
-        root_world_id=world_id,
-        title=None,
-        base_choice_count=0,
-        parent_id=node_id,
-      )
-
-      parent_ns = get_node_session(session_id, node_id)
-      if parent_ns:
-        if custom_choice is not None:
-          custom_map = CustomChoiceMap(
-            label=custom_choice,
-            target_node_id=new_node_id,
-            is_explored=True,
-            creator_id=user_id or "",
-          )
-          parent_ns.custom_choices.append(custom_map)
-          parent_ns.save()
-        elif choice_index < len(parent_ns.base_choice_states):
-          parent_ns.base_choice_states[choice_index].is_explored = True
-          parent_ns.save()
-    except Exception:
-      logger.warning(
-        "Failed to dual-write session data for choose (session=%s, node=%s)",
-        session_id,
-        node_id,
-        exc_info=True,
-      )
-
-  return new_node
-
-
-# =============================================================================
-# Session-First Choose Flow
+# Choose Flow
 # =============================================================================
 
 
@@ -651,15 +444,23 @@ async def _choose_custom_with_session(
   create_node_session(session_id, child_id, root_world_id, parent_id=str(node.id))
 
   parent_ns = get_node_session(session_id, str(node.id))
-  if parent_ns:
-    cc_map = CustomChoiceMap(
-      label=custom_choice,
-      target_node_id=child_id,
-      is_explored=True,
-      creator_id=user_id or "",
+  if not parent_ns:
+    parent_ns = create_node_session(
+      session_id=session_id,
+      node_id=str(node.id),
+      root_world_id=root_world_id,
+      title=node.title,
+      base_choice_count=len(node.choices),
+      parent_id=node.parent_id,
     )
-    parent_ns.custom_choices.append(cc_map)
-    parent_ns.save()
+  cc_map = CustomChoiceMap(
+    label=custom_choice,
+    target_node_id=child_id,
+    is_explored=True,
+    creator_id=user_id or "",
+  )
+  parent_ns.custom_choices.append(cc_map)
+  parent_ns.save()
 
   logger.info("Created custom-choice node %s in session %s", child_id, session_id)
   return child
@@ -704,7 +505,16 @@ async def _choose_base_with_session(
     create_node_session(session_id, child_id, root_world_id, parent_id=str(node.id))
 
   parent_ns = get_node_session(session_id, str(node.id))
-  if parent_ns and choice_index < len(parent_ns.base_choice_states):
+  if not parent_ns:
+    parent_ns = create_node_session(
+      session_id=session_id,
+      node_id=str(node.id),
+      root_world_id=root_world_id,
+      title=node.title,
+      base_choice_count=len(node.choices),
+      parent_id=node.parent_id,
+    )
+  if choice_index < len(parent_ns.base_choice_states):
     parent_ns.base_choice_states[choice_index].is_explored = True
     parent_ns.save()
 
@@ -847,9 +657,18 @@ async def generate_text(
           ns.title = metadata.title
           ns.base_choice_states = [BaseChoiceStateMap(is_explored=False) for _ in metadata.choices]
           ns.save()
+        else:
+          create_node_session(
+            session_id=session_id,
+            node_id=node_id,
+            root_world_id=world_id,
+            title=metadata.title,
+            base_choice_count=len(metadata.choices),
+            parent_id=node.parent_id,
+          )
       except Exception:
         logger.warning(
-          "Failed to update NodeSession after text generation (session=%s, node=%s)",
+          "Failed to update/create NodeSession after text generation (session=%s, node=%s)",
           session_id,
           node_id,
           exc_info=True,

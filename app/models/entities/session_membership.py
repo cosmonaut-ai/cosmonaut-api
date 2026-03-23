@@ -20,8 +20,8 @@ class SessionMembership(BaseCosmonautModel):
     2. List all sessions for a user (dashboard):
        query PK=USER#{user_id}, SK begins_with SMEMBER#
 
-  Coexists in the USER# partition alongside UserProgress (SK=PROGRESS#...)
-  and UserUsage (SK=USAGE) with no SK prefix collision.
+  Coexists in the USER# partition alongside UserUsage (SK=USAGE)
+  with no SK prefix collision.
   """
 
   session_id: UnicodeAttribute = UnicodeAttribute()
@@ -40,6 +40,7 @@ class SessionMembership(BaseCosmonautModel):
   root_node_id: UnicodeAttribute = UnicodeAttribute(null=True)
   root_created_at: UnicodeAttribute = UnicodeAttribute(null=True)
   generation_status: UnicodeAttribute = UnicodeAttribute(null=True)
+  family_friendly: UnicodeAttribute = UnicodeAttribute(null=True)
 
   # Live session state
   last_visited_node_id: UnicodeAttribute = UnicodeAttribute(null=True)

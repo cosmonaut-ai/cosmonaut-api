@@ -88,12 +88,6 @@ class Settings(BaseSettings):
   # Frontend
   FRONTEND_DOMAIN: str = Field(default="dev.cosmonaut-ai.com", description="Public frontend domain for canonical URLs.")
 
-  # Session migration
-  USE_SESSIONS: bool = Field(
-    default=True,
-    description="Enable session-based routing. When False, all requests use legacy world_id paths.",
-  )
-
   # Dev access control
   DEV_ALLOWED_EMAILS: list[str] = Field(
     default=["imatson9119@gmail.com", "ian@cosmonaut-ai.com"],
