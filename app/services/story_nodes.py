@@ -110,6 +110,44 @@ class DepthLimitReachedError(NodeServiceError, ForbiddenError):
 
 
 # =============================================================================
+# Session Choice Merging
+# =============================================================================
+
+
+def merge_choices(
+  base_choices: list[ChoiceMap],
+  base_choice_states: list[BaseChoiceStateMap],
+  custom_choices: list[CustomChoiceMap],
+) -> list[ChoiceDTO]:
+  """Merge root StoryNode base choices with NodeSession overlay."""
+  result: list[ChoiceDTO] = []
+  for i, choice in enumerate(base_choices):
+    is_explored = base_choice_states[i].is_explored if i < len(base_choice_states) else False
+    result.append(
+      ChoiceDTO(
+        label=choice.label,
+        outcome=choice.outcome,
+        target=choice.target,
+        is_created=bool(is_explored),
+        is_custom=False,
+      )
+    )
+  for cc in custom_choices:
+    result.append(
+      ChoiceDTO(
+        label=cc.label,
+        target=cc.target_node_id,
+        is_created=bool(cc.is_explored),
+        is_custom=True,
+        creator=cc.creator_id,
+        creator_email=cc.creator_email,
+        creator_display_name=cc.creator_display_name,
+      )
+    )
+  return result
+
+
+# =============================================================================
 # Pinecone Query Helpers
 # =============================================================================
 
@@ -292,11 +330,10 @@ def _build_previous_text(
     prev_story_nodes_text += current_node.text
     if i < len(prev_story_nodes) - 1:
       next_node = prev_story_nodes[i + 1]
-      choice_idx = next_node.choice_index
-      if choice_idx is not None and choice_idx < len(current_node.choices):
-        choice_text = current_node.choices[choice_idx].label
+      if next_node.parent_choice:
+        choice_text = next_node.parent_choice.label
         prev_story_nodes_text += f'\n\nUser chose: "{choice_text}"'
-        if current_node.choices[choice_idx].is_custom:
+        if next_node.parent_choice.is_custom:
           prev_story_nodes_text += " *(custom choice)*"
         prev_story_nodes_text += "\n\n"
     else:
@@ -515,6 +552,7 @@ async def choose(
         root_world_id=world_id,
         title=None,
         base_choice_count=0,
+        parent_id=node_id,
       )
 
       parent_ns = get_node_session(session_id, node_id)
@@ -540,6 +578,137 @@ async def choose(
       )
 
   return new_node
+
+
+# =============================================================================
+# Session-First Choose Flow
+# =============================================================================
+
+
+@tracer.capture_method
+async def choose_with_session(
+  root_world_id: str,
+  session_id: str,
+  node_id: str,
+  choice_index: int | None = None,
+  custom_choice: str | None = None,
+  user_id: str | None = None,
+) -> StoryNode:
+  """Session-first choose: custom choices are session-scoped, not appended to StoryNode.choices."""
+  node = get_node_entity(root_world_id, node_id)
+  if node.depth >= ABSOLUTE_MAX_DEPTH:
+    raise DepthLimitReachedError(root_world_id, node_id, node.depth)
+
+  if custom_choice is not None:
+    return await _choose_custom_with_session(node, root_world_id, session_id, custom_choice, user_id)
+  if choice_index is None:
+    raise InvalidChoiceError(node_id, -1, len(node.choices) - 1)
+  return await _choose_base_with_session(node, root_world_id, session_id, choice_index, user_id)
+
+
+async def _choose_custom_with_session(
+  node: StoryNode,
+  root_world_id: str,
+  session_id: str,
+  custom_choice: str,
+  user_id: str | None,
+) -> StoryNode:
+  """Create a custom-choice child node scoped to this session."""
+  custom_choice = sanitize_user_input(custom_choice)
+
+  # Atomically claim the next custom choice index on the StoryNode.
+  # This ensures unique child IDs across concurrent sessions.
+  try:
+    if node.next_custom_choice_index is None:
+      node.update(
+        actions=[StoryNode.next_custom_choice_index.set(len(node.choices))],
+        condition=StoryNode.next_custom_choice_index.does_not_exist(),
+      )
+      node.refresh()
+  except UpdateError:
+    node.refresh()
+
+  node.update(
+    actions=[StoryNode.next_custom_choice_index.set(StoryNode.next_custom_choice_index + 1)],
+  )
+  node.refresh()
+  actual_index = int(node.next_custom_choice_index) - 1
+  child_id = StoryNode.get_child_id_static(str(node.id), actual_index)
+
+  parent_choice_dto = ChoiceDTO(label=custom_choice, is_custom=True, creator=user_id)
+  child_dto = StoryNodeDTO(
+    id=child_id,
+    world_id=root_world_id,
+    parent_choice=parent_choice_dto,
+    source_session_id=session_id,
+    generation_status=GenerationStatus.INITIALIZED,
+    processing_status=StoryNodeProcessingStatus.PENDING,
+  )
+  child = StoryNode.from_dto(child_dto)
+  child.source_session_id = session_id
+  child.save()
+
+  create_node_session(session_id, child_id, root_world_id, parent_id=str(node.id))
+
+  parent_ns = get_node_session(session_id, str(node.id))
+  if parent_ns:
+    cc_map = CustomChoiceMap(
+      label=custom_choice,
+      target_node_id=child_id,
+      is_explored=True,
+      creator_id=user_id or "",
+    )
+    parent_ns.custom_choices.append(cc_map)
+    parent_ns.save()
+
+  logger.info("Created custom-choice node %s in session %s", child_id, session_id)
+  return child
+
+
+async def _choose_base_with_session(
+  node: StoryNode,
+  root_world_id: str,
+  session_id: str,
+  choice_index: int,
+  user_id: str | None,
+) -> StoryNode:
+  """Select a base choice, creating the child StoryNode if needed, and ensuring NodeSession state."""
+  if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
+    raise InvalidChoiceError(str(node.id), choice_index, len(node.choices) - 1)
+
+  selected = node.choices[choice_index]
+  child_id = selected.target or node.get_child_id(choice_index)
+
+  if selected.is_created:
+    child = get_node_entity(root_world_id, child_id)
+  else:
+    parent_choice_dto = ChoiceDTO(
+      label=selected.label,
+      outcome=selected.outcome,
+      target=selected.target,
+      is_custom=False,
+    )
+    child_dto = StoryNodeDTO(
+      id=child_id,
+      world_id=root_world_id,
+      parent_choice=parent_choice_dto,
+      generation_status=GenerationStatus.INITIALIZED,
+      processing_status=StoryNodeProcessingStatus.PENDING,
+    )
+    child = StoryNode.from_dto(child_dto)
+    child.save()
+    node.choices[choice_index].is_created = True
+    node.save()
+
+  if not get_node_session(session_id, child_id):
+    create_node_session(session_id, child_id, root_world_id, parent_id=str(node.id))
+
+  parent_ns = get_node_session(session_id, str(node.id))
+  if parent_ns and choice_index < len(parent_ns.base_choice_states):
+    parent_ns.base_choice_states[choice_index].is_explored = True
+    parent_ns.save()
+
+  return child
 
 
 # =============================================================================
@@ -634,11 +803,7 @@ async def generate_text(
       )
       world_meta = world_meta_result
 
-      if node.choice_index is None or node.choice_index >= len(parent_node.choices):
-        raise InvalidChoiceError(node_id, node.choice_index or -1, len(parent_node.choices) - 1)
-
-      selected_choice = parent_node.choices[node.choice_index]
-      next_deps = _build_next_node_deps(parent_node, world_meta, selected_choice)
+      next_deps = _build_next_node_deps(parent_node, world_meta, node.parent_choice)
       stream = _stream_next_node(next_deps, world_id=world_id)
 
     # Stream content and collect metadata
@@ -717,7 +882,6 @@ async def generate_text(
 async def process_node(node: StoryNode) -> None:
   """Process a node: extract facts and upsert to Pinecone."""
   world_id = node.world_id
-  parent_node: StoryNode | None = get_node_entity(world_id, node.parent_id) if node.parent_id else None
 
   # Fetch facts from Pinecone.  A failure here is non-fatal: the node will be
   # processed with empty/partial context, degrading story quality but not
@@ -760,7 +924,7 @@ async def process_node(node: StoryNode) -> None:
   # Extract new facts via LLM
   fact_deps = llm.LLMFactExtractionDeps(
     text=node.text,
-    user_choice=parent_node.choices[node.choice_index].label if parent_node and node.choice_index else None,
+    user_choice=node.parent_choice.label if node.parent_choice else None,
   )
   facts = await llm.generate_facts_async(fact_deps)
 

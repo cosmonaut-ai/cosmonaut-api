@@ -5,7 +5,13 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Path, Query, status
 
 import app.services.worlds as world_service
-from app.api.dependencies import require_world_read, require_world_write
+from app.api.dependencies import (
+  membership_to_world_dto,
+  require_session_read,
+  require_session_write,
+  require_world_read,
+  require_world_write,
+)
 from app.core.config import settings
 from app.core.observability import logger
 from app.core.security import User, get_current_user
@@ -13,6 +19,7 @@ from app.models.dtos.base import PaginatedResponse
 from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO, WorldUpdateSharingRequest
 from app.services.email import send_world_invite
 from app.services.rate_limiter import check_rate_limit
+from app.services.sessions import get_session_for_user, list_user_sessions
 
 router = APIRouter(prefix="/worlds", tags=["worlds"])
 
@@ -25,6 +32,10 @@ async def list_worlds(
 ) -> PaginatedResponse[WorldMetaDTO]:
   """Return worlds for the authenticated user with cursor-based pagination."""
   logger.info(f"Listing worlds for user {user.id}")
+  if settings.USE_SESSIONS:
+    memberships, next_cursor = list_user_sessions(user.id, limit, cursor)
+    items = [membership_to_world_dto(m) for m in memberships]
+    return PaginatedResponse(items=items, next_cursor=next_cursor)
   worlds, next_cursor = world_service.list_worlds(user.id, limit, cursor)
   return PaginatedResponse(items=[world.to_dto() for world in worlds], next_cursor=next_cursor)
 
@@ -39,6 +50,13 @@ async def get_world(
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Retrieve a single world by its identifier."""
+  if settings.USE_SESSIONS:
+    session, world = require_session_read(world_id, user)
+    dto = world.to_dto()
+    dto.id = str(session.id)
+    if world.author_id != user.id:
+      dto.shared_with = None
+    return dto
   world = require_world_read(world_id, user)
   dto = world.to_dto()
   if world.author_id != user.id:
@@ -56,6 +74,12 @@ async def create_world(payload: WorldCreateRequest, user: User = Depends(get_cur
   """Create a new world."""
   check_rate_limit(user.id, "create-world")
   world = world_service.create_world(payload, user.id)
+  if settings.USE_SESSIONS:
+    session = get_session_for_user(user.id, str(world.id))
+    dto = world.to_dto()
+    if session:
+      dto.id = str(session.id)
+    return dto
   return world.to_dto()
 
 
@@ -70,6 +94,12 @@ async def update_world(
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Apply partial updates to an existing world."""
+  if settings.USE_SESSIONS:
+    session, _ = require_session_write(world_id, user)
+    world = world_service.update_world(str(session.root_world_id), payload)
+    dto = world.to_dto()
+    dto.id = str(session.id)
+    return dto
   require_world_write(world_id, user)
   world = world_service.update_world(world_id, payload)
   return world.to_dto()
@@ -84,6 +114,10 @@ async def delete_world(
   world_id: str = Path(..., description="Identifier for the world"), user: User = Depends(get_current_user)
 ) -> None:
   """Delete a world and any associated state (implementation pending)."""
+  if settings.USE_SESSIONS:
+    session, _ = require_session_write(world_id, user)
+    world_service.delete_world(str(session.root_world_id))
+    return
   require_world_write(world_id, user)
   world_service.delete_world(world_id)
 
@@ -99,26 +133,34 @@ async def update_sharing(
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Share a world with a user."""
+  if settings.USE_SESSIONS:
+    session, world = require_session_write(world_id, user)
+    root_world_id = str(session.root_world_id)
+    previous_shared: set[str] = {str(x) for x in (world.shared_with or [])}
+    new_shared: set[str] = set(payload.shared_with or [])
+    newly_added = new_shared - previous_shared
+    world_dto = WorldMetaDTO(visibility=payload.visibility, shared_with=payload.shared_with)
+    world = world_service.update_world(root_world_id, world_dto)
+    if newly_added:
+      inviter_name = user.email or user.username or "Someone"
+      world_title = str(world.title) if world.title else "Untitled World"
+      world_url = f"https://{settings.FRONTEND_DOMAIN}/worlds/{root_world_id}"
+      for email in newly_added:
+        send_world_invite(email, inviter_name, world_title, world_url)
+    dto = world.to_dto()
+    dto.id = str(session.id)
+    return dto
+
   world = require_world_write(world_id, user)
-
-  # Identify newly added emails before persisting the update
-  previous_shared: set[str] = {str(x) for x in (world.shared_with or [])}
-  new_shared: set[str] = set(payload.shared_with or [])
-  newly_added = new_shared - previous_shared
-
-  world_dto = WorldMetaDTO(
-    visibility=payload.visibility,
-    shared_with=payload.shared_with,
-  )
-
+  previous_shared_legacy: set[str] = {str(x) for x in (world.shared_with or [])}
+  new_shared_legacy: set[str] = set(payload.shared_with or [])
+  newly_added_legacy = new_shared_legacy - previous_shared_legacy
+  world_dto = WorldMetaDTO(visibility=payload.visibility, shared_with=payload.shared_with)
   world = world_service.update_world(world_id, world_dto)
-
-  # Send invite emails to newly added users (non-blocking)
-  if newly_added:
+  if newly_added_legacy:
     inviter_name = user.email or user.username or "Someone"
     world_title = str(world.title) if world.title else "Untitled World"
     world_url = f"https://{settings.FRONTEND_DOMAIN}/worlds/{world_id}"
-    for email in newly_added:
+    for email in newly_added_legacy:
       send_world_invite(email, inviter_name, world_title, world_url)
-
   return world.to_dto()
