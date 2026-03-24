@@ -230,69 +230,6 @@ def _send_email(recipient_email: str, subject: str, html_body: str, text_body: s
 
 
 # ---------------------------------------------------------------------------
-# World invite email
-# ---------------------------------------------------------------------------
-
-
-def send_world_invite(
-  recipient_email: str,
-  inviter_name: str,
-  world_title: str,
-  world_url: str,
-) -> bool:
-  """Send a branded invite email when a world is shared with a new user."""
-  safe_inviter = html.escape(inviter_name)
-  safe_title = html.escape(world_title)
-  safe_url = html.escape(world_url)
-  subject = f'{safe_inviter} invited you to explore "{safe_title}" on Cosmonaut'
-  html_body = _invite_email_html(safe_inviter, safe_title, safe_url)
-  text_body = (
-    f'{inviter_name} invited you to explore "{world_title}" on Cosmonaut.\n\n'
-    f"Open this link to start your adventure:\n{world_url}\n\n"
-    "— The Cosmonaut Team"
-  )
-  return _send_email(recipient_email, subject, html_body, text_body)
-
-
-def _invite_email_html(inviter_name: str, world_title: str, world_url: str) -> str:
-  body = f"""
-  <p style="margin:0 0 16px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    Hi there,
-  </p>
-  <p style="margin:0 0 8px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    <strong style="color:{_FG};">{inviter_name}</strong> has invited you to explore
-    an interactive story world on Cosmonaut:
-  </p>
-
-  <!-- World title card -->
-  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 24px;">
-  <tr><td style="padding:16px 20px;background-color:{_CODE_BG};border:1px solid {_CARD_BORDER};border-radius:12px;">
-    <p style="margin:0;font-size:18px;font-weight:600;color:{_FG};">
-      &ldquo;{world_title}&rdquo;
-    </p>
-  </td></tr>
-  </table>
-
-  <p style="margin:0 0 24px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    Every choice you make shapes the narrative. Jump in and see where the story takes you.
-  </p>
-
-  {_cta_button(world_url, "Explore World")}
-
-  <p style="margin:24px 0 0;font-size:13px;color:{_MUTED_DARK};line-height:1.6;">
-    If you don't have a Cosmonaut account yet, you can create one for free when you open the link.
-  </p>"""
-  return _base_template(
-    "You're invited to Cosmonaut",
-    body,
-    footer_note=(
-      "You received this email because someone shared a Cosmonaut world with you.<br>"
-      "If you weren't expecting this, you can safely ignore it."
-    ),
-  )
-
-
-# ---------------------------------------------------------------------------
 # Stripe subscription emails
 # ---------------------------------------------------------------------------
 

@@ -181,10 +181,10 @@ class WorldMeta(BaseCosmonautModel):
     if self.author_id and self.updated_at:
       self.GSI1SK = WorldMeta.gsi1_sk(self.updated_at.isoformat())
 
-  def can_user_read(self, user_id: str, user_email: str | None = None) -> bool:
-    if self.visibility == WorldVisibility.PUBLIC or self.author_id == user_id:
+  def can_user_read(self, user_id: str) -> bool:
+    if self.visibility in (WorldVisibility.PUBLIC, WorldVisibility.UNLISTED) or self.author_id == user_id:
       return True
-    return bool(user_email and user_email in (self.shared_with or []))
+    return user_id in (self.shared_with or [])
 
   def can_user_write(self, user_id: str) -> bool:
     return self.author_id == user_id

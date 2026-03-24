@@ -329,3 +329,37 @@ async def set_username(
   """
   stored = reserve_username(current_user.id, payload.username)
   return UsernameSetResponse(username=stored)
+
+
+# ---------------------------------------------------------------------------
+# User lookup
+# ---------------------------------------------------------------------------
+
+
+class UserInfo(BaseModel):
+  id: str
+  display_name: str
+
+
+@router.get("/users/batch", response_model=list[UserInfo], summary="Batch-resolve user display names")
+async def batch_lookup_users(
+  ids: str = Query(..., description="Comma-separated user IDs (max 50)"),
+  _current_user: User = Depends(get_current_user),
+) -> list[UserInfo]:
+  """Return display names for a list of user IDs.
+
+  Used by the share modal to show human-readable names for the
+  shared_with allowlist instead of raw Cognito sub UUIDs.
+  """
+  from app.models.entities.user import UserRecord
+
+  user_ids = [uid.strip() for uid in ids.split(",") if uid.strip()][:50]
+  results: list[UserInfo] = []
+  for uid in user_ids:
+    try:
+      record = UserRecord.get(UserRecord.pk(uid), UserRecord.sk())
+      display = str(record.username) if record.username else uid[:8]
+      results.append(UserInfo(id=uid, display_name=display))
+    except UserRecord.DoesNotExist:
+      results.append(UserInfo(id=uid, display_name=uid[:8]))
+  return results

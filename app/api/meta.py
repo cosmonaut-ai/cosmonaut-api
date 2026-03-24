@@ -99,7 +99,7 @@ async def get_world_meta(world_id: str = Path(..., description="Identifier for t
     )
     return HTMLResponse(content=html)
 
-  is_public = getattr(world, "visibility", "private") == "public"
+  is_public = getattr(world, "visibility", "private") in ("public", "unlisted")
   title = (world.title or _DEFAULT_TITLE) if is_public else _DEFAULT_TITLE
   description = (world.description or _DEFAULT_DESCRIPTION) if is_public else _DEFAULT_DESCRIPTION
   image_url = (world.world_image_url or default_image) if is_public else default_image
