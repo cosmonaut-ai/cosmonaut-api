@@ -502,7 +502,14 @@ async def _choose_base_with_session(
     node.save()
 
   if not get_node_session(session_id, child_id):
-    create_node_session(session_id, child_id, root_world_id, parent_id=str(node.id))
+    create_node_session(
+      session_id,
+      child_id,
+      root_world_id,
+      parent_id=str(node.id),
+      title=child.title,
+      base_choice_count=len(child.choices),
+    )
 
   parent_ns = get_node_session(session_id, str(node.id))
   if not parent_ns:
@@ -514,9 +521,15 @@ async def _choose_base_with_session(
       base_choice_count=len(node.choices),
       parent_id=node.parent_id,
     )
-  if choice_index < len(parent_ns.base_choice_states):
-    parent_ns.base_choice_states[choice_index].is_explored = True
-    parent_ns.save()
+
+  expected = len(node.choices)
+  if len(parent_ns.base_choice_states) < expected:
+    parent_ns.base_choice_states.extend(
+      BaseChoiceStateMap(is_explored=False) for _ in range(expected - len(parent_ns.base_choice_states))
+    )
+
+  parent_ns.base_choice_states[choice_index].is_explored = True
+  parent_ns.save()
 
   return child
 
