@@ -101,9 +101,9 @@ settings: Settings = Settings()
 # Tier limits (not environment-dependent; kept outside Settings)
 # ---------------------------------------------------------------------------
 TIER_LIMITS: dict[str, dict[str, int]] = {
-  "FREE": {"worlds": 3, "nodes": 30, "reset_days": 7, "saved_worlds": 5, "audio_limit": 10},
-  "EXPLORER": {"worlds": 20, "nodes": 500, "reset_days": 30, "saved_worlds": 50, "audio_limit": 30},
-  "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30, "saved_worlds": 100, "audio_limit": 150},
+  "FREE": {"worlds": 3, "nodes": 30, "reset_days": 7, "audio_limit": 10},
+  "EXPLORER": {"worlds": 20, "nodes": 500, "reset_days": 30, "audio_limit": 30},
+  "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30, "audio_limit": 150},
 }
 
 

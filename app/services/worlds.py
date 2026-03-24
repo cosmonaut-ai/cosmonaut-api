@@ -15,7 +15,6 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
-from pynamodb.exceptions import UpdateError
 from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
@@ -45,9 +44,7 @@ from app.services.llm.sanitize import sanitize_user_input
 from app.services.sessions import create_session, delete_sessions_for_world
 from app.services.sqs import send_world_generation_message
 from app.services.usage import (
-  StorageQuotaExceededError,
   check_and_increment,
-  check_storage_quota,
   get_or_create_usage,
   release_quota,
 )
@@ -170,27 +167,11 @@ def get_world(world_id: str) -> WorldMeta:
 
 
 def _increment_world_count(user_id: str) -> None:
-  """Atomically increment the saved_world_count with a limit check.
-
-  Uses a DynamoDB conditional update to prevent the race condition where
-  two concurrent requests both pass the quota check.
-
-  Raises ``StorageQuotaExceededError`` when the user is at capacity.
-  """
-  from app.core.config import get_tier_limits
-
+  """Atomically increment the saved_world_count tracker."""
   usage = get_or_create_usage(user_id)
-  tier = str(usage.tier) if usage.tier else "FREE"
-  saved_worlds_limit: int = get_tier_limits(tier)["saved_worlds"]
-
-  try:
-    usage.update(
-      actions=[UserUsage.saved_world_count.set((UserUsage.saved_world_count | 0) + 1)],
-      condition=(UserUsage.saved_world_count < saved_worlds_limit) | UserUsage.saved_world_count.does_not_exist(),
-    )
-  except UpdateError:
-    count = int(usage.saved_world_count) if usage.saved_world_count else 0
-    raise StorageQuotaExceededError("saved_worlds", saved_worlds_limit, count) from None
+  usage.update(
+    actions=[UserUsage.saved_world_count.set((UserUsage.saved_world_count | 0) + 1)],
+  )
 
 
 def _decrement_world_count(user_id: str) -> None:
@@ -209,19 +190,14 @@ def _decrement_world_count(user_id: str) -> None:
 def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
   """Create a new world metadata record.
 
-  Expects a mapping aligned with the `WorldMeta` attributes.
-  Raises ``StorageQuotaExceededError`` if the user has reached their saved-worlds cap.
+  Expects a mapping aligned with the ``WorldMeta`` attributes.
   Raises ``QuotaExceededError`` if the user has reached their periodic world-creation limit.
   """
 
-  # 1. Optimistic pre-check for fast rejection (non-atomic).
-  check_storage_quota(user_id)
-
-  # 2. Atomically increment saved_world_count with a condition check.
-  #    This is the actual enforcement that prevents the race condition.
+  # 1. Track the saved world count (no limit enforced).
   _increment_world_count(user_id)
 
-  # 3. Atomically reserve a periodic slot (worlds created this billing period).
+  # 2. Atomically reserve a periodic slot (worlds created this billing period).
   #    Released below if the actual creation fails.
   try:
     check_and_increment(user_id, "worlds")

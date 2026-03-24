@@ -14,7 +14,7 @@ from typing import Any, Literal
 from pynamodb.exceptions import UpdateError
 
 from app.core.config import get_tier_limits
-from app.core.errors import QuotaError, StorageQuotaError
+from app.core.errors import QuotaError
 from app.core.observability import MetricUnit, logger, metrics, tracer
 from app.models.entities.usage import UsageTombstone, UserUsage
 
@@ -30,19 +30,6 @@ class QuotaExceededError(QuotaError):
     super().__init__(f"Quota exceeded: {metric} limit is {limit}")
     self.metric = metric
     self.limit = limit
-
-
-class StorageQuotaExceededError(StorageQuotaError):
-  """Raised when a user has reached their tier's storage limit for saved worlds."""
-
-  def __init__(self, metric: str, limit: int, current: int):
-    super().__init__(
-      f"Storage quota exceeded: you have {current} {metric} "
-      f"(limit is {limit}). Delete existing worlds or upgrade your plan."
-    )
-    self.metric = metric
-    self.limit = limit
-    self.current = current
 
 
 # ---------------------------------------------------------------------------
@@ -160,25 +147,6 @@ def get_or_create_usage(user_id: str, email: str | None = None) -> UserUsage:
     logger.info(f"Period reset for user {user_id} (tier={tier})")
 
   return usage
-
-
-def check_storage_quota(user_id: str, email: str | None = None) -> None:
-  """Ensure the user has room for another saved world.
-
-  Uses the ``saved_world_count`` counter on the UserUsage record for an
-  optimistic pre-check.  The actual atomic enforcement is performed via a
-  DynamoDB transaction in ``worlds.create_world``.
-
-  Raises ``StorageQuotaExceededError`` when the user is at capacity.
-  """
-  usage = get_or_create_usage(user_id, email=email)
-  tier = str(usage.tier) if usage.tier else "FREE"
-  limits = get_tier_limits(tier)
-  saved_worlds_limit: int = limits["saved_worlds"]
-
-  count = int(usage.saved_world_count) if usage.saved_world_count else 0
-  if count >= saved_worlds_limit:
-    raise StorageQuotaExceededError("saved_worlds", saved_worlds_limit, count)
 
 
 @tracer.capture_method

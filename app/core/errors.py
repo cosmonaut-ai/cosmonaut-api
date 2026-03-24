@@ -51,11 +51,6 @@ class QuotaError(AppError):
   code = "QUOTA_EXCEEDED"
 
 
-class StorageQuotaError(AppError):
-  status_code = 403
-  code = "STORAGE_QUOTA_EXCEEDED"
-
-
 class ExternalServiceError(AppError):
   status_code = 502
   code = "EXTERNAL_SERVICE_ERROR"
