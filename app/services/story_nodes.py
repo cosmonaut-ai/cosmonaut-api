@@ -117,9 +117,15 @@ def merge_choices(
   base_choice_states: list[BaseChoiceStateMap],
   custom_choices: list[CustomChoiceMap],
 ) -> list[ChoiceDTO]:
-  """Merge root StoryNode base choices with NodeSession overlay."""
+  """Merge root StoryNode base choices with NodeSession overlay.
+
+  Legacy custom choices embedded in base_choices (is_custom=True) are skipped
+  because they already appear in the NodeSession's custom_choices list.
+  """
   result: list[ChoiceDTO] = []
   for i, choice in enumerate(base_choices):
+    if choice.is_custom:
+      continue
     is_explored = base_choice_states[i].is_explored if i < len(base_choice_states) else False
     result.append(
       ChoiceDTO(
@@ -396,7 +402,45 @@ async def choose_with_session(
     return await _choose_custom_with_session(node, root_world_id, session_id, custom_choice, user_id)
   if choice_index is None:
     raise InvalidChoiceError(node_id, -1, len(node.choices) - 1)
-  return await _choose_base_with_session(node, root_world_id, session_id, choice_index, user_id)
+
+  # merge_choices skips legacy custom entries in node.choices, so the
+  # frontend's index space is: [0..base_count) = base choices, then
+  # [base_count..) = NodeSession custom choices.
+  base_count = sum(1 for c in node.choices if not c.is_custom)
+
+  if choice_index < base_count:
+    return await _choose_base_with_session(node, root_world_id, session_id, choice_index, user_id)
+
+  return await _navigate_custom_choice(
+    node,
+    root_world_id,
+    session_id,
+    choice_index,
+    base_count,
+  )
+
+
+async def _navigate_custom_choice(
+  node: StoryNode,
+  root_world_id: str,
+  session_id: str,
+  choice_index: int,
+  base_count: int,
+) -> StoryNode:
+  """Return the child node for an already-created custom choice."""
+  ns = get_node_session(session_id, str(node.id))
+  custom_idx = choice_index - base_count
+  if not ns or custom_idx < 0 or custom_idx >= len(ns.custom_choices):
+    total = base_count + (len(ns.custom_choices) if ns else 0)
+    raise InvalidChoiceError(str(node.id), choice_index, total - 1)
+
+  cc = ns.custom_choices[custom_idx]
+  child = get_node_entity(root_world_id, cc.target_node_id)
+
+  if not get_node_session(session_id, cc.target_node_id):
+    create_node_session(session_id, cc.target_node_id, root_world_id, parent_id=str(node.id))
+
+  return child
 
 
 async def _choose_custom_with_session(
