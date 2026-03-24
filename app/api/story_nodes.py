@@ -112,23 +112,22 @@ async def choose(
   """Select a choice from the current node and initialize the next story node.
 
   This endpoint accepts either:
-  - `choice_index`: Index of an existing choice (0-based)
+  - `target_id`: Deterministic child node ID for an existing choice (base or custom)
   - `custom_choice`: Free text custom choice (max 200 characters)
 
   Exactly one of these must be provided.
 
   The endpoint:
-  1. Validates the input (choice index bounds or custom choice length)
-  2. For custom choices, adds the choice to the parent node's choice list
-  3. Creates a new story node with generation_status=INITIALIZED (no text yet)
-  4. Returns the initialized node
+  1. Validates the target is a child of the current node (or creates one for custom choices)
+  2. Creates a new story node with generation_status=INITIALIZED if one does not exist
+  3. Returns the child node (new or existing)
 
   To generate the story text, call the /generate-text endpoint.
   """
-  if (request.choice_index is None) == (request.custom_choice is None):
+  if (request.target_id is None) == (request.custom_choice is None):
     raise HTTPException(
       status_code=status.HTTP_400_BAD_REQUEST,
-      detail="Exactly one of 'choice_index' or 'custom_choice' must be provided",
+      detail="Exactly one of 'target_id' or 'custom_choice' must be provided",
     )
 
   session, world = require_session_read(world_id, current_user)
@@ -138,7 +137,7 @@ async def choose(
     root_world_id=root_world_id,
     session_id=session_id,
     node_id=node_id,
-    choice_index=request.choice_index,
+    target_id=request.target_id,
     custom_choice=request.custom_choice,
     user_id=current_user.id,
   )

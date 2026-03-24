@@ -31,7 +31,7 @@ from app.services.sessions import create_node_session, get_node_session
 from app.services.sqs import SQSSendError, send_node_analysis_message
 from app.services.usage import check_and_increment, release_quota
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
-from app.utils import LLMOutputTruncatedError, extract_xml_block, extract_xml_json
+from app.utils import LLMOutputTruncatedError, base52_to_number, extract_xml_block, extract_xml_json
 from app.utils.pii import truncate_for_log
 
 if TYPE_CHECKING:
@@ -59,14 +59,16 @@ class NodeNotFoundError(NodeServiceError, NotFoundError):
     self.node_id = node_id
 
 
-class InvalidChoiceError(NodeServiceError, BadRequestError):
-  """Raised when a choice index is out of bounds."""
+class InvalidTargetError(NodeServiceError, BadRequestError):
+  """Raised when a target_id is not a valid child of the given node."""
 
-  def __init__(self, node_id: str, choice_index: int, max_index: int):
-    super().__init__(f"Invalid choice index {choice_index} for node {node_id}. Valid range: 0-{max_index}")
+  def __init__(self, node_id: str, target_id: str, reason: str = ""):
+    detail = f"Invalid target '{target_id}' for node {node_id}"
+    if reason:
+      detail += f": {reason}"
+    super().__init__(detail)
     self.node_id = node_id
-    self.choice_index = choice_index
-    self.max_index = max_index
+    self.target_id = target_id
 
 
 class InvalidGenerationStatusError(NodeServiceError, ConflictError):
@@ -384,26 +386,31 @@ async def choose_with_session(
   root_world_id: str,
   session_id: str,
   node_id: str,
-  choice_index: int | None = None,
+  target_id: str | None = None,
   custom_choice: str | None = None,
   user_id: str | None = None,
 ) -> StoryNode:
-  """Session-first choose: custom choices are session-scoped, not appended to StoryNode.choices."""
+  """Session-first choose: resolve a target_id to a base or custom choice, or create a new custom choice."""
   node = get_node_entity(root_world_id, node_id)
   if node.depth >= ABSOLUTE_MAX_DEPTH:
     raise DepthLimitReachedError(root_world_id, node_id, node.depth)
 
   if custom_choice is not None:
     return await _choose_custom_with_session(node, root_world_id, session_id, custom_choice, user_id)
-  if choice_index is None:
-    raise InvalidChoiceError(node_id, -1, len(node.choices) - 1)
+  if target_id is None:
+    raise InvalidTargetError(node_id, "", "target_id is required when custom_choice is not provided")
 
-  base_count = len(node.choices)
-  if choice_index < base_count:
-    return await _choose_base_with_session(node, root_world_id, session_id, choice_index, user_id)
+  parent_id = str(node.id)
+  if not target_id.startswith(parent_id) or len(target_id) <= len(parent_id):
+    raise InvalidTargetError(parent_id, target_id, "not a child of this node")
 
-  # Index falls beyond base choices — resolve from session custom choices.
-  return await _choose_existing_custom_with_session(node, root_world_id, session_id, choice_index, user_id)
+  suffix = target_id[len(parent_id) :]
+  choice_index = base52_to_number(suffix)
+
+  if choice_index < len(node.choices):
+    return await _choose_base_with_session(node, root_world_id, session_id, choice_index, target_id, user_id)
+
+  return await _choose_existing_custom_with_session(node, root_world_id, session_id, target_id, user_id)
 
 
 async def _choose_custom_with_session(
@@ -477,30 +484,27 @@ async def _choose_existing_custom_with_session(
   node: StoryNode,
   root_world_id: str,
   session_id: str,
-  choice_index: int,
+  target_id: str,
   user_id: str | None,
 ) -> StoryNode:
-  """Navigate to an already-created custom-choice child node via its merged-list index.
+  """Navigate to an already-created custom-choice child node by its target_id.
 
-  The frontend renders base choices + session custom choices as a single list.
-  When the user clicks on a previously created custom choice, the index sent
-  is >= len(node.choices).  This function resolves that offset to the
-  session's ``custom_choices`` list and returns the existing child node.
+  Looks up the session's ``custom_choices`` list to find a matching
+  ``target_node_id``, then returns the existing child node.
   """
   parent_ns = get_node_session(session_id, str(node.id))
-  custom_index = choice_index - len(node.choices)
-  if not parent_ns or custom_index < 0 or custom_index >= len(parent_ns.custom_choices):
-    max_valid = len(node.choices) + (len(parent_ns.custom_choices) if parent_ns else 0) - 1
-    raise InvalidChoiceError(str(node.id), choice_index, max_valid)
+  if not parent_ns:
+    raise InvalidTargetError(str(node.id), target_id, "no session state for this node")
 
-  cc = parent_ns.custom_choices[custom_index]
-  child_id = str(cc.target_node_id)
-  child = get_node_entity(root_world_id, child_id)
+  if not any(str(cc.target_node_id) == target_id for cc in parent_ns.custom_choices):
+    raise InvalidTargetError(str(node.id), target_id, "custom choice not found in this session")
 
-  if not get_node_session(session_id, child_id):
+  child = get_node_entity(root_world_id, target_id)
+
+  if not get_node_session(session_id, target_id):
     create_node_session(
       session_id,
-      child_id,
+      target_id,
       root_world_id,
       parent_id=str(node.id),
       title=child.title,
@@ -515,25 +519,25 @@ async def _choose_base_with_session(
   root_world_id: str,
   session_id: str,
   choice_index: int,
+  target_id: str,
   user_id: str | None,
 ) -> StoryNode:
   """Select a base choice, creating the child StoryNode if needed, and ensuring NodeSession state."""
   if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
-    raise InvalidChoiceError(str(node.id), choice_index, len(node.choices) - 1)
+    raise InvalidTargetError(str(node.id), target_id, "choice index out of range")
 
   selected = node.choices[choice_index]
-  child_id = selected.target or node.get_child_id(choice_index)
 
   if selected.is_created:
-    child = get_node_entity(root_world_id, child_id)
+    child = get_node_entity(root_world_id, target_id)
   else:
     parent_choice_dto = ChoiceDTO(
       label=selected.label,
       outcome=selected.outcome,
-      target=selected.target,
+      target=target_id,
     )
     child_dto = StoryNodeDTO(
-      id=child_id,
+      id=target_id,
       world_id=root_world_id,
       parent_choice=parent_choice_dto,
       generation_status=GenerationStatus.INITIALIZED,
@@ -544,10 +548,10 @@ async def _choose_base_with_session(
     node.choices[choice_index].is_created = True
     node.save()
 
-  if not get_node_session(session_id, child_id):
+  if not get_node_session(session_id, target_id):
     create_node_session(
       session_id,
-      child_id,
+      target_id,
       root_world_id,
       parent_id=str(node.id),
       title=child.title,
