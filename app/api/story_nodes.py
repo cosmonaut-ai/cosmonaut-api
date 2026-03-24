@@ -68,8 +68,11 @@ async def get_node(
   dto = node.to_dto()
   dto.world_id = session_id
   ns = get_node_session(session_id, node_id)
-  if ns:
-    dto.choices = merge_choices(node.choices, ns.base_choice_states, ns.custom_choices)
+  dto.choices = merge_choices(
+    node.choices,
+    ns.base_choice_states if ns else [],
+    ns.custom_choices if ns else [],
+  )
   return dto
 
 
@@ -143,8 +146,11 @@ async def choose(
   dto = new_node.to_dto()
   dto.world_id = session_id
   ns = get_node_session(session_id, str(new_node.id))
-  if ns:
-    dto.choices = merge_choices(new_node.choices, ns.base_choice_states, ns.custom_choices)
+  dto.choices = merge_choices(
+    new_node.choices,
+    ns.base_choice_states if ns else [],
+    ns.custom_choices if ns else [],
+  )
   return dto
 
 
