@@ -56,7 +56,7 @@ USAGE_FIELDS = [
 
 def run(*, dry_run: bool) -> None:
   table_name = os.environ["DYNAMODB_TABLE_NAME"]
-  dynamodb = boto3.resource("dynamodb", region_name="us-east-1")
+  dynamodb = boto3.resource("dynamodb", region_name="us-east-2")
   table = dynamodb.Table(table_name)
 
   log.info("Scanning table %s for USER#*/USAGE items ...", table_name)
