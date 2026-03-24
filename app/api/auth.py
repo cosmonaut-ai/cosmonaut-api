@@ -53,6 +53,7 @@ class BillingPortalResponse(BaseModel):
 
 class UsageResponse(BaseModel):
   username: str | None
+  display_name: str
   is_onboarded: bool
   tier: str
   nodes_used: int
@@ -135,8 +136,11 @@ async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResp
   tier = str(u.tier) if u.tier else "FREE"
   limits = get_tier_limits(tier)
 
+  display = str(record.username) if record.username else (current_user.email or current_user.id[:8])
+
   return UsageResponse(
     username=str(record.username) if record.username else None,
+    display_name=display,
     is_onboarded=bool(record.is_onboarded),
     tier=tier,
     nodes_used=int(u.nodes_used or 0),
