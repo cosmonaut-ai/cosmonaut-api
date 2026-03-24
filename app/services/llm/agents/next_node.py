@@ -55,7 +55,7 @@ _agent: Agent[NextNodeDeps, str] = Agent(
 
 
 @_agent.system_prompt
-def _build_system_prompt(ctx: RunContext[NextNodeDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
+def _build_system_prompt(ctx: RunContext[NextNodeDeps]) -> str:
   """Build the static system prompt (cacheable).
 
   Contains only content that is constant across all node generations for a

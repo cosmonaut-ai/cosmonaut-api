@@ -1,8 +1,8 @@
 """Account lifecycle service.
 
 Handles permanent account deletion with full cascade across all data stores:
-DynamoDB (worlds, nodes, usage), Pinecone (vectors), Cognito (identity),
-and Stripe (subscriptions).
+DynamoDB (worlds, nodes, usage, username reservation), Pinecone (vectors),
+Cognito (identity), and Stripe (subscriptions).
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ import app.services.pinecone as pinecone_service
 from app.core.config import settings
 from app.core.observability import logger
 from app.models.entities.session_membership import SessionMembership
-from app.models.entities.usage import UsageTombstone, UserUsage
+from app.models.entities.user import UsageTombstone, UsernameReservation, UserRecord
 from app.models.entities.world_meta import WorldMeta
 from app.services.newsletter import unsubscribe as newsletter_unsubscribe
 from app.services.s3 import delete_objects_by_prefix
@@ -47,8 +47,9 @@ async def delete_account(user_id: str, cognito_username: str, email: str | None 
   2. Unsubscribe from newsletter
   3. Delete all user-owned worlds (nodes + vectors + S3 objects + metadata + sessions)
   4. Delete all remaining session data (sessions for non-owned worlds + memberships)
-  5. Tombstone the usage record (preserves quota for re-registration abuse prevention)
-  6. Delete the Cognito user
+  5. Release the username reservation so it can be claimed again
+  6. Tombstone the usage record (preserves quota for re-registration abuse prevention)
+  7. Delete the Cognito user
 
   Args:
     user_id: The Cognito ``sub`` (UUID) of the user.
@@ -94,13 +95,16 @@ async def delete_account(user_id: str, cognito_username: str, email: str | None 
   except Exception:
     logger.exception("Failed to delete session data for user %s", user_id)
 
-  # 5. Tombstone the usage record
+  # 5. Release the username reservation
+  _delete_username_reservation(user_id)
+
+  # 6. Tombstone the usage record
   if email:
     _tombstone_usage_record(user_id, email)
   else:
     _delete_usage_record(user_id)
 
-  # 6. Delete the Cognito user
+  # 7. Delete the Cognito user
   _delete_cognito_user(cognito_username)
 
   logger.info("Account deletion complete for user %s", user_id)
@@ -109,12 +113,12 @@ async def delete_account(user_id: str, cognito_username: str, email: str | None 
 def _cancel_stripe_subscription(user_id: str) -> None:
   """Cancel any active Stripe subscription and delete the customer record."""
   try:
-    usage = UserUsage.get(UserUsage.pk(user_id), UserUsage.sk())
-    if not usage.stripe_customer_id:
+    record = UserRecord.get(UserRecord.pk(user_id), UserRecord.sk())
+    if not record.usage.stripe_customer_id:
       return
 
     stripe.api_key = get_secret_value(settings.STRIPE_API_KEY_PARAM)
-    customer_id = str(usage.stripe_customer_id)
+    customer_id = str(record.usage.stripe_customer_id)
 
     for status in ("active", "past_due", "trialing", "unpaid"):
       subscriptions = stripe.Subscription.list(customer=customer_id, status=status, limit=10)
@@ -125,7 +129,7 @@ def _cancel_stripe_subscription(user_id: str) -> None:
     stripe.Customer.delete(customer_id)
     logger.info("Deleted Stripe customer %s for user %s", customer_id, user_id)
 
-  except UserUsage.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+  except UserRecord.DoesNotExist:
     logger.info("No usage record found for Stripe cancellation (user %s)", user_id)
   except Exception:
     logger.exception("Failed to clean up Stripe for user %s", user_id)
@@ -134,7 +138,7 @@ def _cancel_stripe_subscription(user_id: str) -> None:
 def _delete_all_user_worlds(user_id: str) -> None:
   """Delete every world owned by the user, including nodes and vectors."""
   gsi1_pk = WorldMeta.gsi1_pk(user_id)
-  worlds: list[WorldMeta] = list(WorldMeta.GSI1.query(hash_key=gsi1_pk))  # type: ignore[reportUnknownMemberType]
+  worlds: list[WorldMeta] = list(WorldMeta.GSI1.query(hash_key=gsi1_pk))  # type: ignore  # PynamoDB GSI query return type
 
   logger.info("Deleting %d worlds for user %s", len(worlds), user_id)
 
@@ -174,13 +178,31 @@ def _delete_all_user_worlds(user_id: str) -> None:
       logger.exception("Failed to delete world %s for user %s", world_id, user_id)
 
 
-def _delete_usage_record(user_id: str) -> None:
-  """Delete the UserUsage DynamoDB record."""
+def _delete_username_reservation(user_id: str) -> None:
+  """Free the user's username so it can be claimed by a new account."""
   try:
-    usage = UserUsage.get(UserUsage.pk(user_id), UserUsage.sk())
-    usage.delete()
+    record = UserRecord.get(UserRecord.pk(user_id), UserRecord.sk())
+    if not record.username:
+      return
+    sentinel = UsernameReservation.get(
+      UsernameReservation.pk(str(record.username)),
+      UsernameReservation.sk(),
+    )
+    sentinel.delete()
+    logger.info("Released username '%s' for user %s", record.username, user_id)
+  except (UserRecord.DoesNotExist, UsernameReservation.DoesNotExist):
+    pass
+  except Exception:
+    logger.exception("Failed to release username for user %s", user_id)
+
+
+def _delete_usage_record(user_id: str) -> None:
+  """Delete the UserRecord DynamoDB item."""
+  try:
+    record = UserRecord.get(UserRecord.pk(user_id), UserRecord.sk())
+    record.delete()
     logger.info("Deleted usage record for user %s", user_id)
-  except UserUsage.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+  except UserRecord.DoesNotExist:
     logger.info("No usage record to delete for user %s", user_id)
   except Exception:
     logger.exception("Failed to delete usage record for user %s", user_id)
@@ -192,10 +214,11 @@ _TOMBSTONE_TTL_DAYS = 365
 def _tombstone_usage_record(user_id: str, email: str) -> None:
   """Replace the usage record with a tombstone for re-registration abuse prevention."""
   try:
-    usage = UserUsage.get(UserUsage.pk(user_id), UserUsage.sk())
-  except UserUsage.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+    record = UserRecord.get(UserRecord.pk(user_id), UserRecord.sk())
+  except UserRecord.DoesNotExist:
     return
 
+  u = record.usage
   email_hash = hashlib.sha256(email.lower().strip().encode()).hexdigest()
   now = datetime.now(UTC)
   ttl_epoch = int((now + timedelta(days=_TOMBSTONE_TTL_DAYS)).timestamp())
@@ -204,17 +227,17 @@ def _tombstone_usage_record(user_id: str, email: str) -> None:
     PK=UsageTombstone.pk(email_hash),
     SK=UsageTombstone.sk(),
     email_hash=email_hash,
-    worlds_created=int(usage.worlds_created or 0),
-    nodes_used=int(usage.nodes_used or 0),
-    audio_narrations_used=int(usage.audio_narrations_used or 0),
-    period_end=usage.period_end,
+    worlds_created=int(u.worlds_created or 0),
+    nodes_used=int(u.nodes_used or 0),
+    audio_narrations_used=int(u.audio_narrations_used or 0),
+    period_end=u.period_end,
     deleted_at=now,
     expiration=ttl_epoch,
   )
   tombstone.save()
 
-  usage.delete()
-  logger.info("Tombstoned usage for user %s (1-year TTL, period_end=%s)", user_id, usage.period_end)
+  record.delete()
+  logger.info("Tombstoned usage for user %s (1-year TTL, period_end=%s)", user_id, u.period_end)
 
 
 def _delete_cognito_user(cognito_username: str) -> None:

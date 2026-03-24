@@ -13,13 +13,13 @@ from pynamodb.indexes import GlobalSecondaryIndex, KeysOnlyProjection
 from app.models.entities.base import BaseCosmonautModel
 
 
-class GSI3Model(GlobalSecondaryIndex):  # type: ignore[type-arg]
+class GSI3Model(GlobalSecondaryIndex["WorldSession"]):
   """Global secondary index for looking up all sessions belonging to a root world."""
 
   GSI3PK: UnicodeAttribute = UnicodeAttribute(hash_key=True)
   GSI3SK: UnicodeAttribute = UnicodeAttribute(range_key=True)
 
-  class Meta:  # type: ignore[misc]
+  class Meta:
     projection = KeysOnlyProjection()
 
 
@@ -43,7 +43,7 @@ class WorldSession(BaseCosmonautModel):
   root_world_id: UnicodeAttribute = UnicodeAttribute()
   members: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
   created_by: UnicodeAttribute = UnicodeAttribute()
-  per_member_progress: MapAttribute = MapAttribute(default=dict)  # type: ignore[type-arg]
+  per_member_progress: MapAttribute[str, str] = MapAttribute[str, str](default=dict)
   visited_node_count: NumberAttribute = NumberAttribute(default=0)
 
   GSI3PK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI3PK", null=True)

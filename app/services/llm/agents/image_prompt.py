@@ -49,7 +49,7 @@ _agent: Agent[LLMWorldInfo, str] = Agent(
 
 
 @_agent.system_prompt
-def _build_system_prompt(ctx: RunContext[LLMWorldInfo]) -> str:  # pyright: ignore[reportUnusedFunction]
+def _build_system_prompt(ctx: RunContext[LLMWorldInfo]) -> str:
   """Inject world info into system prompt."""
   return f"""{SYSTEM_PROMPT}
 

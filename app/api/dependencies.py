@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+from fastapi import Depends
+
 from app.core.errors import ForbiddenError, SessionAccessDeniedError
-from app.core.security import User
+from app.core.security import User, get_current_user
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO
 from app.models.dtos.world_meta import GenerationStatus, WorldMetaDTO
 from app.models.entities.node_session import NodeSession
@@ -11,7 +13,16 @@ from app.models.entities.session_membership import SessionMembership
 from app.models.entities.world_meta import WorldMeta
 from app.models.entities.world_session import WorldSession
 from app.services.sessions import find_or_create_session, find_session
+from app.services.usage import get_or_create_usage
 from app.services.worlds import get_world_entity
+
+
+def require_onboarded(current_user: User = Depends(get_current_user)) -> User:
+  """Reject requests from users who have not completed onboarding."""
+  record = get_or_create_usage(current_user.id, email=current_user.email)
+  if not record.is_onboarded:
+    raise ForbiddenError("Onboarding required")
+  return current_user
 
 
 def require_session_read(world_id: str, user: User) -> tuple[WorldSession, WorldMeta]:

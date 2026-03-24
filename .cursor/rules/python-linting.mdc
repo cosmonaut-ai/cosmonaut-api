@@ -1,33 +1,52 @@
 ---
 description: Python linting and type-checking workflow for cosmonaut-api
 globs: "**/*.py"
-alwaysApply: false
+alwaysApply: true
 ---
 
 # Python Linting & Type Checking
 
 ## Required checks after editing Python files
 
-Run **both** linters after substantive edits:
+After any substantive Python edits, you **MUST** run the following commands
+**from within the `cosmonaut-api/` directory** (not the workspace root).
+All three must pass before considering work complete.
 
 ```bash
-# Ruff (style + imports) – fast, run first
-uv run ruff check <files>
+cd cosmonaut-api
 
-# basedpyright (strict type checking) – uses pyrightconfig.json at repo root
-uv run --with basedpyright basedpyright <files>
+# 1. Ruff (style + imports) – fast, run first
+uv run ruff check .
+
+# 2. ty (type checking) – the project's primary type checker
+uv run ty check
+
+# 3. (Optional) Run ruff format to auto-fix style
+uv run ruff format .
 ```
 
-## Fix common basedpyright issues
+### Important: `ty check` must be run from the project directory
 
-- **reportUnknownVariableType**: Use `from typing import Any, cast` and `cast(dict[str, Any], value)` to narrow unknown dict values from external APIs (e.g. Stripe).
-- **reportArgumentType**: Avoid `**kwargs` with `dict[str, str]` into typed SDK methods; use explicit keyword arguments instead.
-- **reportUnusedFunction / reportUnusedImport**: Remove dead code; don't leave unused helpers.
-- **reportMissingTypeArgument**: Always parameterize generics: `dict[str, Any]` not `dict`.
+`ty` uses the `[tool.ty]` configuration in `pyproject.toml` (environment,
+src exclusions) and the `.venv` for type stubs. Running it from the workspace
+root or another directory will produce incorrect results or fail to find
+the project configuration. Always `cd cosmonaut-api` first.
+
+### Handling ty errors
+
+- **Unresolved import**: Ensure the import target exists and is not in the
+  `[tool.ty.src] exclude` list. Third-party stubs may need installing into
+  the venv (`uv pip install types-<package>`).
+- **Attribute access on dynamic types**: Use explicit type narrowing or
+  `cast()` rather than suppressing. PynamoDB attributes return descriptor
+  types at class level — access them through instances where possible.
+- **`possibly-unbound-attribute`**: Initialize all variables in every code
+  branch, or add an explicit `None` default before conditional assignment.
 
 ## Project conventions
 
 - Line length: 120 (set in `pyproject.toml` under `[tool.ruff]`)
 - Indent width: 2 spaces
 - Target: Python 3.13
-- Type checking mode: strict (see `pyrightconfig.json`)
+- Type checker: `ty` (configured via `[tool.ty.*]` in `pyproject.toml`)
+- Excluded from type checking: `tests/`, `scripts/` (see `[tool.ty.src]`)

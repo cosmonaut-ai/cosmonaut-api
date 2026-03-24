@@ -154,7 +154,7 @@ def check_2_membership_consistency(result: ValidationResult, world_sessions: dic
             SessionMembership.pk(member_id),
             SessionMembership.sk(world_id, session_id),
           )
-        except SessionMembership.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+        except SessionMembership.DoesNotExist:
           result.memberships_missing += 1
           result.errors.append(
             f"Missing SessionMembership for user {member_id} in session {session_id} (world {world_id})"
@@ -200,7 +200,7 @@ def check_3_progress_alignment(result: ValidationResult, world_sessions: dict[st
           f"Progress mismatch for user {user_id} in world {world_id}: "
           f"UserProgress={current_node}, SessionMembership={membership.last_visited_node_id}"
         )
-    except SessionMembership.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+    except SessionMembership.DoesNotExist:
       result.progress_missing_membership += 1
       result.errors.append(f"UserProgress for user {user_id} in world {world_id} has no SessionMembership")
 
@@ -328,7 +328,7 @@ def check_10_membership_metadata(result: ValidationResult, world_sessions: dict[
       if membership.family_friendly is None:
         result.memberships_missing_family_friendly += 1
         result.errors.append(f"SessionMembership (user={author_id}, world={world_id}) missing family_friendly")
-    except SessionMembership.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+    except SessionMembership.DoesNotExist:
       pass  # Already caught by check_2
 
   log.info(

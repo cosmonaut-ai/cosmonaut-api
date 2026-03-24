@@ -183,7 +183,7 @@ def pass_b_backfill_membership_metadata(result: BackfillResult, dry_run: bool) -
     if root_world_id not in world_cache:
       try:
         world_cache[root_world_id] = WorldMeta.get(WorldMeta.pk(root_world_id), WorldMeta.sk())
-      except WorldMeta.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+      except WorldMeta.DoesNotExist:
         world_cache[root_world_id] = None
         log.warning("WorldMeta not found for root_world_id=%s", root_world_id)
 

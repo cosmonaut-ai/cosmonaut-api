@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import sentry_sdk
 from aws_lambda_powertools.metrics import MetricUnit
-from aws_lambda_powertools.utilities.data_classes import SQSEvent, event_source  # type: ignore[import-untyped]
+from aws_lambda_powertools.utilities.data_classes import SQSEvent, event_source
 from pydantic import TypeAdapter
 from pynamodb.exceptions import UpdateError
 

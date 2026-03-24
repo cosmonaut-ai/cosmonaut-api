@@ -243,9 +243,9 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
     # exact cancellation date.
     usage = get_or_create_usage(user_id)
     already_pending = (
-      usage.pending_cancellation
-      and usage.cancellation_date
-      and abs((usage.cancellation_date - cancel_dt).total_seconds()) < 60
+      usage.usage.pending_cancellation
+      and usage.usage.cancellation_date
+      and abs((usage.usage.cancellation_date - cancel_dt).total_seconds()) < 60
     )
 
     set_pending_cancellation(user_id, cancel_dt)
@@ -431,7 +431,7 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
       if existing and existing.expiration > int(time.time()):
         logger.info("Duplicate webhook event %s, skipping", event_id)
         return {"status": "already_processed"}
-    except RateLimitRecord.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+    except RateLimitRecord.DoesNotExist:
       pass
 
   handler_fn = _EVENT_HANDLERS.get(event_type)

@@ -35,7 +35,7 @@ from app.models.dtos.world_meta import (
   WorldVisibility,
 )
 from app.models.entities.story_node import StoryNode
-from app.models.entities.usage import UserUsage
+from app.models.entities.user import UserRecord
 from app.models.entities.world_meta import Character, Location, WorldMeta
 from app.services.llm.sanitize import sanitize_user_input
 from app.services.sessions import create_session, delete_sessions_for_world
@@ -105,25 +105,27 @@ def get_world_entity(world_id: str) -> WorldMeta:
   pk, sk = _world_keys(world_id)
   try:
     return WorldMeta.get(pk, sk)
-  except WorldMeta.DoesNotExist as e:  # type: ignore[reportGeneralTypeIssues]
+  except WorldMeta.DoesNotExist as e:
     raise WorldNotFoundError(world_id) from e
 
 
 def _increment_world_count(user_id: str) -> None:
   """Atomically increment the saved_world_count tracker."""
-  usage = get_or_create_usage(user_id)
-  usage.update(
-    actions=[UserUsage.saved_world_count.set((UserUsage.saved_world_count | 0) + 1)],
+  record = get_or_create_usage(user_id)
+  swc = UserRecord.usage.saved_world_count
+  record.update(
+    actions=[swc.set((swc | 0) + 1)],  # type: ignore  # PynamoDB expression builder
   )
 
 
 def _decrement_world_count(user_id: str) -> None:
   """Best-effort decrement of the saved world counter after deletion or failed creation."""
   try:
-    usage = get_or_create_usage(user_id)
-    usage.update(
-      actions=[UserUsage.saved_world_count.set((UserUsage.saved_world_count | 0) - 1)],
-      condition=(UserUsage.saved_world_count > 0),
+    record = get_or_create_usage(user_id)
+    swc = UserRecord.usage.saved_world_count
+    record.update(
+      actions=[swc.set((swc | 0) - 1)],  # type: ignore  # PynamoDB expression builder
+      condition=(swc > 0),  # type: ignore  # PynamoDB condition expression
     )
   except Exception:
     logger.warning(f"Failed to decrement world count for user {user_id}")
@@ -284,7 +286,7 @@ async def generate_lore(world: WorldMeta) -> WorldMeta:
     )
     for location in llm_world_info.locations
   ]
-  world.potential_endings = llm_world_info.endings or []  # type: ignore[reportAttributeAccessIssue]  # PynamoDB ListAttribute accepts list[str]
+  world.potential_endings = llm_world_info.endings or []  # type: ignore  # PynamoDB ListAttribute accepts list[str]
 
   return world
 
