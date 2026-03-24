@@ -69,13 +69,27 @@ def create_session(
   return session
 
 
-@tracer.capture_method
-def get_session(session_id: str) -> WorldSession:
-  """Fetch a WorldSession by ID. Raises SessionNotFoundError if not found."""
+def find_session(session_id: str) -> WorldSession | None:
+  """Fetch a WorldSession by ID, returning None if not found.
+
+  Preferred over get_session() when the caller expects the session may not
+  exist (e.g. resolving an ambiguous world_id that could be a session_id
+  or a root_world_id), since it avoids exception-based control flow that
+  generates Sentry noise via the tracer.
+  """
   try:
     return WorldSession.get(WorldSession.pk(session_id), WorldSession.sk())
   except WorldSession.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
-    raise SessionNotFoundError(f"Session not found: {session_id}") from None
+    return None
+
+
+@tracer.capture_method
+def get_session(session_id: str) -> WorldSession:
+  """Fetch a WorldSession by ID. Raises SessionNotFoundError if not found."""
+  session = find_session(session_id)
+  if session is None:
+    raise SessionNotFoundError(f"Session not found: {session_id}")
+  return session
 
 
 @tracer.capture_method
