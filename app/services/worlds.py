@@ -10,12 +10,9 @@ Architecture:
 
 from __future__ import annotations
 
-import contextlib
 import uuid
 from collections.abc import Callable
 from typing import Any
-
-from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
@@ -110,60 +107,6 @@ def get_world_entity(world_id: str) -> WorldMeta:
     return WorldMeta.get(pk, sk)
   except WorldMeta.DoesNotExist as e:  # type: ignore[reportGeneralTypeIssues]
     raise WorldNotFoundError(world_id) from e
-
-
-def count_user_worlds(user_id: str) -> int:
-  """Count the total number of worlds owned by a user (GSI1 count query)."""
-  gsi1_pk = WorldMeta.gsi1_pk(user_id)
-  return WorldMeta.GSI1.count(hash_key=gsi1_pk)  # type: ignore[reportUnknownMemberType]
-
-
-@tracer.capture_method
-def list_worlds(
-  user_id: str,
-  limit: int = 50,
-  cursor: str | None = None,
-) -> tuple[list[WorldMeta], str | None]:
-  """Return worlds for a user with cursor-based pagination, ordered by most recent first.
-
-  Args:
-    user_id: Owner identifier.
-    limit: Maximum number of worlds to return per page (default 50).
-    cursor: Opaque pagination token from a previous response.
-
-  Returns:
-    Tuple of (worlds, next_cursor). ``next_cursor`` is None when there are
-    no more pages.
-  """
-  import base64
-  import json
-
-  gsi1_pk = WorldMeta.gsi1_pk(user_id)
-
-  last_evaluated_key = None
-  if cursor:
-    with contextlib.suppress(Exception):
-      last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
-
-  worlds: ResultIterator[WorldMeta] = WorldMeta.GSI1.query(  # type: ignore[reportUnknownReturnType]
-    hash_key=gsi1_pk,
-    scan_index_forward=False,
-    page_size=limit,
-    limit=limit,
-    last_evaluated_key=last_evaluated_key,
-  )
-  items = list(worlds)
-
-  next_cursor: str | None = None
-  if worlds.last_evaluated_key:
-    next_cursor = base64.urlsafe_b64encode(json.dumps(worlds.last_evaluated_key).encode()).decode()
-
-  return items, next_cursor
-
-
-def get_world(world_id: str) -> WorldMeta:
-  """Fetch a single world by identifier."""
-  return get_world_entity(world_id)
 
 
 def _increment_world_count(user_id: str) -> None:

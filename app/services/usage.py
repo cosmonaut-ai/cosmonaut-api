@@ -309,8 +309,3 @@ def reset_period(user_id: str) -> UserUsage:
 
   logger.info(f"Period reset (renewal) for user {user_id}")
   return usage
-
-
-def get_usage_info(user_id: str) -> UserUsage:
-  """Return the current usage record for display purposes."""
-  return get_or_create_usage(user_id)

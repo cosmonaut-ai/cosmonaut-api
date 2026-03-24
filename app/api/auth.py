@@ -4,11 +4,12 @@ from urllib.parse import urlparse
 
 import stripe
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, Body, Depends, HTTPException, Response
+from fastapi import APIRouter, Body, Depends, Response
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.cloudfront import create_signed_cookies
 from app.core.config import get_tier_limits, settings
+from app.core.errors import AppError, BadRequestError, ExternalServiceError, RateLimitError
 from app.core.observability import MetricUnit, logger, metrics
 from app.core.security import User, get_current_user
 from app.models.entities.rate_limit import RateLimitRecord
@@ -86,7 +87,7 @@ async def create_session(response: Response, current_user: User = Depends(get_cu
     private_key = get_secret_value(settings.CLOUDFRONT_PRIVATE_KEY_PARAM)
   except (ValueError, OSError, ClientError):
     logger.error("Could not retrieve signing key", exc_info=True)
-    raise HTTPException(status_code=500, detail="Could not retrieve signing key") from None
+    raise AppError("Could not retrieve signing key") from None
 
   resource_url = f"https://*{settings.COOKIE_DOMAIN}/*"
   cookies = create_signed_cookies(resource_url, settings.CLOUDFRONT_KEY_PAIR_ID, private_key)
@@ -147,7 +148,7 @@ async def create_checkout(
   """
   price_id = _TIER_PRICE_MAP.get(payload.tier)
   if not price_id:
-    raise HTTPException(status_code=400, detail=f"No Stripe price configured for tier {payload.tier}")
+    raise BadRequestError(f"No Stripe price configured for tier {payload.tier}")
 
   try:
     checkout_url = create_checkout_session(
@@ -159,7 +160,7 @@ async def create_checkout(
     )
   except stripe.StripeError as e:
     logger.error(f"Stripe checkout session creation failed: {e}")
-    raise HTTPException(status_code=502, detail="Failed to create checkout session") from e
+    raise ExternalServiceError("Failed to create checkout session") from e
 
   return CheckoutResponse(checkout_url=checkout_url)
 
@@ -179,7 +180,7 @@ async def delete_user_account(current_user: User = Depends(get_current_user)) ->
     return {"status": "deleted"}
   except ClientError:
     logger.exception("Account deletion failed for user %s", current_user.id)
-    raise HTTPException(status_code=500, detail="Account deletion failed. Please contact support.") from None
+    raise AppError("Account deletion failed. Please contact support.") from None
 
 
 @router.post("/billing-portal", response_model=BillingPortalResponse, summary="Create a Stripe Billing Portal session")
@@ -191,13 +192,13 @@ async def create_billing_portal(
   """
   usage = get_or_create_usage(current_user.id)
   if not usage.stripe_customer_id:
-    raise HTTPException(status_code=400, detail="No active subscription found")
+    raise BadRequestError("No active subscription found")
 
   try:
     portal_url = create_billing_portal_session(customer_id=str(usage.stripe_customer_id))
   except stripe.StripeError as e:
     logger.error(f"Stripe billing portal session creation failed: {e}")
-    raise HTTPException(status_code=502, detail="Failed to create billing portal session") from e
+    raise ExternalServiceError("Failed to create billing portal session") from e
 
   return BillingPortalResponse(portal_url=portal_url)
 
@@ -223,11 +224,7 @@ async def submit_feedback(
     existing = RateLimitRecord.get(rate_pk, rate_sk)
     if existing.expiration and int(existing.expiration) > now:
       retry_after = int(existing.expiration) - now
-      raise HTTPException(
-        status_code=429,
-        detail="Please wait before submitting more feedback.",
-        headers={"Retry-After": str(retry_after)},
-      )
+      raise RateLimitError("Please wait before submitting more feedback.", retry_after=retry_after)
   except RateLimitRecord.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
     pass
 

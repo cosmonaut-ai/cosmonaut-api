@@ -21,6 +21,24 @@ from app.services.sqs import SQSSendError, send_world_image_generation_message
 
 init_sentry()
 
+
+def _sync_session_membership(world: WorldMeta) -> None:
+  """Best-effort update of session membership metadata after world generation steps."""
+  world_id = str(world.id)
+  author_id = str(world.author_id)
+  try:
+    session = get_session_for_user(author_id, world_id)
+    if session:
+      update_membership_metadata(
+        user_id=author_id,
+        root_world_id=world_id,
+        session_id=str(session.id),
+        world=world,
+      )
+  except Exception:
+    logger.warning("Failed to update session data for world %s (non-fatal)", world_id, exc_info=True)
+
+
 # Concurrency cap for processing messages in parallel within a Lambda invocation.
 BATCH_CONCURRENCY = 5
 
@@ -189,22 +207,17 @@ async def _generate_world(payload: GenerateWorldPayload):
     logger.info(f"World {world_id} generation complete.")
 
     # 4. Update session membership with populated world metadata + create root NodeSession
+    _sync_session_membership(world)
     try:
       session = get_session_for_user(str(world.author_id), world_id)
       if session:
-        update_membership_metadata(
-          user_id=str(world.author_id),
-          root_world_id=world_id,
-          session_id=str(session.id),
-          world=world,
-        )
         create_node_session(
           session_id=str(session.id),
           node_id=str(root_node.id),
           root_world_id=world_id,
         )
     except Exception:
-      logger.warning("Failed to update session data for world %s (non-fatal)", world_id, exc_info=True)
+      logger.warning("Failed to create root NodeSession for world %s (non-fatal)", world_id, exc_info=True)
 
     # 5. Enqueue image generation (fire-and-forget, non-blocking).
     # An SQS failure here must not undo the successful world generation.
@@ -238,17 +251,7 @@ async def _generate_world_image(payload: GenerateWorldImagePayload):
     metrics.add_metric(name="WorldImageGenerated", unit=MetricUnit.Count, value=1)
     logger.info(f"World {world_id} image generation complete.")
 
-    try:
-      session = get_session_for_user(str(world.author_id), world_id)
-      if session:
-        update_membership_metadata(
-          user_id=str(world.author_id),
-          root_world_id=world_id,
-          session_id=str(session.id),
-          world=world,
-        )
-    except Exception:
-      logger.warning("Failed to update session image metadata for world %s (non-fatal)", world_id, exc_info=True)
+    _sync_session_membership(world)
 
   except Exception as e:
     logger.exception(f"Error generating image for world {world_id}: {e}")

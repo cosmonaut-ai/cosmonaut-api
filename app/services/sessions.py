@@ -6,9 +6,6 @@ All methods are synchronous, matching existing service patterns.
 
 from __future__ import annotations
 
-import base64
-import contextlib
-import json
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -18,6 +15,7 @@ from app.core.observability import logger, tracer
 from app.models.entities.node_session import BaseChoiceStateMap, NodeSession
 from app.models.entities.session_membership import SessionMembership
 from app.models.entities.world_session import WorldSession
+from app.utils.pagination import decode_cursor, encode_cursor
 
 if TYPE_CHECKING:
   from app.models.entities.world_meta import WorldMeta
@@ -180,25 +178,15 @@ def list_user_sessions(
   Returns:
     Tuple of (memberships, next_cursor). next_cursor is None when exhausted.
   """
-  last_evaluated_key = None
-  if cursor:
-    with contextlib.suppress(Exception):
-      last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
-
   results = SessionMembership.query(
     SessionMembership.pk(user_id),
     SessionMembership.SK.startswith("SMEMBER#"),
     page_size=limit,
     limit=limit,
-    last_evaluated_key=last_evaluated_key,
+    last_evaluated_key=decode_cursor(cursor),
   )
   items = list(results)
-
-  next_cursor: str | None = None
-  if results.last_evaluated_key:
-    next_cursor = base64.urlsafe_b64encode(json.dumps(results.last_evaluated_key).encode()).decode()
-
-  return items, next_cursor
+  return items, encode_cursor(results.last_evaluated_key)
 
 
 # =============================================================================
@@ -259,25 +247,15 @@ def list_node_sessions(
   cursor: str | None = None,
 ) -> tuple[list[NodeSession], str | None]:
   """List all NodeSessions for a session with cursor-based pagination."""
-  last_evaluated_key = None
-  if cursor:
-    with contextlib.suppress(Exception):
-      last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
-
   results = NodeSession.query(
     NodeSession.pk(session_id),
     NodeSession.SK.startswith("NODE#"),
     page_size=limit,
     limit=limit,
-    last_evaluated_key=last_evaluated_key,
+    last_evaluated_key=decode_cursor(cursor),
   )
   items = list(results)
-
-  next_cursor: str | None = None
-  if results.last_evaluated_key:
-    next_cursor = base64.urlsafe_b64encode(json.dumps(results.last_evaluated_key).encode()).decode()
-
-  return items, next_cursor
+  return items, encode_cursor(results.last_evaluated_key)
 
 
 # =============================================================================
