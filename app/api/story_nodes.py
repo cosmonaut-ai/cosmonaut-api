@@ -2,14 +2,14 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request, status
+from fastapi import APIRouter, Body, Depends, Path, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from pynamodb.exceptions import UpdateError
 
 import app.services.story_nodes as node_service
 from app.api.dependencies import node_session_to_list_dto, require_session_read
-from app.core.errors import WrongSessionForNodeError
+from app.core.errors import AppError, BadRequestError, WrongSessionForNodeError
 from app.core.observability import MetricUnit, logger, metrics
 from app.core.security import User, get_current_user
 from app.models.dtos.base import PaginatedResponse
@@ -41,7 +41,7 @@ async def list_nodes(
   cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
 ) -> PaginatedResponse[StoryNodeDTO]:
   """Return story nodes for a given world with optional pagination."""
-  session, world = require_session_read(world_id, current_user)
+  session, _ = require_session_read(world_id, current_user)
   session_id = str(session.id)
   node_sessions, next_cursor = list_node_sessions(session_id, limit=limit, cursor=cursor)
   dtos = [node_session_to_list_dto(ns, session_id) for ns in node_sessions]
@@ -59,7 +59,7 @@ async def get_node(
   current_user: User = Depends(get_current_user),
 ) -> StoryNodeDTO:
   """Retrieve a single story node by its identifier."""
-  session, world = require_session_read(world_id, current_user)
+  session, _ = require_session_read(world_id, current_user)
   root_world_id = str(session.root_world_id)
   session_id = str(session.id)
   node = node_service.get_node(root_world_id, node_id)
@@ -125,12 +125,9 @@ async def choose(
   To generate the story text, call the /generate-text endpoint.
   """
   if (request.target_id is None) == (request.custom_choice is None):
-    raise HTTPException(
-      status_code=status.HTTP_400_BAD_REQUEST,
-      detail="Exactly one of 'target_id' or 'custom_choice' must be provided",
-    )
+    raise BadRequestError("Exactly one of 'target_id' or 'custom_choice' must be provided")
 
-  session, world = require_session_read(world_id, current_user)
+  session, _ = require_session_read(world_id, current_user)
   root_world_id = str(session.root_world_id)
   session_id = str(session.id)
   new_node = await node_service.choose_with_session(
@@ -175,7 +172,7 @@ async def generate_text(
   4. Updates the node with generated text, title, choices, and sets generation_status to COMPLETED
   5. On error, sets generation_status to FAILED
   """
-  session, world = require_session_read(world_id, current_user)
+  session, _ = require_session_read(world_id, current_user)
   root_world_id = str(session.root_world_id)
   session_id = str(session.id)
   node = node_service.get_node(root_world_id, node_id)
@@ -281,12 +278,9 @@ async def generate_node_audio(
   """
   voice = get_voice_by_id(request.voice_id)
   if voice is None:
-    raise HTTPException(
-      status_code=status.HTTP_400_BAD_REQUEST,
-      detail=f"Unknown voice_id: {request.voice_id}",
-    )
+    raise BadRequestError(f"Unknown voice_id: {request.voice_id}")
 
-  session, world = require_session_read(world_id, current_user)
+  session, _ = require_session_read(world_id, current_user)
   resolved_world_id = str(session.root_world_id)
   session_id = str(session.id)
   check_rate_limit(current_user.id, "audio")
@@ -295,17 +289,11 @@ async def generate_node_audio(
     raise WrongSessionForNodeError(f"Node {node_id} belongs to another session")
 
   if GenerationStatus(node.generation_status) != GenerationStatus.COMPLETED:
-    raise HTTPException(
-      status_code=status.HTTP_400_BAD_REQUEST,
-      detail=f"Node {node_id} text has not been generated yet",
-    )
+    raise BadRequestError(f"Node {node_id} text has not been generated yet")
 
   text = str(node.text)
   if len(text) > MAX_NARRATION_CHARS:
-    raise HTTPException(
-      status_code=status.HTTP_400_BAD_REQUEST,
-      detail=f"Node text exceeds the maximum of {MAX_NARRATION_CHARS:,} characters for audio narration",
-    )
+    raise BadRequestError(f"Node text exceeds the maximum of {MAX_NARRATION_CHARS:,} characters for audio narration")
 
   existing_audio: dict[str, str] = dict(node.audio.attribute_values) if node.audio else {}
   if voice.id in existing_audio:
@@ -324,10 +312,7 @@ async def generate_node_audio(
   except Exception as e:
     release_quota(current_user.id, "audio")
     logger.error(f"Audio generation failed for node {node_id}: {e}", exc_info=True)
-    raise HTTPException(
-      status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-      detail="Audio generation failed",
-    ) from e
+    raise AppError("Audio generation failed") from e
 
   try:
     node.update(

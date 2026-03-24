@@ -47,7 +47,29 @@ os.environ["ENV"] = _cli_args.env
 from app.models.entities.node_session import NodeSession  # noqa: E402
 from app.models.entities.session_membership import SessionMembership  # noqa: E402
 from app.models.entities.world_meta import WorldMeta  # noqa: E402
-from app.utils import derive_parent_id  # noqa: E402
+
+
+def derive_parent_id(node_id: str) -> str | None:
+  """Derive the parent node ID from a StoryNode ID using the base-52 encoding scheme."""
+  ancestors: list[str] = []
+  build_id = ""
+  i = 0
+  while i < len(node_id):
+    char = node_id[i]
+    if char.isdigit():
+      if char == "0":
+        build_id += "0"
+      else:
+        build_id += node_id[i + 1 : i + int(char) + 1]
+      i += int(char) + 1
+    else:
+      build_id += char
+      i += 1
+    ancestors.append(build_id)
+  if len(ancestors) > 1:
+    return ancestors[-2]
+  return None
+
 
 logging.basicConfig(
   level=logging.INFO,

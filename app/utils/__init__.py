@@ -1,172 +1,22 @@
-"""Shared utilities for services layer."""
+"""Shared utilities for services layer.
 
-import re
-from datetime import UTC, datetime
-from typing import TypeVar
+Submodules:
+  xml       -- LLM output XML extraction
+  node_ids  -- Base-52 encoding for deterministic node IDs
+  time      -- Datetime normalization
+  pagination -- DynamoDB cursor-based pagination helpers
+  pii       -- Logging redaction
+"""
 
-from pydantic import BaseModel
+from app.utils.node_ids import base52_to_number, number_to_base52
+from app.utils.time import coerce_datetime
+from app.utils.xml import LLMOutputTruncatedError, extract_xml_block, extract_xml_json
 
-T = TypeVar("T", bound=BaseModel)
-
-
-##################################################################
-# X M L   E X T R A C T I O N   U T I L I T I E S
-##################################################################
-
-
-def extract_xml_block(content: str, tag: str, *, streaming: bool = False) -> str | None:
-  """Extract content from an XML block.
-
-  Args:
-      content: The full text to search in
-      tag: The XML tag name (without brackets)
-      streaming: If True, returns partial content when closing tag not yet present
-
-  Returns:
-      The extracted content (stripped), or None if tag not found
-  """
-  if f"</{tag}>" in content:
-    # Complete block available - extract everything between tags
-    pattern = rf"<{tag}>(.*?)</{tag}>"
-    match = re.search(pattern, content, re.DOTALL)
-    return match.group(1).strip() if match else None
-  elif streaming:
-    # Streaming mode: return partial content if opening tag found
-    pattern = rf"<{tag}>(.*)"
-    match = re.search(pattern, content, re.DOTALL)
-    return match.group(1) if match else None
-
-  return None
-
-
-class LLMOutputTruncatedError(ValueError):
-  """Raised when LLM output appears to have been truncated by max_tokens."""
-
-
-def extract_xml_json[T: BaseModel](content: str, tag: str, model: type[T]) -> T:
-  """Extract JSON content from an XML block and parse it into a Pydantic model.
-
-  Args:
-      content: The full text to search in
-      tag: The XML tag name (without brackets)
-      model: The Pydantic model class to parse into
-
-  Returns:
-      The parsed Pydantic model instance
-
-  Raises:
-      LLMOutputTruncatedError: If the opening tag exists but the closing tag is missing
-      ValueError: If the tag is not found or JSON parsing fails
-  """
-  extracted = extract_xml_block(content, tag, streaming=False)
-  if extracted is None:
-    if f"<{tag}>" in content and f"</{tag}>" not in content:
-      raise LLMOutputTruncatedError(
-        f"LLM output appears truncated: <{tag}> opened but never closed. "
-        "This likely indicates the response hit the max_tokens limit."
-      )
-    raise ValueError(f"XML tag <{tag}> not found in content")
-
-  # Clean up potential markdown code blocks
-  json_content = re.sub(r"^```(?:json)?\s*", "", extracted, flags=re.IGNORECASE)
-  json_content = re.sub(r"\s*```$", "", json_content)
-
-  return model.model_validate_json(json_content)
-
-
-def has_xml_block(content: str, tag: str) -> bool:
-  """Check if a complete XML block exists in the content.
-
-  Args:
-      content: The text to search in
-      tag: The XML tag name (without brackets)
-
-  Returns:
-      True if both opening and closing tags are present
-  """
-  return f"<{tag}>" in content and f"</{tag}>" in content
-
-
-def number_to_base52(number: int) -> str:
-  """Convert a number to a base-52 string."""
-  if number < 0:
-    raise ValueError("Number must be positive")
-  if number == 0:
-    return "a"
-  result = ""
-  while number > 0:
-    if number % 52 > 25:
-      result = chr((number) % 52 - 26 + ord("A")) + result
-    else:
-      result = chr((number) % 52 + ord("a")) + result
-    number //= 52
-  return result
-
-
-def base52_to_number(base52_string: str) -> int:
-  """Convert a base-52 string to a number."""
-  if not base52_string:
-    return 0
-  number = 0
-  for i, c in enumerate(reversed(base52_string)):
-    if c.isdigit():
-      continue
-    base_value = ord(c) - ord("a") if c.islower() else ord(c) - ord("A") + 26
-    if base_value < 0 or base_value > 51:
-      raise ValueError("Invalid base-52 string")
-    number += base_value * 52**i
-  return number
-
-
-##################################################################
-# N O D E   I D   U T I L I T I E S
-##################################################################
-
-
-def derive_parent_id(node_id: str) -> str | None:
-  """Derive the parent node ID from a StoryNode ID using the base-52 encoding scheme.
-
-  Node IDs encode their full ancestry path. For example, "0abc" represents
-  root (0) -> choice a -> choice b -> choice c. The parent of "0abc" is "0ab".
-  Multi-character choices are prefixed with a digit indicating their length
-  (e.g., "2aa" is a single two-character choice segment).
-
-  Returns None for root nodes (id == "0").
-  """
-  ancestors: list[str] = []
-  build_id = ""
-  i = 0
-  while i < len(node_id):
-    char = node_id[i]
-    if char.isdigit():
-      if char == "0":
-        build_id += "0"
-      else:
-        build_id += node_id[i + 1 : i + int(char) + 1]
-      i += int(char) + 1
-    else:
-      build_id += char
-      i += 1
-    ancestors.append(build_id)
-  if len(ancestors) > 1:
-    return ancestors[-2]
-  return None
-
-
-##################################################################
-# D A T E T I M E   U T I L I T I E S
-##################################################################
-
-
-def coerce_datetime(value: str | datetime | None) -> datetime:
-  """Normalize datetime-like inputs into a timezone-aware UTC datetime."""
-  if isinstance(value, datetime):
-    dt = value
-  elif value:
-    dt = datetime.fromisoformat(value.replace("Z", "+00:00"))
-  else:
-    dt = datetime.now(UTC)
-
-  if dt.tzinfo is None:
-    dt = dt.replace(tzinfo=UTC)
-  return dt
+__all__ = [
+  "LLMOutputTruncatedError",
+  "base52_to_number",
+  "coerce_datetime",
+  "extract_xml_block",
+  "extract_xml_json",
+  "number_to_base52",
+]

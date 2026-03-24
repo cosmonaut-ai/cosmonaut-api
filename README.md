@@ -4,7 +4,7 @@ FastAPI backend for Cosmonaut AI — an interactive choose-your-own-adventure st
 
 ## Stack
 
-- **Python 3.13**, **FastAPI**, **Mangum** (Lambda adapter)
+- **Python 3.13**, **FastAPI**
 - **DynamoDB** (single-table design via PynamoDB)
 - **Pinecone** (vector search for story facts)
 - **Vertex AI** (Gemini + Claude via Google Cloud) for story generation
