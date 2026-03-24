@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from app.core.errors import ForbiddenError, SessionAccessDeniedError, SessionNotFoundError
+from app.core.errors import ForbiddenError, SessionAccessDeniedError
 from app.core.security import User
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO
 from app.models.dtos.world_meta import GenerationStatus, WorldMetaDTO
@@ -10,25 +10,26 @@ from app.models.entities.node_session import NodeSession
 from app.models.entities.session_membership import SessionMembership
 from app.models.entities.world_meta import WorldMeta
 from app.models.entities.world_session import WorldSession
-from app.services.sessions import find_or_create_session, get_session
+from app.services.sessions import find_or_create_session, find_session
 from app.services.worlds import get_world_entity
 
 
 def require_session_read(world_id: str, user: User) -> tuple[WorldSession, WorldMeta]:
   """Resolve world_id (which may be a session_id or root_world_id), verify access.
 
-  Dual-resolution strategy for backward compatibility:
+  Dual-resolution strategy:
     1. Try world_id as a session_id -> verify membership
-    2. Fall back to root_world_id -> verify legacy access -> auto-create session
+    2. Fall back to root_world_id -> verify world-level access -> auto-create session
+
+  Uses find_session (non-throwing) to avoid exception-based control flow that
+  generates Sentry noise via the Powertools tracer.
   """
-  try:
-    session = get_session(world_id)
+  session = find_session(world_id)
+  if session is not None:
     if user.id not in [str(m) for m in session.members]:
       raise SessionAccessDeniedError(f"User {user.id} is not a member of session {world_id}")
     world = get_world_entity(str(session.root_world_id))
     return session, world
-  except SessionNotFoundError:
-    pass
 
   world = get_world_entity(world_id)
   if not world.can_user_read(user.id, user.email):
