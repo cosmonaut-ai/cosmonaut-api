@@ -4,7 +4,7 @@ from urllib.parse import urlparse
 
 import stripe
 from botocore.exceptions import ClientError
-from fastapi import APIRouter, Body, Depends, Response
+from fastapi import APIRouter, Body, Depends, Query, Response
 from pydantic import BaseModel, Field, field_validator
 
 from app.core.cloudfront import create_signed_cookies
@@ -19,6 +19,7 @@ from app.services.newsletter import subscribe, unsubscribe
 from app.services.secret_manager import get_secret_value
 from app.services.stripe_client import create_billing_portal_session, create_checkout_session
 from app.services.usage import get_or_create_usage
+from app.services.username import check_availability, reserve_username, validate_username
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -51,6 +52,8 @@ class BillingPortalResponse(BaseModel):
 
 
 class UsageResponse(BaseModel):
+  username: str | None
+  is_onboarded: bool
   tier: str
   nodes_used: int
   nodes_limit: int
@@ -65,6 +68,19 @@ class UsageResponse(BaseModel):
   pending_tier: str | None
   pending_tier_date: str | None
   newsletter_opted_in: bool
+
+
+class UsernameCheckResponse(BaseModel):
+  available: bool
+  username: str
+
+
+class UsernameSetRequest(BaseModel):
+  username: str = Field(..., min_length=3, max_length=30)
+
+
+class UsernameSetResponse(BaseModel):
+  username: str
 
 
 class FeedbackRequest(BaseModel):
@@ -114,25 +130,28 @@ _TIER_PRICE_MAP: dict[str, str] = {
 @router.get("/usage", response_model=UsageResponse, summary="Get current usage and quota info")
 async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResponse:
   """Return the authenticated user's tier, usage counters, and limits."""
-  usage = get_or_create_usage(current_user.id, email=current_user.email)
-  tier = str(usage.tier) if usage.tier else "FREE"
+  record = get_or_create_usage(current_user.id, email=current_user.email)
+  u = record.usage
+  tier = str(u.tier) if u.tier else "FREE"
   limits = get_tier_limits(tier)
 
   return UsageResponse(
+    username=str(record.username) if record.username else None,
+    is_onboarded=bool(record.is_onboarded),
     tier=tier,
-    nodes_used=int(usage.nodes_used or 0),
+    nodes_used=int(u.nodes_used or 0),
     nodes_limit=limits["nodes"],
-    worlds_created=int(usage.worlds_created or 0),
+    worlds_created=int(u.worlds_created or 0),
     worlds_limit=limits["worlds"],
-    audio_narrations_used=int(usage.audio_narrations_used or 0),
+    audio_narrations_used=int(u.audio_narrations_used or 0),
     audio_narrations_limit=limits["audio_limit"],
-    period_end=usage.period_end.isoformat() if usage.period_end else None,
-    pending_cancellation=bool(usage.pending_cancellation),
-    cancellation_date=usage.cancellation_date.isoformat() if usage.cancellation_date else None,
-    subscription_status=str(usage.subscription_status) if usage.subscription_status else None,
-    pending_tier=str(usage.pending_tier) if usage.pending_tier else None,
-    pending_tier_date=usage.pending_tier_date.isoformat() if usage.pending_tier_date else None,
-    newsletter_opted_in=bool(usage.newsletter_opted_in),
+    period_end=u.period_end.isoformat() if u.period_end else None,
+    pending_cancellation=bool(u.pending_cancellation),
+    cancellation_date=u.cancellation_date.isoformat() if u.cancellation_date else None,
+    subscription_status=str(u.subscription_status) if u.subscription_status else None,
+    pending_tier=str(u.pending_tier) if u.pending_tier else None,
+    pending_tier_date=u.pending_tier_date.isoformat() if u.pending_tier_date else None,
+    newsletter_opted_in=bool(record.newsletter_opted_in),
   )
 
 
@@ -190,12 +209,12 @@ async def create_billing_portal(
   """Create a Stripe Billing Portal session so the user can manage their
   subscription (cancel, change plan, update payment method).
   """
-  usage = get_or_create_usage(current_user.id)
-  if not usage.stripe_customer_id:
+  record = get_or_create_usage(current_user.id)
+  if not record.usage.stripe_customer_id:
     raise BadRequestError("No active subscription found")
 
   try:
-    portal_url = create_billing_portal_session(customer_id=str(usage.stripe_customer_id))
+    portal_url = create_billing_portal_session(customer_id=str(record.usage.stripe_customer_id))
   except stripe.StripeError as e:
     logger.error(f"Stripe billing portal session creation failed: {e}")
     raise ExternalServiceError("Failed to create billing portal session") from e
@@ -225,7 +244,7 @@ async def submit_feedback(
     if existing.expiration and int(existing.expiration) > now:
       retry_after = int(existing.expiration) - now
       raise RateLimitError("Please wait before submitting more feedback.", retry_after=retry_after)
-  except RateLimitRecord.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+  except RateLimitRecord.DoesNotExist:
     pass
 
   record = RateLimitRecord(
@@ -235,8 +254,8 @@ async def submit_feedback(
   )
   record.save()
 
-  usage = get_or_create_usage(current_user.id)
-  tier = str(usage.tier) if usage.tier else "FREE"
+  record = get_or_create_usage(current_user.id)
+  tier = str(record.usage.tier) if record.usage.tier else "FREE"
 
   send_feedback_email(
     user_email=current_user.email or "unknown",
@@ -260,9 +279,9 @@ async def update_newsletter(
   current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
   """Subscribe or unsubscribe the user from the product newsletter."""
-  usage = get_or_create_usage(current_user.id)
-  usage.newsletter_opted_in = payload.opted_in
-  usage.save()
+  record = get_or_create_usage(current_user.id)
+  record.newsletter_opted_in = payload.opted_in
+  record.save()
 
   email = current_user.email
   if email:
@@ -272,3 +291,41 @@ async def update_newsletter(
       await unsubscribe(email)
 
   return {"status": "subscribed" if payload.opted_in else "unsubscribed"}
+
+
+# ---------------------------------------------------------------------------
+# Username endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.get("/username/check", response_model=UsernameCheckResponse, summary="Check username availability")
+async def check_username(
+  username: str = Query(..., min_length=3, max_length=30),
+  current_user: User = Depends(get_current_user),
+) -> UsernameCheckResponse:
+  """Return whether *username* is available (case-insensitive).
+
+  Validates format first; invalid usernames are never 'available'.
+  """
+  try:
+    cleaned = validate_username(username)
+  except BadRequestError:
+    return UsernameCheckResponse(available=False, username=username)
+
+  return UsernameCheckResponse(
+    available=check_availability(cleaned),
+    username=cleaned,
+  )
+
+
+@router.post("/username", response_model=UsernameSetResponse, summary="Set username (one-time)")
+async def set_username(
+  payload: UsernameSetRequest = Body(...),
+  current_user: User = Depends(get_current_user),
+) -> UsernameSetResponse:
+  """Atomically reserve a username for the authenticated user.
+
+  Usernames are permanent and cannot be changed once set.
+  """
+  stored = reserve_username(current_user.id, payload.username)
+  return UsernameSetResponse(username=stored)

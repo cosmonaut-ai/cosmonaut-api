@@ -38,7 +38,7 @@ def get_gcp_credentials() -> Credentials:
     # google.auth.default() returns a (credentials, project) tuple whose exact
     # credential type depends on the environment (WIF, ADC, service account, etc.).
     # The google-auth stubs under-specify the return type, so we cast to Credentials.
-    result: tuple[Credentials, str | None] = google.auth.default(scopes=_VERTEX_SCOPES)  # type: ignore[reportUnknownVariableType]
+    result: tuple[Credentials, str | None] = google.auth.default(scopes=_VERTEX_SCOPES)
     credentials, project = result
     logger.info(
       "GCP credentials loaded",

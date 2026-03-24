@@ -20,7 +20,7 @@ class SessionMembership(BaseCosmonautModel):
     2. List all sessions for a user (dashboard):
        query PK=USER#{user_id}, SK begins_with SMEMBER#
 
-  Coexists in the USER# partition alongside UserUsage (SK=USAGE)
+  Coexists in the USER# partition alongside UserRecord (SK=USAGE)
   with no SK prefix collision.
   """
 

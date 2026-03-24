@@ -15,7 +15,7 @@ from app.models.entities.base import BaseCosmonautModel
 from app.utils import coerce_datetime
 
 
-class Character(MapAttribute):  # type: ignore[type-arg]
+class Character(MapAttribute[str, UnicodeAttribute]):
   name: UnicodeAttribute = UnicodeAttribute()
   description: UnicodeAttribute = UnicodeAttribute()
   relationships: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
@@ -36,7 +36,7 @@ class Character(MapAttribute):  # type: ignore[type-arg]
     )
 
 
-class Location(MapAttribute):  # type: ignore[type-arg]
+class Location(MapAttribute[str, UnicodeAttribute]):
   name: UnicodeAttribute = UnicodeAttribute()
   description: UnicodeAttribute = UnicodeAttribute()
   connections: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
@@ -179,7 +179,7 @@ class WorldMeta(BaseCosmonautModel):
   def _on_save(self) -> None:
     """Keep GSI1SK in sync with ``updated_at`` for chronological ordering."""
     if self.author_id and self.updated_at:
-      self.GSI1SK = WorldMeta.gsi1_sk(self.updated_at.isoformat())  # type: ignore[reportConstantRedefinition]
+      self.GSI1SK = WorldMeta.gsi1_sk(self.updated_at.isoformat())
 
   def can_user_read(self, user_id: str, user_email: str | None = None) -> bool:
     if self.visibility == WorldVisibility.PUBLIC or self.author_id == user_id:

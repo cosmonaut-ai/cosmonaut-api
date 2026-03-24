@@ -37,7 +37,7 @@ _agent: Agent[RootNodeDeps, str] = Agent(
 
 
 @_agent.system_prompt
-def _build_system_prompt(ctx: RunContext[RootNodeDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
+def _build_system_prompt(ctx: RunContext[RootNodeDeps]) -> str:
   """Build system prompt for streaming root node generation."""
   family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if ctx.deps.family_friendly else ""
   return f"""{SYSTEM_PROMPT}

@@ -57,7 +57,7 @@ def check_rate_limit(user_id: str, endpoint: str) -> None:
       record.request_count = 1
       record.expiration = now + window_seconds
       record.save()
-  except RateLimitRecord.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+  except RateLimitRecord.DoesNotExist:
     record = RateLimitRecord(
       PK=pk,
       SK=sk,

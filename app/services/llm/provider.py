@@ -78,7 +78,7 @@ def get_vertex_google_provider() -> GoogleProvider:
   429 / 500 / 502 / 503 / 504 responses with exponential backoff.
   Uses Vertex AI via Workload Identity Federation (Lambda) or ADC (local).
   """
-  return GoogleProvider(  # type: ignore[reportCallIssue]
+  return GoogleProvider(  # type: ignore  # google-auth Credentials subtype mismatch
     vertexai=True,
     credentials=get_gcp_credentials(),
     project=settings.GCP_PROJECT_ID,

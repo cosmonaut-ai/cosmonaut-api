@@ -47,9 +47,10 @@ _cli_args = _parse_args()
 os.environ["DYNAMODB_TABLE_NAME"] = f"cosmonaut-{_cli_args.env}"
 os.environ["ENV"] = _cli_args.env
 
+from app.models.entities.user_progress import UserProgress  # noqa: E402
+
 from app.models.entities.node_session import BaseChoiceStateMap, CustomChoiceMap, NodeSession  # noqa: E402
 from app.models.entities.story_node import StoryNode  # noqa: E402
-from app.models.entities.user_progress import UserProgress  # noqa: E402
 from app.models.entities.world_meta import WorldMeta  # noqa: E402
 from app.services.sessions import (  # noqa: E402
   create_session,
@@ -408,7 +409,7 @@ def _migrate_custom_choices(
       elif state.dry_run:
         state.source_session_ids_set += 1
 
-    except StoryNode.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+    except StoryNode.DoesNotExist:
       log.warning("Custom choice target node %s not found in world %s", target_id, world_id)
     except Exception as e:
       msg = f"Error setting source_session_id on {target_id} in world {world_id}: {e}"
@@ -426,7 +427,7 @@ def pass3_process_nodes(state: MigrationState, resume_from: str | None = None) -
 
   for world_id in sorted_world_ids:
     if resuming:
-      if world_id < resume_from:  # type: ignore[operator]
+      if world_id < resume_from:  # type: ignore  # str comparison
         continue
       resuming = False
 
@@ -485,7 +486,8 @@ def pass3_process_nodes(state: MigrationState, resume_from: str | None = None) -
       state.errors.append(msg)
 
   log.info(
-    "Pass 3 complete: %d nodes, %d NodeSessions created (%d skipped), %d custom choices migrated, %d source_session_ids set",
+    "Pass 3 complete: %d nodes, %d NodeSessions created (%d skipped), "
+    "%d custom choices migrated, %d source_session_ids set",
     state.nodes_processed,
     state.node_sessions_created,
     state.node_sessions_skipped,
@@ -504,15 +506,15 @@ def print_report(state: MigrationState) -> None:
   log.info("=" * 60)
   log.info("MIGRATION REPORT%s", " (DRY-RUN)" if state.dry_run else "")
   log.info("=" * 60)
-  log.info("Pass 1 – Author Sessions:")
+  log.info("Pass 1 - Author Sessions:")
   log.info("  Worlds processed:      %d", state.worlds_processed)
   log.info("  Sessions created:      %d", state.sessions_created)
   log.info("  Sessions skipped:      %d", state.sessions_skipped)
-  log.info("Pass 2 – UserProgress:")
+  log.info("Pass 2 - UserProgress:")
   log.info("  Records scanned:       %d", state.progress_records)
   log.info("  Author updates:        %d", state.progress_authors_updated)
   log.info("  Member sessions:       %d", state.progress_members_created)
-  log.info("Pass 3 – StoryNodes:")
+  log.info("Pass 3 - StoryNodes:")
   log.info("  Nodes processed:       %d", state.nodes_processed)
   log.info("  NodeSessions created:  %d", state.node_sessions_created)
   log.info("  NodeSessions skipped:  %d", state.node_sessions_skipped)

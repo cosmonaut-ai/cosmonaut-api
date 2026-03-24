@@ -12,13 +12,13 @@ from pynamodb.attributes import (
 from app.models.entities.base import BaseCosmonautModel
 
 
-class BaseChoiceStateMap(MapAttribute):  # type: ignore[type-arg]
+class BaseChoiceStateMap(MapAttribute[str, BooleanAttribute]):
   """Tracks whether a base (LLM-generated) choice has been explored in this session."""
 
   is_explored: BooleanAttribute = BooleanAttribute(default=False)
 
 
-class CustomChoiceMap(MapAttribute):  # type: ignore[type-arg]
+class CustomChoiceMap(MapAttribute[str, UnicodeAttribute]):
   """A session-scoped custom choice added by a user, with creator attribution."""
 
   label: UnicodeAttribute = UnicodeAttribute()

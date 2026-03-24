@@ -77,7 +77,7 @@ def find_session(session_id: str) -> WorldSession | None:
   """
   try:
     return WorldSession.get(WorldSession.pk(session_id), WorldSession.sk())
-  except WorldSession.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+  except WorldSession.DoesNotExist:
     return None
 
 
@@ -160,7 +160,7 @@ def add_member(
   """Add a member to an existing session."""
   session = get_session(session_id)
   session.update(
-    actions=[WorldSession.members.set(WorldSession.members.append([user_id]))],  # type: ignore[reportUnknownMemberType]
+    actions=[WorldSession.members.set(WorldSession.members.append([user_id]))],
   )
 
   now = datetime.now(UTC)
@@ -236,7 +236,7 @@ def get_node_session(session_id: str, node_id: str) -> NodeSession | None:
   """Fetch a NodeSession. Returns None if not found (non-throwing)."""
   try:
     return NodeSession.get(NodeSession.pk(session_id), NodeSession.sk(node_id))
-  except NodeSession.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+  except NodeSession.DoesNotExist:
     return None
 
 
@@ -276,7 +276,7 @@ def update_session_progress(
   """
   ws = WorldSession(PK=WorldSession.pk(session_id), SK=WorldSession.sk())
   ws.update(
-    actions=[WorldSession.per_member_progress[user_id].set(node_id)],  # type: ignore[reportUnknownMemberType]
+    actions=[WorldSession.per_member_progress[user_id].set(node_id)],  # type: ignore  # PynamoDB MapAttribute subscript
     add_version_condition=False,
   )
 
@@ -329,7 +329,7 @@ def update_membership_metadata(
     actions.append(SessionMembership.root_created_at.set(created_at_str))
   if world.root_node_id:
     actions.append(SessionMembership.root_node_id.set(world.root_node_id))
-  if world.family_friendly is not None:
+  if world.family_friendly:
     actions.append(SessionMembership.family_friendly.set(world.family_friendly))
 
   if not actions:
@@ -392,14 +392,14 @@ def delete_sessions_for_world(root_world_id: str) -> None:
   efficiently find sessions without a full table scan.
   """
   gsi3_pk = WorldSession.gsi3_pk(root_world_id)
-  gsi3_results = list(WorldSession.GSI3.query(hash_key=gsi3_pk))
+  gsi3_results: list[WorldSession] = list(WorldSession.GSI3.query(hash_key=gsi3_pk))
 
   for result in gsi3_results:
     session_id = str(result.PK).removeprefix("SESSION#")
 
     try:
       session = get_session(session_id)
-      members = [str(m) for m in session.members] if session.members else []  # type: ignore[reportUnknownVariableType]
+      members = [str(m) for m in session.members] if session.members else []
     except SessionNotFoundError:
       members = []
 

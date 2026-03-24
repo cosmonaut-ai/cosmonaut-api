@@ -14,7 +14,7 @@ import asyncio
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pynamodb.exceptions import UpdateError
 
@@ -155,26 +155,27 @@ def merge_choices(
 
 def _get_world_facts(world_id: str, node_text: str, top_k: int = 50) -> list[pinecone.PineconeWorldFact]:
   """Get the world facts for a given node."""
-  return [
-    pinecone.PineconeWorldFact.model_validate({**x.fields, "id": x._id})
-    for x in pinecone.search_records(
+  hits = cast(
+    list[Any],
+    pinecone.search_records(
       query=node_text,
       top_k=top_k,
       filter={
         "world_id": {"$eq": world_id},
         "entity_type": {"$eq": pinecone.EntityType.WORLD_FACT},
       },
-    ).result.hits
-  ]
+    ).result.hits,
+  )
+  return [pinecone.PineconeWorldFact.model_validate({**x.fields, "id": x._id}) for x in hits]
 
 
 def _get_branch_facts(
   world_id: str, node_text: str, ancestors: list[str], top_k: int = 50
 ) -> list[pinecone.PineconeBranchFact]:
   """Get the branch facts for a given node."""
-  results: list[PineconeBranchFact] = [
-    pinecone.PineconeBranchFact.model_validate({**x.fields, "id": x._id})
-    for x in pinecone.search_records(
+  hits = cast(
+    list[Any],
+    pinecone.search_records(
       query=node_text,
       top_k=top_k,
       filter={
@@ -182,24 +183,28 @@ def _get_branch_facts(
         "entity_type": {"$eq": pinecone.EntityType.BRANCH_FACT},
         "origin_node_id": {"$in": ancestors},
       },
-    ).result.hits
+    ).result.hits,
+  )
+  results: list[PineconeBranchFact] = [
+    pinecone.PineconeBranchFact.model_validate({**x.fields, "id": x._id}) for x in hits
   ]
   return sorted(results, key=lambda x: -ancestors.index(x.origin_node_id))
 
 
 def _get_similar_nodes(world_id: str, node_text: str, top_k: int = 3) -> list[pinecone.PineconeRecord]:
   """Get the similar story nodes for a given node."""
-  return [
-    pinecone.PineconeRecord.model_validate({**x.fields, "id": x._id})
-    for x in pinecone.search_records(
+  hits = cast(
+    list[Any],
+    pinecone.search_records(
       query=node_text,
       top_k=top_k,
       filter={
         "world_id": {"$eq": world_id},
         "entity_type": {"$eq": pinecone.EntityType.NODE_TEXT},
       },
-    ).result.hits
-  ]
+    ).result.hits,
+  )
+  return [pinecone.PineconeRecord.model_validate({**x.fields, "id": x._id}) for x in hits]
 
 
 # =============================================================================

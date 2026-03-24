@@ -16,13 +16,11 @@ uv pip install boto3-stubs[all] httpx pytest
 
 ## Linting
 
-Run BasedPyright for type checking (requires venv to resolve imports):
+Run ty for type checking (requires venv to resolve imports):
 
 ```sh
-pyright
+ty check
 ```
-
-Configuration is in `pyrightconfig.json` (strict mode).
 
 Run Ruff for formatting and lint:
 
@@ -31,4 +29,4 @@ ruff check .
 ruff format .
 ```
 
-Configuration is in `pyproject.toml` (line-length=120, indent-width=2, target py313).
+All configuration is in `pyproject.toml` (line-length=120, indent-width=2, target py313).

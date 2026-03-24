@@ -72,7 +72,7 @@ class FactExtractionDeps(BaseModel):
 
 
 # Module-level agent instantiation
-_agent: Agent[FactExtractionDeps, LLMFactExtraction] = Agent(
+_agent: Agent[FactExtractionDeps, LLMFactExtraction] = Agent(  # type: ignore[invalid-assignment]  # output_type generic not inferred
   model=get_utility_model(),
   deps_type=FactExtractionDeps,
   output_type=LLMFactExtraction,
@@ -80,7 +80,7 @@ _agent: Agent[FactExtractionDeps, LLMFactExtraction] = Agent(
 
 
 @_agent.system_prompt
-def _build_system_prompt(ctx: RunContext[FactExtractionDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
+def _build_system_prompt(ctx: RunContext[FactExtractionDeps]) -> str:
   """Inject story text and user choice into system prompt."""
   user_choice = sanitize_user_input(ctx.deps.user_choice) if ctx.deps.user_choice else None
   return f"""{SYSTEM_PROMPT}

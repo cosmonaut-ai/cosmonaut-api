@@ -317,9 +317,9 @@ async def generate_node_audio(
   try:
     node.update(
       actions=[
-        StoryNode.audio[voice.id].set(cdn_url),  # type: ignore[union-attr]
+        StoryNode.audio[voice.id].set(cdn_url),  # type: ignore  # PynamoDB MapAttribute subscript
       ],
-      condition=StoryNode.audio[voice.id].does_not_exist() | StoryNode.audio.does_not_exist(),  # type: ignore[union-attr]
+      condition=StoryNode.audio[voice.id].does_not_exist() | StoryNode.audio.does_not_exist(),  # type: ignore  # PynamoDB condition expression
     )
   except UpdateError:
     release_quota(current_user.id, "audio")
