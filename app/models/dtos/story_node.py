@@ -27,8 +27,8 @@ class ChoiceDTO(DTOModel):
 class ChooseRequestDTO(DTOModel):
   """Request body for the choose endpoint."""
 
-  choice_index: int | None = None  # For selecting existing choices
-  custom_choice: str | None = Field(None, max_length=200)  # For free text choices
+  target_id: str | None = None
+  custom_choice: str | None = Field(None, max_length=200)
 
 
 class StoryNodeProcessingStatus(str, Enum):
