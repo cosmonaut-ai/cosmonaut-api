@@ -13,16 +13,15 @@ from typing import TYPE_CHECKING
 
 import stripe
 
-import app.services.pinecone as pinecone_service
 from app.core.config import settings
 from app.core.observability import logger
 from app.models.entities.session_membership import SessionMembership
 from app.models.entities.user import UsageTombstone, UsernameReservation, UserRecord
 from app.models.entities.world_meta import WorldMeta
 from app.services.newsletter import unsubscribe as newsletter_unsubscribe
-from app.services.s3 import delete_objects_by_prefix
 from app.services.secret_manager import get_secret_value
 from app.services.sessions import delete_session, delete_sessions_for_world, delete_user_memberships
+from app.services.worlds import hard_delete_orphaned_world
 
 if TYPE_CHECKING:
   from mypy_boto3_cognito_idp.client import CognitoIdentityProviderClient
@@ -136,7 +135,11 @@ def _cancel_stripe_subscription(user_id: str) -> None:
 
 
 def _delete_all_user_worlds(user_id: str) -> None:
-  """Delete every world owned by the user, including nodes and vectors."""
+  """Delete every world owned by the user (GDPR right to erasure).
+
+  Unconditionally hard-deletes owned worlds regardless of whether other
+  users have active sessions — those sessions are removed first.
+  """
   gsi1_pk = WorldMeta.gsi1_pk(user_id)
   worlds: list[WorldMeta] = list(WorldMeta.GSI1.query(hash_key=gsi1_pk))  # type: ignore  # PynamoDB GSI query return type
 
@@ -145,35 +148,12 @@ def _delete_all_user_worlds(user_id: str) -> None:
   for world in worlds:
     world_id = str(world.id)
     try:
-      # Delete all items under this world's partition (metadata + nodes)
-      pk = WorldMeta.pk(world_id)
-      items = list(WorldMeta.query(pk))
-      if items:
-        with WorldMeta.batch_write() as batch:
-          for item in items:
-            batch.delete(item)
+      delete_sessions_for_world(world_id)
+    except Exception:
+      logger.exception("Failed to delete sessions for world %s", world_id)
 
-      # Delete Pinecone vectors for this world
-      try:
-        pinecone_service.delete_records(filter={"world_id": world_id})
-      except Exception:
-        logger.exception("Failed to delete Pinecone records for world %s", world_id)
-
-      # Delete S3 objects (images + audio) for this world
-      try:
-        count = delete_objects_by_prefix(f"worlds/{world_id}/")
-        count += delete_objects_by_prefix(f"audio/{world_id}/")
-        if count:
-          logger.info("Deleted %d S3 objects for world %s", count, world_id)
-      except Exception:
-        logger.exception("Failed to delete S3 objects for world %s", world_id)
-
-      # Delete all sessions associated with this world
-      try:
-        delete_sessions_for_world(world_id)
-      except Exception:
-        logger.exception("Failed to delete sessions for world %s", world_id)
-
+    try:
+      hard_delete_orphaned_world(world_id)
     except Exception:
       logger.exception("Failed to delete world %s for user %s", world_id, user_id)
 

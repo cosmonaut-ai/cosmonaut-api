@@ -38,7 +38,8 @@ from app.models.entities.story_node import StoryNode
 from app.models.entities.user import UserRecord
 from app.models.entities.world_meta import Character, Location, WorldMeta
 from app.services.llm.sanitize import sanitize_user_input
-from app.services.sessions import create_session, delete_sessions_for_world
+from app.services.s3 import delete_objects_by_prefix
+from app.services.sessions import create_session
 from app.services.sqs import send_world_generation_message
 from app.services.usage import (
   check_and_increment,
@@ -194,8 +195,10 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
   """
   world = get_world_entity(world_id)
 
-  # Fields that should never be updated via this endpoint
-  immutable_fields = {"id", "author_id", "created_at", "updated_at"}
+  # Fields that should never be updated via this endpoint.
+  # ``visibility`` is restricted to the dedicated /sharing endpoint
+  # to ensure the cascade (revoke_unauthorized_sessions) always fires.
+  immutable_fields = {"id", "author_id", "created_at", "updated_at", "visibility"}
 
   # Field converters: maps DTO field name to a converter function
   def convert_visibility(v: WorldVisibility) -> str:
@@ -232,9 +235,19 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
 
 
 @tracer.capture_method
-def delete_world(world_id: str) -> None:
-  """Delete a world and any associated state."""
-  world = get_world_entity(world_id)
+def hard_delete_orphaned_world(world_id: str) -> None:
+  """Hard-delete a world that has zero remaining sessions.
+
+  Called after orphan detection (all sessions removed) and during
+  account deletion (GDPR right to erasure).  All cleanup operations
+  are idempotent, so concurrent calls are safe.
+  """
+  try:
+    world = get_world_entity(world_id)
+  except WorldNotFoundError:
+    logger.info("World %s already deleted (idempotent)", world_id)
+    return
+
   author_id = str(world.author_id) if world.author_id else None
 
   pk, _sk = _world_keys(world_id)
@@ -249,9 +262,10 @@ def delete_world(world_id: str) -> None:
     logger.exception("Failed to delete Pinecone records for world %s (non-fatal)", world_id)
 
   try:
-    delete_sessions_for_world(world_id)
+    delete_objects_by_prefix(f"worlds/{world_id}/")
+    delete_objects_by_prefix(f"audio/{world_id}/")
   except Exception:
-    logger.warning("Failed to delete sessions for world %s (non-fatal)", world_id, exc_info=True)
+    logger.exception("Failed to delete S3 objects for world %s (non-fatal)", world_id)
 
   if author_id:
     _decrement_world_count(author_id)

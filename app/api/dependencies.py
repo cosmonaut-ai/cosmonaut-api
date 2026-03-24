@@ -25,15 +25,20 @@ def require_onboarded(current_user: User = Depends(get_current_user)) -> User:
   return current_user
 
 
-def require_session_read(world_id: str, user: User) -> tuple[WorldSession, WorldMeta]:
+def require_session_read(
+  world_id: str,
+  user: User,
+  invite_token: str | None = None,
+) -> tuple[WorldSession, WorldMeta]:
   """Resolve world_id (which may be a session_id or root_world_id), verify access.
 
   Dual-resolution strategy:
     1. Try world_id as a session_id -> verify membership
     2. Fall back to root_world_id -> verify world-level access -> auto-create session
 
-  Uses find_session (non-throwing) to avoid exception-based control flow that
-  generates Sentry noise via the Powertools tracer.
+  When an ``invite_token`` is provided and the user does not otherwise have
+  access, the token is validated and redeemed (granting a session + optional
+  shared_with auto-add for private worlds).
   """
   session = find_session(world_id)
   if session is not None:
@@ -43,7 +48,15 @@ def require_session_read(world_id: str, user: User) -> tuple[WorldSession, World
     return session, world
 
   world = get_world_entity(world_id)
-  if not world.can_user_read(user.id, user.email):
+  if not world.can_user_read(user.id):
+    if invite_token:
+      from app.services.invite_tokens import redeem_invite_token, validate_invite_token
+
+      token_entity = validate_invite_token(invite_token, world_id)
+      if token_entity:
+        redeem_invite_token(invite_token, user.id, world_id)
+        session = find_or_create_session(world_id, user.id, world=world)
+        return session, world
     raise ForbiddenError(f"Not authorized to access world {world_id}")
   session = find_or_create_session(world_id, user.id, world=world)
   return session, world

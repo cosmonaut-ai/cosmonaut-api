@@ -349,6 +349,98 @@ def update_membership_metadata(
 
 
 @tracer.capture_method
+def delete_session_for_user(
+  session_id: str,
+  user_id: str,
+  root_world_id: str,
+) -> bool:
+  """Remove a user from a session, cleaning up empty sessions.
+
+  Returns True if the world is now orphaned (zero sessions remaining).
+  """
+  try:
+    SessionMembership(
+      PK=SessionMembership.pk(user_id),
+      SK=SessionMembership.sk(root_world_id, session_id),
+    ).delete()
+  except Exception:
+    logger.warning("Failed to delete membership for user %s in session %s", user_id, session_id, exc_info=True)
+
+  session = find_session(session_id)
+  if session is not None:
+    updated_members = [m for m in session.members if str(m) != user_id]
+    if not updated_members:
+      delete_session(session_id)
+    else:
+      session.members = updated_members
+      progress = dict(session.per_member_progress or {})
+      progress.pop(user_id, None)
+      session.per_member_progress = progress
+      session.save()
+
+  remaining = list(WorldSession.GSI3.query(
+    hash_key=WorldSession.gsi3_pk(root_world_id),
+    range_key_condition=WorldSession.GSI3SK.startswith("SESSION#"),
+    limit=1,
+  ))
+  return len(remaining) == 0
+
+
+@tracer.capture_method
+def revoke_unauthorized_sessions(
+  root_world_id: str,
+  author_id: str,
+  shared_with: list[str],
+) -> int:
+  """Delete sessions for users not in the allowed set.
+
+  Called when a world's visibility changes to private. Returns the
+  number of revoked user-session pairs.
+  """
+  allowed = set(shared_with) | {author_id}
+  revoked = 0
+
+  gsi3_results = list(WorldSession.GSI3.query(
+    hash_key=WorldSession.gsi3_pk(root_world_id),
+    range_key_condition=WorldSession.GSI3SK.startswith("SESSION#"),
+  ))
+
+  for result in gsi3_results:
+    session_id = str(result.PK).removeprefix("SESSION#")
+    session = find_session(session_id)
+    if session is None:
+      continue
+
+    members = [str(m) for m in session.members] if session.members else []
+    unauthorized = [m for m in members if m not in allowed]
+
+    for uid in unauthorized:
+      try:
+        SessionMembership(
+          PK=SessionMembership.pk(uid),
+          SK=SessionMembership.sk(root_world_id, session_id),
+        ).delete()
+      except Exception:
+        logger.warning("Failed to delete membership for user %s in session %s", uid, session_id, exc_info=True)
+      revoked += 1
+
+    remaining = [m for m in members if m in allowed]
+    if not remaining:
+      delete_session(session_id)
+    elif len(remaining) < len(members):
+      session.members = remaining  # type: ignore[assignment]  # PynamoDB ListAttribute
+      progress = dict(session.per_member_progress or {})
+      for uid in unauthorized:
+        progress.pop(uid, None)
+      session.per_member_progress = progress
+      session.save()
+
+  if revoked:
+    logger.info("Revoked %d session memberships for world %s", revoked, root_world_id)
+  return revoked
+
+
+@tracer.capture_method
 def delete_session(session_id: str) -> None:
   """Delete a WorldSession and all its NodeSessions.
 
