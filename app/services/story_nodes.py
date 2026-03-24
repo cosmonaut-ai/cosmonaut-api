@@ -155,7 +155,7 @@ def _get_world_facts(world_id: str, node_text: str, top_k: int = 50) -> list[pin
   """Get the world facts for a given node."""
   return [
     pinecone.PineconeWorldFact.model_validate({**x.fields, "id": x._id})
-    for x in pinecone.search_records(  # type: ignore[reportUnknownReturnType]
+    for x in pinecone.search_records(
       query=node_text,
       top_k=top_k,
       filter={
@@ -172,7 +172,7 @@ def _get_branch_facts(
   """Get the branch facts for a given node."""
   results: list[PineconeBranchFact] = [
     pinecone.PineconeBranchFact.model_validate({**x.fields, "id": x._id})
-    for x in pinecone.search_records(  # type: ignore[reportUnknownReturnType]
+    for x in pinecone.search_records(
       query=node_text,
       top_k=top_k,
       filter={
@@ -189,7 +189,7 @@ def _get_similar_nodes(world_id: str, node_text: str, top_k: int = 3) -> list[pi
   """Get the similar story nodes for a given node."""
   return [
     pinecone.PineconeRecord.model_validate({**x.fields, "id": x._id})
-    for x in pinecone.search_records(  # type: ignore[reportUnknownReturnType]
+    for x in pinecone.search_records(
       query=node_text,
       top_k=top_k,
       filter={
@@ -216,7 +216,7 @@ def get_node_entity(world_id: str, node_id: str) -> StoryNode:
   pk, sk = _node_keys(world_id, node_id)
   try:
     return StoryNode.get(pk, sk)
-  except StoryNode.DoesNotExist as e:  # type: ignore[reportGeneralTypeIssues]
+  except StoryNode.DoesNotExist as e:
     raise NodeNotFoundError(world_id, node_id) from e
 
 
@@ -397,7 +397,13 @@ async def choose_with_session(
     return await _choose_custom_with_session(node, root_world_id, session_id, custom_choice, user_id)
   if choice_index is None:
     raise InvalidChoiceError(node_id, -1, len(node.choices) - 1)
-  return await _choose_base_with_session(node, root_world_id, session_id, choice_index, user_id)
+
+  base_count = len(node.choices)
+  if choice_index < base_count:
+    return await _choose_base_with_session(node, root_world_id, session_id, choice_index, user_id)
+
+  # Index falls beyond base choices — resolve from session custom choices.
+  return await _choose_existing_custom_with_session(node, root_world_id, session_id, choice_index, user_id)
 
 
 async def _choose_custom_with_session(
@@ -464,6 +470,43 @@ async def _choose_custom_with_session(
   parent_ns.save()
 
   logger.info("Created custom-choice node %s in session %s", child_id, session_id)
+  return child
+
+
+async def _choose_existing_custom_with_session(
+  node: StoryNode,
+  root_world_id: str,
+  session_id: str,
+  choice_index: int,
+  user_id: str | None,
+) -> StoryNode:
+  """Navigate to an already-created custom-choice child node via its merged-list index.
+
+  The frontend renders base choices + session custom choices as a single list.
+  When the user clicks on a previously created custom choice, the index sent
+  is >= len(node.choices).  This function resolves that offset to the
+  session's ``custom_choices`` list and returns the existing child node.
+  """
+  parent_ns = get_node_session(session_id, str(node.id))
+  custom_index = choice_index - len(node.choices)
+  if not parent_ns or custom_index < 0 or custom_index >= len(parent_ns.custom_choices):
+    max_valid = len(node.choices) + (len(parent_ns.custom_choices) if parent_ns else 0) - 1
+    raise InvalidChoiceError(str(node.id), choice_index, max_valid)
+
+  cc = parent_ns.custom_choices[custom_index]
+  child_id = str(cc.target_node_id)
+  child = get_node_entity(root_world_id, child_id)
+
+  if not get_node_session(session_id, child_id):
+    create_node_session(
+      session_id,
+      child_id,
+      root_world_id,
+      parent_id=str(node.id),
+      title=child.title,
+      base_choice_count=len(child.choices),
+    )
+
   return child
 
 
