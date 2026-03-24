@@ -182,7 +182,6 @@ def _tier_limits_html(tier: str) -> str:
     <p style="margin:0;font-size:14px;color:{_MUTED};line-height:1.8;">
       &bull; {limits["worlds"]} worlds per {period}<br>
       &bull; {limits["nodes"]:,} story nodes per {period}<br>
-      &bull; {limits["saved_worlds"]} saved stories<br>
       &bull; {limits["audio_limit"]} audio narrations per {period}
     </p>
   </td></tr>
