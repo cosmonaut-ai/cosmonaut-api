@@ -17,6 +17,7 @@ class ChoiceDTO(DTOModel):
   outcome: str | None = None
   target: str | None = None
   is_created: bool = False
+  is_explored: bool = False
   is_custom: bool = False
   creator: str | None = None  # User ID for custom choices
   creator_email: str | None = None

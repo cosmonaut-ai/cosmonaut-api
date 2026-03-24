@@ -80,12 +80,13 @@ def node_session_to_list_dto(ns: NodeSession, session_id: str) -> StoryNodeDTO:
   """
   choices: list[ChoiceDTO] = []
   for state in ns.base_choice_states:
-    choices.append(ChoiceDTO(label="", is_created=bool(state.is_explored)))
+    choices.append(ChoiceDTO(label="", is_explored=bool(state.is_explored)))
   for cc in ns.custom_choices:
     choices.append(
       ChoiceDTO(
         label=str(cc.label),
-        is_created=bool(cc.is_explored),
+        is_created=True,
+        is_explored=bool(cc.is_explored),
         is_custom=True,
         creator=str(cc.creator_id),
       )
