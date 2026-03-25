@@ -294,7 +294,8 @@ def _build_next_node_deps(
     narrator_profile=world_meta.narrator_profile or "",
     story_length=node.depth,
     is_custom_choice=selected_choice.is_custom,
-    family_friendly=world_meta.family_friendly == "true",
+    vocab_level=world_meta.vocab_level,
+    content_filter=world_meta.content_filter,
   )
 
 
@@ -660,7 +661,8 @@ async def generate_text(
       root_deps = llm.RootNodeDeps(
         world_info=llm_world_info,
         narrator_profile=world_meta.narrator_profile or "",
-        family_friendly=world_meta.family_friendly == "true",
+        vocab_level=world_meta.vocab_level,
+        content_filter=world_meta.content_filter,
       )
       stream = _stream_root_node(root_deps)
     else:

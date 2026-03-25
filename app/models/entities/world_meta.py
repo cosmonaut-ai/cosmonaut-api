@@ -7,9 +7,11 @@ from pynamodb.indexes import AllProjection, GlobalSecondaryIndex
 
 from app.models.dtos.world_meta import (
   CharacterDTO,
+  ContentFilter,
   GenerationStatus,
   ImageGenerationStatus,
   LocationDTO,
+  VocabLevel,
   WorldMetaDTO,
   WorldVisibility,
 )
@@ -111,8 +113,10 @@ class WorldMeta(BaseCosmonautModel):
 
   # World length preset ("short", "medium", "long") chosen at creation time.
   world_length: UnicodeAttribute = UnicodeAttribute(null=True)
-  # When true, LLM prompts are augmented with child-safe content guidelines.
-  family_friendly: UnicodeAttribute = UnicodeAttribute(default="false")
+  # Vocabulary complexity: "child", "teen", or "adult".
+  vocab_level: UnicodeAttribute = UnicodeAttribute(default=VocabLevel.ADULT.value)
+  # Content filter strictness: "none", "moderate", or "strict".
+  content_filter: UnicodeAttribute = UnicodeAttribute(default=ContentFilter.NONE.value)
 
   shared_with: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
 
@@ -153,7 +157,8 @@ class WorldMeta(BaseCosmonautModel):
       else None,
       story_max_nodes=int(self.story_max_nodes),
       world_length=self.world_length,
-      family_friendly=self.family_friendly == "true",
+      vocab_level=self.vocab_level,
+      content_filter=self.content_filter,
       featured_order=int(self.featured_order) if self.featured_order is not None else None,
       created_at=self.created_at.isoformat() if self.created_at else None,
       updated_at=self.updated_at.isoformat() if self.updated_at else None,
@@ -188,7 +193,8 @@ class WorldMeta(BaseCosmonautModel):
       node_text_length=dto.node_text_length,
       story_max_nodes=dto.story_max_nodes,
       world_length=dto.world_length,
-      family_friendly="true" if dto.family_friendly else "false",
+      vocab_level=dto.vocab_level or VocabLevel.ADULT.value,
+      content_filter=dto.content_filter or ContentFilter.NONE.value,
       shared_with=dto.shared_with or [],
       world_image_url=dto.world_image_url,
       world_image_alt_text=dto.world_image_alt_text,

@@ -1,10 +1,10 @@
-# Frontend Guide: World Length & Family-Friendly Options
+# Frontend Guide: World Creation Options
 
-Two new optional fields have been added to the **Create World** request and are returned on every **World** response.
+Optional fields on the **Create World** request, returned on every **World** response.
 
 ---
 
-## New Fields
+## Fields
 
 ### `world_length`
 
@@ -20,13 +20,33 @@ Controls how long a single story branch can be (max number of nodes before the L
 - **Default:** `"medium"` (if omitted from the request)
 - **Immutable after creation** — this value is set once and determines `story_max_nodes` for the world.
 
-### `family_friendly`
+### `vocab_level`
 
-When enabled, all LLM-generated content for the world (lore, narrator voice, and every story node) is constrained to be child-safe: no graphic violence, no profanity, no horror, approachable vocabulary, and an encouraging tone.
+Controls the vocabulary complexity and reading level used in generated story text.
 
-- **Type:** `boolean`
-- **Default:** `false` (if omitted from the request)
-- **Immutable after creation** — the flag is baked into the world's generated lore and narrator profile, so changing it retroactively would create inconsistencies.
+| Value     | Description                                                       |
+| :-------- | :---------------------------------------------------------------- |
+| `"child"` | Simple words and short sentences suitable for ages 8+.            |
+| `"teen"`  | Moderate vocabulary complexity for ages 13+.                      |
+| `"adult"` | No vocabulary restrictions.                                       |
+
+- **Type:** `string` enum — `"child"` | `"teen"` | `"adult"`
+- **Default:** `"adult"` (if omitted from the request)
+- **Immutable after creation** — the vocab level is baked into the world's generated lore and narrator profile.
+
+### `content_filter`
+
+Controls how explicit graphic material (mainly violence) can be. Sexual content is never allowed on the platform regardless of this setting.
+
+| Value        | Description                                                            |
+| :----------- | :--------------------------------------------------------------------- |
+| `"none"`     | No content filtering beyond platform rules.                            |
+| `"moderate"` | Violence without gratuitous detail. No extreme horror.                 |
+| `"strict"`   | No graphic violence, profanity, horror, or disturbing imagery.         |
+
+- **Type:** `string` enum — `"none"` | `"moderate"` | `"strict"`
+- **Default:** `"none"` (if omitted from the request)
+- **Immutable after creation** — the filter level is baked into the world's generated lore and narrator profile.
 
 ---
 
@@ -34,22 +54,23 @@ When enabled, all LLM-generated content for the world (lore, narrator voice, and
 
 ### `POST /worlds/` — Create a World
 
-Two new optional fields in the request body:
+Optional fields in the request body:
 
 ```json
 {
   "world_prompt": "A steampunk city where clockwork robots are gaining sentience.",
   "visibility": "private",
   "world_length": "short",
-  "family_friendly": true
+  "vocab_level": "teen",
+  "content_filter": "strict"
 }
 ```
 
-Both fields are optional; omitting them gives `"medium"` and `false` respectively.
+All fields except `world_prompt` are optional; omitting them gives `"medium"`, `"adult"`, and `"none"` respectively.
 
 ### `GET /worlds/{world_id}` and `GET /worlds/` — Read Worlds
 
-The response now includes both fields on every `WorldMetaDTO`:
+The response includes these fields on every `WorldMetaDTO`:
 
 ```json
 {
@@ -58,14 +79,11 @@ The response now includes both fields on every `WorldMetaDTO`:
   "generation_status": "completed",
   "story_max_nodes": 5,
   "world_length": "short",
-  "family_friendly": true,
+  "vocab_level": "teen",
+  "content_filter": "strict",
   "...": "..."
 }
 ```
-
-- `world_length` — the preset chosen at creation (`"short"`, `"medium"`, or `"long"`)
-- `family_friendly` — `true` or `false`
-- `story_max_nodes` — the resolved integer max depth (derived from `world_length`; already existed but was previously hardcoded)
 
 ---
 
@@ -73,23 +91,22 @@ The response now includes both fields on every `WorldMetaDTO`:
 
 ### World Creation Form
 
-1. **World Length** — a segmented control or radio group with three options:
-   - Short (~5 min read)
-   - Medium (~10 min read) — pre-selected as default
-   - Long (~20 min read)
+1. **World Length** — a segmented control with three options (Short / Medium / Long).
+2. **Vocabulary Level** — a segmented control with three options (Child / Teen / Adult), default Adult. Each option has a tooltip.
+3. **Content Filter** — a segmented control with three options (None / Moderate / Strict), default None. Each option has a tooltip.
 
-2. **Family Friendly** — a toggle/switch, off by default. Consider a short helper label like _"Make this story suitable for kids"_.
+### World Home Page
 
-### World Detail / Card
+- Show `vocab_level` badge when not `"adult"` and `content_filter` badge when not `"none"`.
 
-Both values can be displayed as badges or metadata on world cards:
-- World length as a label (e.g., "Short story" / "Medium story" / "Long story")
-- Family-friendly as an icon or badge when `true`
+### World Card
+
+- Show a tiered shield icon for content filter: plain shield for moderate, shield-plus for strict, no icon for none.
 
 ---
 
 ## Notes
 
 - These fields are **creation-time only**. They are not accepted by `PATCH /worlds/{world_id}`.
-- Existing worlds (created before this change) will have `world_length: null` and `family_friendly: false` in their responses.
-- `story_max_nodes` on the response reflects the resolved value and can be used directly if you need the raw number for progress indicators.
+- Existing worlds migrated from the legacy `family_friendly` flag will have `vocab_level: "teen"` and `content_filter: "strict"` if they were family-friendly, otherwise `"adult"` and `"none"`.
+- `story_max_nodes` on the response reflects the resolved value and can be used directly for progress indicators.

@@ -75,28 +75,70 @@ METADATA_GUIDELINES = """
   not "A New Beginning").
 """
 
-# v1 — family-friendly content rules
-FAMILY_FRIENDLY_INSTRUCTIONS = """
-## Family-Friendly Mode (STRICT)
-This story MUST be suitable for children (ages 8+). Follow these rules absolutely:
+# v2 — platform-wide content policy (always injected)
+PLATFORM_CONTENT_POLICY = """
+## Platform Content Policy (STRICT — always enforced)
+- NO sexual content, explicit sexual scenes, suggestive content, or sexual innuendo.
+- NO romantic content beyond age-appropriate crushes or relationships.
+"""
+
+# v2 — vocabulary level instructions keyed by VocabLevel value
+VOCAB_LEVEL_INSTRUCTIONS: dict[str, str] = {
+  "child": """
+## Vocabulary Level: Child (ages 8+)
+- Use simple, clear, approachable language throughout.
+- Prefer shorter sentences and vocabulary accessible to a young reader.
+- Avoid complex literary prose, long compound sentences, or advanced vocabulary.
+- Concepts should be straightforward and easy to understand.
+- Tone should be adventurous, wonder-filled, and encouraging.
+""",
+  "teen": """
+## Vocabulary Level: Teen (ages 13+)
+- Use age-appropriate vocabulary with moderate complexity.
+- Standard literary prose is fine — avoid overly simplistic language.
+- Complex themes are acceptable when handled with sensitivity.
+""",
+  "adult": "",
+}
+
+# v2 — content filter instructions keyed by ContentFilter value
+CONTENT_FILTER_INSTRUCTIONS: dict[str, str] = {
+  "strict": """
+## Content Filter: Strict
+Follow these rules absolutely:
 - NO violence that is graphic, gory, or disturbing. Conflict can exist but
   should be handled with restraint (e.g., characters can be "captured" or
   "knocked down" but not killed gruesomely).
 - NO death described in graphic or frightening detail. If a character dies
   it should be handled gently and off-screen where possible.
 - NO profanity, crude language, slurs, or innuendo of any kind.
-- NO sexual content, romantic tension beyond age-appropriate
-  friendship/crushes, or suggestive themes.
 - NO horror elements, jump scares, psychological terror, or deeply
   disturbing imagery.
 - NO drug or alcohol use, gambling, or other adult vices.
-- Use clear, approachable language. Prefer shorter sentences and vocabulary
-  accessible to a young reader. Avoid overly complex or literary prose.
-- Tone should be adventurous, wonder-filled, and encouraging. Consequences
-  for bad choices should be educational rather than traumatic.
-- Humor is encouraged. Lighthearted moments help keep the story engaging
-  for younger audiences.
-"""
+- Consequences for bad choices should be educational rather than traumatic.
+- Humor is encouraged. Lighthearted moments help keep the story engaging.
+""",
+  "moderate": """
+## Content Filter: Moderate
+- Violence may exist but must not be gratuitous, gory, or excessively graphic.
+  Battles and conflict are fine; dwelling on gore or mutilation is not.
+- Death can occur but should not be described with graphic physical detail.
+- No extreme horror, psychological torture, or deeply disturbing imagery.
+- Mild profanity is acceptable sparingly; strong profanity and slurs are not.
+- No drug or alcohol abuse depicted approvingly.
+""",
+  "none": "",
+}
+
+
+def build_content_directives(vocab_level: str, content_filter: str) -> str:
+  """Combine platform policy, vocab, and filter instructions into a single block."""
+  return (
+    PLATFORM_CONTENT_POLICY
+    + VOCAB_LEVEL_INSTRUCTIONS.get(vocab_level, "")
+    + CONTENT_FILTER_INSTRUCTIONS.get(content_filter, "")
+  )
+
 
 # v1 — XML output format specification
 OUTPUT_FORMAT = """

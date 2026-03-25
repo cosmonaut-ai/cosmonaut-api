@@ -17,7 +17,7 @@ from pydantic_ai import Agent, RunContext
 from app.services.llm.agents.prompts import (
   CHOICE_OUTCOME_INSTRUCTIONS,
   CUSTOM_CHOICE_INSTRUCTIONS,
-  FAMILY_FRIENDLY_INSTRUCTIONS,
+  build_content_directives,
   build_next_node_system_prompt,
 )
 from app.services.llm.models import LLMWorldInfo
@@ -44,7 +44,8 @@ class NextNodeDeps(BaseModel):
   story_length: int = Field(description="The length of the story so far in nodes.")
   story_max_nodes: int = Field(description="The maximum length of the story in nodes.")
   is_custom_choice: bool = Field(default=False, description="Whether this is a user-created custom choice.")
-  family_friendly: bool = Field(default=False, description="Whether to enforce family-friendly content guidelines.")
+  vocab_level: str = Field(default="adult", description="Vocabulary complexity level.")
+  content_filter: str = Field(default="none", description="Content filter strictness.")
 
 
 _agent: Agent[NextNodeDeps, str] = Agent(
@@ -63,10 +64,10 @@ def _build_system_prompt(ctx: RunContext[NextNodeDeps]) -> str:
   per-node context is passed as the user message via ``build_user_message``.
   """
   deps = ctx.deps
-  family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if deps.family_friendly else ""
+  directives = build_content_directives(deps.vocab_level, deps.content_filter)
 
   return f"""{SYSTEM_PROMPT}
-{family_friendly_note}
+{directives}
 
 ## Narrator Profile:
 <narrator_data>
