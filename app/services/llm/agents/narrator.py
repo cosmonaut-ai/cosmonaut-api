@@ -7,7 +7,7 @@ Uses structured output with deps properly injected into system prompt.
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
-from app.services.llm.agents.prompts import FAMILY_FRIENDLY_INSTRUCTIONS, NARRATIVE_CONSTRAINTS
+from app.services.llm.agents.prompts import NARRATIVE_CONSTRAINTS, build_content_directives
 from app.services.llm.models import LLMNarratorProfile, LLMWorldInfo
 from app.services.llm.provider import get_utility_model
 from app.services.llm.utils import format_model_with_descriptions
@@ -44,7 +44,8 @@ class NarratorDeps(BaseModel):
   """Dependencies for narrator profile generation."""
 
   world_info: LLMWorldInfo
-  family_friendly: bool = Field(default=False, description="Whether to enforce family-friendly content guidelines.")
+  vocab_level: str = Field(default="adult", description="Vocabulary complexity level.")
+  content_filter: str = Field(default="none", description="Content filter strictness.")
 
 
 # Module-level agent instantiation
@@ -58,19 +59,21 @@ _agent: Agent[NarratorDeps, LLMNarratorProfile] = Agent(  # type: ignore[invalid
 @_agent.system_prompt
 def _build_system_prompt(ctx: RunContext[NarratorDeps]) -> str:
   """Inject world info into system prompt."""
-  family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if ctx.deps.family_friendly else ""
+  directives = build_content_directives(ctx.deps.vocab_level, ctx.deps.content_filter)
   return f"""{SYSTEM_PROMPT}
 {NARRATIVE_CONSTRAINTS}
-{family_friendly_note}
+{directives}
 
 # WORLD INFO:
 {format_model_with_descriptions(ctx.deps.world_info)}
 """
 
 
-async def generate_narrator_profile(world_info: LLMWorldInfo, *, family_friendly: bool = False) -> LLMNarratorProfile:
+async def generate_narrator_profile(
+  world_info: LLMWorldInfo, *, vocab_level: str = "adult", content_filter: str = "none"
+) -> LLMNarratorProfile:
   """Generate a narrator profile for a world."""
-  deps = NarratorDeps(world_info=world_info, family_friendly=family_friendly)
+  deps = NarratorDeps(world_info=world_info, vocab_level=vocab_level, content_filter=content_filter)
   result = await _agent.run(
     "Generate a narrator profile for this world.",
     deps=deps,

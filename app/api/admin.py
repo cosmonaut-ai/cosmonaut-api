@@ -6,6 +6,8 @@ than JWT auth, since the admin portal is a server-side tool without user login.
 
 from __future__ import annotations
 
+import hmac
+
 from fastapi import APIRouter, Depends, HTTPException, Path, Request, status
 
 from app.core.config import settings
@@ -22,13 +24,16 @@ from app.services.worlds import hard_delete_orphaned_world
 
 
 def require_admin(request: Request) -> None:
-  """Verify the request carries a valid admin API key (resolved from SSM)."""
+  """Verify the request carries a valid admin API key (resolved from SSM).
+
+  Uses constant-time comparison to prevent timing side-channel attacks.
+  """
   if not settings.ADMIN_API_KEY_PARAM:
     raise HTTPException(status_code=503, detail="Admin API key not configured")
 
   expected_key = get_secret_value(settings.ADMIN_API_KEY_PARAM)
-  api_key = request.headers.get("x-admin-key")
-  if not api_key or api_key != expected_key:
+  api_key = request.headers.get("x-admin-key") or ""
+  if not hmac.compare_digest(api_key, expected_key):
     raise HTTPException(status_code=403, detail="Invalid or missing admin API key")
 
 

@@ -43,13 +43,32 @@ class WorldLength(str, Enum):
   LONG = "long"
 
 
+class VocabLevel(str, Enum):
+  """Controls vocabulary complexity and reading level."""
+
+  CHILD = "child"
+  TEEN = "teen"
+  ADULT = "adult"
+
+
+class ContentFilter(str, Enum):
+  """Controls how explicit graphic material (mainly violence) can be."""
+
+  NONE = "none"
+  MODERATE = "moderate"
+  STRICT = "strict"
+
+
 class WorldCreateRequest(BaseModel):
   """Payload for creating a new world."""
 
   visibility: WorldVisibility = WorldVisibility.PRIVATE
   world_prompt: str = Field(..., max_length=2000, description="The prompt for the world.")
   world_length: WorldLength = Field(default=WorldLength.MEDIUM, description="Story length preset (short/medium/long).")
-  family_friendly: bool = Field(default=False, description="If true, story content is made suitable for children.")
+  vocab_level: VocabLevel = Field(default=VocabLevel.ADULT, description="Vocabulary complexity level.")
+  content_filter: ContentFilter = Field(
+    default=ContentFilter.NONE, description="Content filtering strictness for graphic material."
+  )
 
 
 class WorldUpdateSharingRequest(BaseModel):
@@ -109,7 +128,8 @@ class WorldMetaDTO(DTOModel):
   node_text_length: int | None = None
   story_max_nodes: int | None = None
   world_length: str | None = None
-  family_friendly: bool | None = None
+  vocab_level: str | None = None
+  content_filter: str | None = None
   world_image_url: str | None = None
   world_image_alt_text: str | None = None
   world_image_width: str | None = None

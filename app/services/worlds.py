@@ -166,7 +166,8 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
       generation_status=GenerationStatus.INITIALIZED,
       story_max_nodes=max_nodes,
       world_length=create_request.world_length.value,
-      family_friendly=create_request.family_friendly,
+      vocab_level=create_request.vocab_level.value,
+      content_filter=create_request.content_filter.value,
     )
 
     meta = WorldMeta.from_dto(meta_dto)
@@ -280,9 +281,8 @@ def hard_delete_orphaned_world(world_id: str) -> None:
 async def generate_lore(world: WorldMeta) -> WorldMeta:
   """Generate lore for a world via LLM."""
 
-  is_family_friendly = world.family_friendly == "true"
   llm_world_info: llm.LLMWorldInfo = await llm.generate_world_info(
-    world.world_prompt, family_friendly=is_family_friendly
+    world.world_prompt, vocab_level=world.vocab_level, content_filter=world.content_filter
   )
   world.title = llm_world_info.title
   world.description = llm_world_info.description
@@ -317,8 +317,9 @@ async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
   if world.narrator_profile:
     return world
   llm_world_info = world_meta_to_llm_world_info(world)
-  is_family_friendly = world.family_friendly == "true"
-  narrator_profile = await llm.generate_narrator_profile(llm_world_info, family_friendly=is_family_friendly)
+  narrator_profile = await llm.generate_narrator_profile(
+    llm_world_info, vocab_level=world.vocab_level, content_filter=world.content_filter
+  )
   world.narrator_profile = narrator_profile.narrator_profile
   return world
 

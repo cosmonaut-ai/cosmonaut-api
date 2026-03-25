@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
 from app.services.llm.agents.prompts import (
-  FAMILY_FRIENDLY_INSTRUCTIONS,
+  build_content_directives,
   build_root_node_system_prompt,
 )
 from app.services.llm.models import LLMWorldInfo
@@ -26,7 +26,8 @@ class RootNodeDeps(BaseModel):
 
   world_info: LLMWorldInfo
   narrator_profile: str = Field(description="The narrator's profile.")
-  family_friendly: bool = Field(default=False, description="Whether to enforce family-friendly content guidelines.")
+  vocab_level: str = Field(default="adult", description="Vocabulary complexity level.")
+  content_filter: str = Field(default="none", description="Content filter strictness.")
 
 
 _agent: Agent[RootNodeDeps, str] = Agent(
@@ -39,9 +40,9 @@ _agent: Agent[RootNodeDeps, str] = Agent(
 @_agent.system_prompt
 def _build_system_prompt(ctx: RunContext[RootNodeDeps]) -> str:
   """Build system prompt for streaming root node generation."""
-  family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if ctx.deps.family_friendly else ""
+  directives = build_content_directives(ctx.deps.vocab_level, ctx.deps.content_filter)
   return f"""{SYSTEM_PROMPT}
-{family_friendly_note}
+{directives}
 
 ## Narrator Profile:
 <narrator_data>
