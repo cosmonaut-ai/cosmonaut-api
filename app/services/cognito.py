@@ -1,4 +1,4 @@
-"""Cognito helpers for updating user attributes from server-side events."""
+"""Cognito helpers for updating user attributes and managing user state."""
 
 from __future__ import annotations
 
@@ -138,3 +138,54 @@ def update_user_username(user_id: str, app_username: str) -> None:
     logger.exception(f"Failed to update Cognito username for user {user_id}")
     # Non-fatal: DynamoDB is the source of truth. The Cognito attribute
     # is a convenience for JWT claims; lazy sync will catch failures.
+
+
+@tracer.capture_method
+def ban_user(user_id: str) -> None:
+  """Disable a Cognito user and invalidate all active sessions.
+
+  Prevents the user from authenticating and immediately revokes any
+  existing tokens via a global sign-out.
+  """
+  if not settings.COGNITO_USER_POOL_ID:
+    logger.warning("COGNITO_USER_POOL_ID not set; skipping ban")
+    return
+
+  client = _get_cognito_client()
+  username = _resolve_cognito_username(client, user_id)
+  if not username:
+    raise ValueError(f"Could not resolve Cognito username for sub {user_id}")
+
+  client.admin_disable_user(
+    UserPoolId=settings.COGNITO_USER_POOL_ID,
+    Username=username,
+  )
+  logger.info("Disabled Cognito user %s (sub %s)", username, user_id)
+
+  try:
+    client.admin_user_global_sign_out(
+      UserPoolId=settings.COGNITO_USER_POOL_ID,
+      Username=username,
+    )
+    logger.info("Global sign-out for user %s", username)
+  except Exception:
+    logger.exception("Global sign-out failed for user %s (non-fatal)", username)
+
+
+@tracer.capture_method
+def unban_user(user_id: str) -> None:
+  """Re-enable a previously disabled Cognito user."""
+  if not settings.COGNITO_USER_POOL_ID:
+    logger.warning("COGNITO_USER_POOL_ID not set; skipping unban")
+    return
+
+  client = _get_cognito_client()
+  username = _resolve_cognito_username(client, user_id)
+  if not username:
+    raise ValueError(f"Could not resolve Cognito username for sub {user_id}")
+
+  client.admin_enable_user(
+    UserPoolId=settings.COGNITO_USER_POOL_ID,
+    Username=username,
+  )
+  logger.info("Re-enabled Cognito user %s (sub %s)", username, user_id)
