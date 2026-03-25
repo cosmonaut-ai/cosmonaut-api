@@ -116,5 +116,6 @@ class WorldMetaDTO(DTOModel):
   world_image_height: str | None = None
   world_image_size: str | None = None
   image_generation_status: ImageGenerationStatus | None = None
+  featured_order: int | None = None
   created_at: str | None = None
   updated_at: str | None = None
