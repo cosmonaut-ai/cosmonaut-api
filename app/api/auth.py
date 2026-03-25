@@ -14,11 +14,11 @@ from app.core.observability import MetricUnit, logger, metrics
 from app.core.security import User, get_current_user
 from app.models.entities.rate_limit import RateLimitRecord
 from app.services.account import delete_account
+from app.services.cognito import update_user_username
 from app.services.email import send_feedback_email
 from app.services.newsletter import subscribe, unsubscribe
 from app.services.secret_manager import get_secret_value
 from app.services.stripe_client import create_billing_portal_session, create_checkout_session
-from app.services.cognito import update_user_username
 from app.services.usage import get_or_create_usage
 from app.services.username import check_availability, reserve_username, validate_username
 
