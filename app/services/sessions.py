@@ -175,12 +175,15 @@ def list_user_sessions(
 ) -> tuple[list[SessionMembership], str | None]:
   """List all sessions for a user with cursor-based pagination.
 
+  Queries GSI2 with scan_index_forward=False so results are sorted
+  by most recently accessed first.
+
   Returns:
     Tuple of (memberships, next_cursor). next_cursor is None when exhausted.
   """
-  results = SessionMembership.query(
-    SessionMembership.pk(user_id),
-    SessionMembership.SK.startswith("SMEMBER#"),
+  results = SessionMembership.GSI2.query(
+    hash_key=SessionMembership.gsi2_pk(user_id),
+    scan_index_forward=False,
     page_size=limit,
     limit=limit,
     last_evaluated_key=decode_cursor(cursor),
@@ -274,6 +277,8 @@ def update_session_progress(
 
   Uses direct update expressions (no read required).
   """
+  now = datetime.now(UTC)
+
   ws = WorldSession(PK=WorldSession.pk(session_id), SK=WorldSession.sk())
   ws.update(
     actions=[WorldSession.per_member_progress[user_id].set(node_id)],  # type: ignore  # PynamoDB MapAttribute subscript
@@ -288,6 +293,8 @@ def update_session_progress(
     actions=[
       SessionMembership.last_visited_node_id.set(node_id),
       SessionMembership.visited_node_count.set((SessionMembership.visited_node_count | 0) + 1),
+      SessionMembership.last_accessed_at.set(now),
+      SessionMembership.GSI2SK.set(SessionMembership.gsi2_sk(now, session_id)),
     ],
     add_version_condition=False,
   )
@@ -544,6 +551,9 @@ def _create_membership(
     user_id=user_id,
     role=role,
     joined_at=joined_at,
+    last_accessed_at=joined_at,
+    GSI2PK=SessionMembership.gsi2_pk(user_id),
+    GSI2SK=SessionMembership.gsi2_sk(joined_at, session_id),
   )
 
   if world:
