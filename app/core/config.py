@@ -88,6 +88,9 @@ class Settings(BaseSettings):
   # Frontend
   FRONTEND_DOMAIN: str = Field(default="dev.cosmonaut-ai.com", description="Public frontend domain for canonical URLs.")
 
+  # Admin
+  ADMIN_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the admin portal API key.")
+
   # Dev access control
   DEV_ALLOWED_EMAILS: list[str] = Field(
     default=["imatson9119@gmail.com", "ian@cosmonaut-ai.com"],
