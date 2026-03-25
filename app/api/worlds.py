@@ -63,8 +63,7 @@ async def get_world(
   """Retrieve a single world by its identifier."""
   session, world = require_session_read(world_id, user, invite_token=invite)
   dto = world.to_dto()
-  dto.id = str(session.id)
-  dto.shareable_id = str(session.root_world_id)
+  dto.session_id = str(session.id)
   if world.author_id != user.id:
     dto.shared_with = None
   return dto
@@ -82,9 +81,8 @@ async def create_world(payload: WorldCreateRequest, user: User = Depends(get_cur
   world = world_service.create_world(payload, user.id)
   session = get_session_for_user(user.id, str(world.id))
   dto = world.to_dto()
-  dto.shareable_id = str(world.id)
   if session:
-    dto.id = str(session.id)
+    dto.session_id = str(session.id)
   return dto
 
 
@@ -102,8 +100,7 @@ async def update_world(
   session, _ = require_session_write(world_id, user)
   world = world_service.update_world(str(session.root_world_id), payload)
   dto = world.to_dto()
-  dto.id = str(session.id)
-  dto.shareable_id = str(session.root_world_id)
+  dto.session_id = str(session.id)
   return dto
 
 
@@ -176,8 +173,7 @@ async def update_sharing(
     )
 
   dto = world.to_dto()
-  dto.id = str(session.id)
-  dto.shareable_id = root_world_id
+  dto.session_id = str(session.id)
   return dto
 
 
