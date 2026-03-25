@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import contextlib
 from html import escape
 
 from fastapi import APIRouter, Path
 from fastapi.responses import HTMLResponse
 
 from app.core.config import settings
+from app.core.errors import SessionNotFoundError
 from app.core.observability import logger
+from app.services.sessions import get_session
 from app.services.worlds import WorldNotFoundError, get_world_entity
 
 router = APIRouter(prefix="/meta", tags=["meta"])
@@ -78,9 +81,15 @@ async def get_world_meta(world_id: str = Path(..., description="Identifier for t
 
   default_image = _cdn_url("meta/og-default.png")
 
+  world = None
   try:
-    world = get_world_entity(world_id)
-  except WorldNotFoundError:
+    session = get_session(world_id)
+    world = get_world_entity(str(session.root_world_id))
+  except SessionNotFoundError:
+    with contextlib.suppress(WorldNotFoundError):
+      world = get_world_entity(world_id)
+
+  if world is None:
     logger.info(f"OG meta requested for unknown world {world_id}, returning fallback")
     html = _build_og_html(
       canonical_url=canonical_url,
@@ -90,7 +99,7 @@ async def get_world_meta(world_id: str = Path(..., description="Identifier for t
     )
     return HTMLResponse(content=html)
 
-  is_public = getattr(world, "visibility", "private") == "public"
+  is_public = getattr(world, "visibility", "private") in ("public", "unlisted")
   title = (world.title or _DEFAULT_TITLE) if is_public else _DEFAULT_TITLE
   description = (world.description or _DEFAULT_DESCRIPTION) if is_public else _DEFAULT_DESCRIPTION
   image_url = (world.world_image_url or default_image) if is_public else default_image

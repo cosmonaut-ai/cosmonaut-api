@@ -6,9 +6,6 @@ All methods are synchronous, matching existing service patterns.
 
 from __future__ import annotations
 
-import base64
-import contextlib
-import json
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -18,6 +15,7 @@ from app.core.observability import logger, tracer
 from app.models.entities.node_session import BaseChoiceStateMap, NodeSession
 from app.models.entities.session_membership import SessionMembership
 from app.models.entities.world_session import WorldSession
+from app.utils.pagination import decode_cursor, encode_cursor
 
 if TYPE_CHECKING:
   from app.models.entities.world_meta import WorldMeta
@@ -69,13 +67,27 @@ def create_session(
   return session
 
 
+def find_session(session_id: str) -> WorldSession | None:
+  """Fetch a WorldSession by ID, returning None if not found.
+
+  Preferred over get_session() when the caller expects the session may not
+  exist (e.g. resolving an ambiguous world_id that could be a session_id
+  or a root_world_id), since it avoids exception-based control flow that
+  generates Sentry noise via the tracer.
+  """
+  try:
+    return WorldSession.get(WorldSession.pk(session_id), WorldSession.sk())
+  except WorldSession.DoesNotExist:
+    return None
+
+
 @tracer.capture_method
 def get_session(session_id: str) -> WorldSession:
   """Fetch a WorldSession by ID. Raises SessionNotFoundError if not found."""
-  try:
-    return WorldSession.get(WorldSession.pk(session_id), WorldSession.sk())
-  except WorldSession.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
-    raise SessionNotFoundError(f"Session not found: {session_id}") from None
+  session = find_session(session_id)
+  if session is None:
+    raise SessionNotFoundError(f"Session not found: {session_id}")
+  return session
 
 
 @tracer.capture_method
@@ -148,7 +160,7 @@ def add_member(
   """Add a member to an existing session."""
   session = get_session(session_id)
   session.update(
-    actions=[WorldSession.members.set(WorldSession.members.append([user_id]))],  # type: ignore[reportUnknownMemberType]
+    actions=[WorldSession.members.set(WorldSession.members.append([user_id]))],
   )
 
   now = datetime.now(UTC)
@@ -163,28 +175,21 @@ def list_user_sessions(
 ) -> tuple[list[SessionMembership], str | None]:
   """List all sessions for a user with cursor-based pagination.
 
+  Queries GSI2 with scan_index_forward=False so results are sorted
+  by most recently accessed first.
+
   Returns:
     Tuple of (memberships, next_cursor). next_cursor is None when exhausted.
   """
-  last_evaluated_key = None
-  if cursor:
-    with contextlib.suppress(Exception):
-      last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
-
-  results = SessionMembership.query(
-    SessionMembership.pk(user_id),
-    SessionMembership.SK.startswith("SMEMBER#"),
+  results = SessionMembership.GSI2.query(
+    hash_key=SessionMembership.gsi2_pk(user_id),
+    scan_index_forward=False,
     page_size=limit,
     limit=limit,
-    last_evaluated_key=last_evaluated_key,
+    last_evaluated_key=decode_cursor(cursor),
   )
   items = list(results)
-
-  next_cursor: str | None = None
-  if results.last_evaluated_key:
-    next_cursor = base64.urlsafe_b64encode(json.dumps(results.last_evaluated_key).encode()).decode()
-
-  return items, next_cursor
+  return items, encode_cursor(results.last_evaluated_key)
 
 
 # =============================================================================
@@ -199,6 +204,7 @@ def create_node_session(
   root_world_id: str,
   title: str | None = None,
   base_choice_count: int = 0,
+  parent_id: str | None = None,
 ) -> NodeSession:
   """Create a NodeSession for a node within a session.
 
@@ -211,6 +217,7 @@ def create_node_session(
     session_id=session_id,
     root_world_id=root_world_id,
     title=title,
+    parent_id=parent_id,
     base_choice_states=[BaseChoiceStateMap(is_explored=False) for _ in range(base_choice_count)],
   )
   ns.save()
@@ -232,7 +239,7 @@ def get_node_session(session_id: str, node_id: str) -> NodeSession | None:
   """Fetch a NodeSession. Returns None if not found (non-throwing)."""
   try:
     return NodeSession.get(NodeSession.pk(session_id), NodeSession.sk(node_id))
-  except NodeSession.DoesNotExist:  # type: ignore[reportGeneralTypeIssues]
+  except NodeSession.DoesNotExist:
     return None
 
 
@@ -243,25 +250,15 @@ def list_node_sessions(
   cursor: str | None = None,
 ) -> tuple[list[NodeSession], str | None]:
   """List all NodeSessions for a session with cursor-based pagination."""
-  last_evaluated_key = None
-  if cursor:
-    with contextlib.suppress(Exception):
-      last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
-
   results = NodeSession.query(
     NodeSession.pk(session_id),
     NodeSession.SK.startswith("NODE#"),
     page_size=limit,
     limit=limit,
-    last_evaluated_key=last_evaluated_key,
+    last_evaluated_key=decode_cursor(cursor),
   )
   items = list(results)
-
-  next_cursor: str | None = None
-  if results.last_evaluated_key:
-    next_cursor = base64.urlsafe_b64encode(json.dumps(results.last_evaluated_key).encode()).decode()
-
-  return items, next_cursor
+  return items, encode_cursor(results.last_evaluated_key)
 
 
 # =============================================================================
@@ -280,9 +277,11 @@ def update_session_progress(
 
   Uses direct update expressions (no read required).
   """
+  now = datetime.now(UTC)
+
   ws = WorldSession(PK=WorldSession.pk(session_id), SK=WorldSession.sk())
   ws.update(
-    actions=[WorldSession.per_member_progress[user_id].set(node_id)],  # type: ignore[reportUnknownMemberType]
+    actions=[WorldSession.per_member_progress[user_id].set(node_id)],  # type: ignore  # PynamoDB MapAttribute subscript
     add_version_condition=False,
   )
 
@@ -294,6 +293,8 @@ def update_session_progress(
     actions=[
       SessionMembership.last_visited_node_id.set(node_id),
       SessionMembership.visited_node_count.set((SessionMembership.visited_node_count | 0) + 1),
+      SessionMembership.last_accessed_at.set(now),
+      SessionMembership.GSI2SK.set(SessionMembership.gsi2_sk(now, session_id)),
     ],
     add_version_condition=False,
   )
@@ -328,10 +329,17 @@ def update_membership_metadata(
     actions.append(SessionMembership.world_image_url.set(world.world_image_url))
   if world.world_image_alt_text:
     actions.append(SessionMembership.world_image_alt_text.set(world.world_image_alt_text))
+  if world.image_generation_status:
+    actions.append(SessionMembership.image_generation_status.set(world.image_generation_status))
   if world.generation_status:
     actions.append(SessionMembership.generation_status.set(world.generation_status))
   if world.created_at:
-    actions.append(SessionMembership.root_created_at.set(world.created_at))
+    created_at_str = world.created_at.isoformat() if hasattr(world.created_at, "isoformat") else str(world.created_at)
+    actions.append(SessionMembership.root_created_at.set(created_at_str))
+  if world.root_node_id:
+    actions.append(SessionMembership.root_node_id.set(world.root_node_id))
+  if world.family_friendly:
+    actions.append(SessionMembership.family_friendly.set(world.family_friendly))
 
   if not actions:
     return
@@ -347,6 +355,102 @@ def update_membership_metadata(
 # =============================================================================
 # Deletion Operations
 # =============================================================================
+
+
+@tracer.capture_method
+def delete_session_for_user(
+  session_id: str,
+  user_id: str,
+  root_world_id: str,
+) -> bool:
+  """Remove a user from a session, cleaning up empty sessions.
+
+  Returns True if the world is now orphaned (zero sessions remaining).
+  """
+  try:
+    SessionMembership(
+      PK=SessionMembership.pk(user_id),
+      SK=SessionMembership.sk(root_world_id, session_id),
+    ).delete()
+  except Exception:
+    logger.warning("Failed to delete membership for user %s in session %s", user_id, session_id, exc_info=True)
+
+  session = find_session(session_id)
+  if session is not None:
+    updated_members = [m for m in session.members if str(m) != user_id]
+    if not updated_members:
+      delete_session(session_id)
+    else:
+      session.members = updated_members
+      progress = dict(session.per_member_progress or {})
+      progress.pop(user_id, None)
+      session.per_member_progress = progress
+      session.save()
+
+  remaining = list(
+    WorldSession.GSI3.query(
+      hash_key=WorldSession.gsi3_pk(root_world_id),
+      range_key_condition=WorldSession.GSI3SK.startswith("SESSION#"),
+      limit=1,
+    )
+  )
+  return len(remaining) == 0
+
+
+@tracer.capture_method
+def revoke_unauthorized_sessions(
+  root_world_id: str,
+  author_id: str,
+  shared_with: list[str],
+) -> int:
+  """Delete sessions for users not in the allowed set.
+
+  Called when a world's visibility changes to private. Returns the
+  number of revoked user-session pairs.
+  """
+  allowed = set(shared_with) | {author_id}
+  revoked = 0
+
+  gsi3_results = list(
+    WorldSession.GSI3.query(
+      hash_key=WorldSession.gsi3_pk(root_world_id),
+      range_key_condition=WorldSession.GSI3SK.startswith("SESSION#"),
+    )
+  )
+
+  for result in gsi3_results:
+    session_id = str(result.PK).removeprefix("SESSION#")
+    session = find_session(session_id)
+    if session is None:
+      continue
+
+    members = [str(m) for m in session.members] if session.members else []
+    unauthorized = [m for m in members if m not in allowed]
+
+    for uid in unauthorized:
+      try:
+        SessionMembership(
+          PK=SessionMembership.pk(uid),
+          SK=SessionMembership.sk(root_world_id, session_id),
+        ).delete()
+      except Exception:
+        logger.warning("Failed to delete membership for user %s in session %s", uid, session_id, exc_info=True)
+      revoked += 1
+
+    remaining = [m for m in members if m in allowed]
+    if not remaining:
+      delete_session(session_id)
+    elif len(remaining) < len(members):
+      session.members = remaining  # type: ignore[assignment]  # PynamoDB ListAttribute
+      progress = dict(session.per_member_progress or {})
+      for uid in unauthorized:
+        progress.pop(uid, None)
+      session.per_member_progress = progress
+      session.save()
+
+  if revoked:
+    logger.info("Revoked %d session memberships for world %s", revoked, root_world_id)
+  return revoked
 
 
 @tracer.capture_method
@@ -389,19 +493,20 @@ def delete_user_memberships(user_id: str) -> None:
 def delete_sessions_for_world(root_world_id: str) -> None:
   """Delete all sessions associated with a root world.
 
-  Phase 2 approach: scans the table filtering on root_world_id and SK=META.
-  Acceptable for small volume (typically 1-5 sessions per world).
-  Will be replaced by a GSI3 query in Phase 6.
+  Uses GSI3 (ROOTWORLD#{root_world_id} -> SESSION#{session_id}) to
+  efficiently find sessions without a full table scan.
   """
-  sessions: list[WorldSession] = list(
-    WorldSession.scan(
-      (WorldSession.SK == "META") & (WorldSession.root_world_id == root_world_id),
-    )
-  )
+  gsi3_pk = WorldSession.gsi3_pk(root_world_id)
+  gsi3_results: list[WorldSession] = list(WorldSession.GSI3.query(hash_key=gsi3_pk))
 
-  for session in sessions:
-    session_id = str(session.id)
-    members = [str(m) for m in session.members] if session.members else []  # type: ignore[reportUnknownVariableType]
+  for result in gsi3_results:
+    session_id = str(result.PK).removeprefix("SESSION#")
+
+    try:
+      session = get_session(session_id)
+      members = [str(m) for m in session.members] if session.members else []
+    except SessionNotFoundError:
+      members = []
 
     for member_id in members:
       try:
@@ -420,8 +525,8 @@ def delete_sessions_for_world(root_world_id: str) -> None:
 
     delete_session(session_id)
 
-  if sessions:
-    logger.info("Deleted %d sessions for world %s", len(sessions), root_world_id)
+  if gsi3_results:
+    logger.info("Deleted %d sessions for world %s", len(gsi3_results), root_world_id)
 
 
 # =============================================================================
@@ -446,6 +551,9 @@ def _create_membership(
     user_id=user_id,
     role=role,
     joined_at=joined_at,
+    last_accessed_at=joined_at,
+    GSI2PK=SessionMembership.gsi2_pk(user_id),
+    GSI2SK=SessionMembership.gsi2_sk(joined_at, session_id),
   )
 
   if world:
@@ -455,8 +563,13 @@ def _create_membership(
     membership.world_length = world.world_length
     membership.world_image_url = world.world_image_url
     membership.world_image_alt_text = world.world_image_alt_text
-    membership.root_created_at = world.created_at
+    if world.created_at:
+      membership.root_created_at = (
+        world.created_at.isoformat() if hasattr(world.created_at, "isoformat") else str(world.created_at)
+      )
     membership.generation_status = world.generation_status
+    membership.root_node_id = world.root_node_id
+    membership.family_friendly = world.family_friendly
 
   membership.save()
   return membership

@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from uuid import uuid4
 
-import nest_asyncio  # type: ignore[import-untyped]
+import nest_asyncio
 import sentry_sdk
 from aws_lambda_powertools.metrics import MetricUnit
 from fastapi import Depends, FastAPI, Request, Response
@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from app.api.auth import router as auth_router
+from app.api.dependencies import require_onboarded
 from app.api.meta import router as meta_router
 from app.api.story_nodes import router as story_nodes_router
 from app.api.voices import router as voices_router
@@ -75,7 +76,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 # Configure CORS
 app.add_middleware(
-  CORSMiddleware,
+  CORSMiddleware,  # type: ignore[invalid-argument-type]  # Starlette middleware typing limitation
   allow_origins=settings.CORS_ORIGINS,
   allow_credentials=True,
   allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
@@ -108,8 +109,8 @@ async def health():
   return {"status": "ok"}
 
 
-app.include_router(worlds_router, dependencies=[Depends(get_current_user)])
-app.include_router(story_nodes_router, dependencies=[Depends(get_current_user)])
+app.include_router(worlds_router, dependencies=[Depends(require_onboarded)])
+app.include_router(story_nodes_router, dependencies=[Depends(require_onboarded)])
 app.include_router(auth_router, dependencies=[Depends(get_current_user)])
 
 # Meta router – public (bots can't authenticate)

@@ -84,7 +84,7 @@ _agent: Agent[WorldInfoDeps, str] = Agent(
 
 
 @_agent.system_prompt
-def _build_system_prompt(ctx: RunContext[WorldInfoDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
+def _build_system_prompt(ctx: RunContext[WorldInfoDeps]) -> str:
   """Build system prompt with optional family-friendly instructions."""
   family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if ctx.deps.family_friendly else ""
   return SYSTEM_PROMPT + NARRATIVE_CONSTRAINTS + family_friendly_note

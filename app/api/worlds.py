@@ -5,14 +5,34 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Path, Query, status
 
 import app.services.worlds as world_service
-from app.api.dependencies import require_world_read, require_world_write
-from app.core.config import settings
+from app.api.dependencies import (
+  membership_to_world_dto,
+  require_session_read,
+  require_session_write,
+)
 from app.core.observability import logger
 from app.core.security import User, get_current_user
 from app.models.dtos.base import PaginatedResponse
-from app.models.dtos.world_meta import WorldCreateRequest, WorldMetaDTO, WorldUpdateSharingRequest
-from app.services.email import send_world_invite
+from app.models.dtos.world_meta import (
+  InviteTokenDTO,
+  WorldCreateRequest,
+  WorldMetaDTO,
+  WorldUpdateSharingRequest,
+  WorldVisibility,
+)
+from app.services.invite_tokens import (
+  create_invite_token,
+  delete_invite_token,
+  get_active_token,
+  token_to_dto,
+)
 from app.services.rate_limiter import check_rate_limit
+from app.services.sessions import (
+  delete_session_for_user,
+  get_session_for_user,
+  list_user_sessions,
+  revoke_unauthorized_sessions,
+)
 
 router = APIRouter(prefix="/worlds", tags=["worlds"])
 
@@ -25,8 +45,9 @@ async def list_worlds(
 ) -> PaginatedResponse[WorldMetaDTO]:
   """Return worlds for the authenticated user with cursor-based pagination."""
   logger.info(f"Listing worlds for user {user.id}")
-  worlds, next_cursor = world_service.list_worlds(user.id, limit, cursor)
-  return PaginatedResponse(items=[world.to_dto() for world in worlds], next_cursor=next_cursor)
+  memberships, next_cursor = list_user_sessions(user.id, limit, cursor)
+  items = [membership_to_world_dto(m) for m in memberships]
+  return PaginatedResponse(items=items, next_cursor=next_cursor)
 
 
 @router.get(
@@ -36,11 +57,14 @@ async def list_worlds(
 )
 async def get_world(
   world_id: str = Path(..., description="Identifier for the world"),
+  invite: str | None = Query(None, description="Invite token for accessing private worlds"),
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Retrieve a single world by its identifier."""
-  world = require_world_read(world_id, user)
+  session, world = require_session_read(world_id, user, invite_token=invite)
   dto = world.to_dto()
+  dto.id = str(session.id)
+  dto.shareable_id = str(session.root_world_id)
   if world.author_id != user.id:
     dto.shared_with = None
   return dto
@@ -56,7 +80,12 @@ async def create_world(payload: WorldCreateRequest, user: User = Depends(get_cur
   """Create a new world."""
   check_rate_limit(user.id, "create-world")
   world = world_service.create_world(payload, user.id)
-  return world.to_dto()
+  session = get_session_for_user(user.id, str(world.id))
+  dto = world.to_dto()
+  dto.shareable_id = str(world.id)
+  if session:
+    dto.id = str(session.id)
+  return dto
 
 
 @router.patch(
@@ -70,22 +99,38 @@ async def update_world(
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Apply partial updates to an existing world."""
-  require_world_write(world_id, user)
-  world = world_service.update_world(world_id, payload)
-  return world.to_dto()
+  session, _ = require_session_write(world_id, user)
+  world = world_service.update_world(str(session.root_world_id), payload)
+  dto = world.to_dto()
+  dto.id = str(session.id)
+  dto.shareable_id = str(session.root_world_id)
+  return dto
 
 
 @router.delete(
   "/{world_id}",
   status_code=status.HTTP_204_NO_CONTENT,
-  summary="Delete a world",
+  summary="Remove a world from the user's library",
 )
 async def delete_world(
   world_id: str = Path(..., description="Identifier for the world"), user: User = Depends(get_current_user)
 ) -> None:
-  """Delete a world and any associated state (implementation pending)."""
-  require_world_write(world_id, user)
-  world_service.delete_world(world_id)
+  """Delete the caller's session for a world.
+
+  Any session member can remove their own session.  If the world becomes
+  orphaned (zero sessions remaining), it is permanently hard-deleted.
+  """
+  session, _ = require_session_read(world_id, user)
+  root_world_id = str(session.root_world_id)
+
+  is_orphaned = delete_session_for_user(
+    session_id=str(session.id),
+    user_id=user.id,
+    root_world_id=root_world_id,
+  )
+
+  if is_orphaned:
+    world_service.hard_delete_orphaned_world(root_world_id)
 
 
 @router.post(
@@ -98,27 +143,95 @@ async def update_sharing(
   world_id: str = Path(..., description="Identifier for the world"),
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
-  """Share a world with a user."""
-  world = require_world_write(world_id, user)
+  """Update visibility and shared_with allowlist for a world."""
+  session, world = require_session_write(world_id, user)
+  root_world_id = str(session.root_world_id)
+  previous_visibility = world.visibility
 
-  # Identify newly added emails before persisting the update
-  previous_shared: set[str] = {str(x) for x in (world.shared_with or [])}
-  new_shared: set[str] = set(payload.shared_with or [])
-  newly_added = new_shared - previous_shared
+  # Apply shared_with via update_world (visibility is in the immutable
+  # skip-list there, so we handle it directly below).
+  world_dto = WorldMetaDTO(shared_with=payload.shared_with)
+  world = world_service.update_world(root_world_id, world_dto)
 
-  world_dto = WorldMetaDTO(
-    visibility=payload.visibility,
-    shared_with=payload.shared_with,
+  # Apply visibility directly — this is the only endpoint allowed to
+  # change it, ensuring the cascade always fires.
+  if payload.visibility is not None and payload.visibility.value != world.visibility:
+    world.visibility = payload.visibility.value
+    world.save()
+
+  is_now_private = (payload.visibility == WorldVisibility.PRIVATE) or (
+    payload.visibility is None and world.visibility == WorldVisibility.PRIVATE.value
+  )
+  transitioning_to_private = (
+    payload.visibility == WorldVisibility.PRIVATE
+    and previous_visibility != WorldVisibility.PRIVATE.value
   )
 
-  world = world_service.update_world(world_id, world_dto)
+  if is_now_private or transitioning_to_private:
+    resolved_shared = [str(s) for s in (world.shared_with or [])]
+    revoke_unauthorized_sessions(
+      root_world_id=root_world_id,
+      author_id=user.id,
+      shared_with=resolved_shared,
+    )
 
-  # Send invite emails to newly added users (non-blocking)
-  if newly_added:
-    inviter_name = user.email or user.username or "Someone"
-    world_title = str(world.title) if world.title else "Untitled World"
-    world_url = f"https://{settings.FRONTEND_DOMAIN}/worlds/{world_id}"
-    for email in newly_added:
-      send_world_invite(email, inviter_name, world_title, world_url)
+  dto = world.to_dto()
+  dto.id = str(session.id)
+  dto.shareable_id = root_world_id
+  return dto
 
-  return world.to_dto()
+
+# ---------------------------------------------------------------------------
+# Invite token endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+  "/{world_id}/invite-token",
+  response_model=InviteTokenDTO,
+  summary="Create or retrieve an invite token",
+)
+async def create_or_get_invite_token(
+  world_id: str = Path(..., description="Identifier for the world"),
+  user: User = Depends(get_current_user),
+) -> InviteTokenDTO:
+  """Create a 24-hour invite token for the world, or return the existing one."""
+  session, _ = require_session_write(world_id, user)
+  root_world_id = str(session.root_world_id)
+  token = create_invite_token(root_world_id, user.id)
+  return token_to_dto(token)
+
+
+@router.get(
+  "/{world_id}/invite-token",
+  response_model=InviteTokenDTO | None,
+  summary="Get the active invite token",
+)
+async def get_invite_token(
+  world_id: str = Path(..., description="Identifier for the world"),
+  user: User = Depends(get_current_user),
+) -> InviteTokenDTO | None:
+  """Return the active invite token for a world, if one exists."""
+  session, _ = require_session_write(world_id, user)
+  root_world_id = str(session.root_world_id)
+  token = get_active_token(root_world_id)
+  if token is None:
+    return None
+  return token_to_dto(token)
+
+
+@router.delete(
+  "/{world_id}/invite-token",
+  status_code=status.HTTP_204_NO_CONTENT,
+  summary="Revoke the active invite token",
+)
+async def revoke_invite_token(
+  world_id: str = Path(..., description="Identifier for the world"),
+  user: User = Depends(get_current_user),
+) -> None:
+  """Revoke the active invite token for a world."""
+  session, _ = require_session_write(world_id, user)
+  root_world_id = str(session.root_world_id)
+  token = get_active_token(root_world_id)
+  if token is not None:
+    delete_invite_token(str(token.token))

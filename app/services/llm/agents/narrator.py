@@ -48,7 +48,7 @@ class NarratorDeps(BaseModel):
 
 
 # Module-level agent instantiation
-_agent: Agent[NarratorDeps, LLMNarratorProfile] = Agent(
+_agent: Agent[NarratorDeps, LLMNarratorProfile] = Agent(  # type: ignore[invalid-assignment]  # output_type generic not inferred
   model=get_utility_model(),
   deps_type=NarratorDeps,
   output_type=LLMNarratorProfile,
@@ -56,7 +56,7 @@ _agent: Agent[NarratorDeps, LLMNarratorProfile] = Agent(
 
 
 @_agent.system_prompt
-def _build_system_prompt(ctx: RunContext[NarratorDeps]) -> str:  # pyright: ignore[reportUnusedFunction]
+def _build_system_prompt(ctx: RunContext[NarratorDeps]) -> str:
   """Inject world info into system prompt."""
   family_friendly_note = FAMILY_FRIENDLY_INSTRUCTIONS if ctx.deps.family_friendly else ""
   return f"""{SYSTEM_PROMPT}

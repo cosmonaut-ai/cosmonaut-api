@@ -21,6 +21,7 @@ class User(BaseModel):
   id: str
   email: str
   username: str
+  app_username: str | None = None
   groups: list[str] = []
   tier: str = "FREE"
   stripe_customer_id: str | None = None
@@ -70,9 +71,10 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
   if settings.MOCK_AUTH and settings.ENV in ["local"]:
     logger.info("Using mock authentication")
     return User(
-      id="a1abe550-30e1-70ce-4198-6e782be7e643",
+      id="91abb530-d0e1-7026-5de3-faaa13eefa9f",
       email="imatson9119@gmail.com",
       username="CosmonautDev",
+      app_username="CosmonautDev",
       groups=["Owner"],
       tier="COSMONAUT",
     )
@@ -160,6 +162,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       id=payload["sub"],
       email=payload.get("email", ""),
       username=payload.get("cognito:username", ""),
+      app_username=payload.get("custom:username"),
       groups=groups,
       tier=payload.get("custom:tier", "FREE"),
       stripe_customer_id=payload.get("custom:stripe_customer_id"),
@@ -171,7 +174,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       raise HTTPException(status_code=403, detail="Access denied: email not authorized for the dev environment")
 
     logger.append_keys(user_id=user.id)
-    sentry_sdk.set_user({"id": user.id, "email": user.email, "username": user.username})
+    sentry_sdk.set_user({"id": user.id, "email": user.email, "username": user.app_username or user.username})
     return user
 
   except jwt.ExpiredSignatureError:

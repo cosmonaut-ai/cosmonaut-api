@@ -11,14 +11,12 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import uuid
 from collections.abc import AsyncGenerator
 from contextlib import AbstractAsyncContextManager
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pynamodb.exceptions import UpdateError
-from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
@@ -33,7 +31,7 @@ from app.services.sessions import create_node_session, get_node_session
 from app.services.sqs import SQSSendError, send_node_analysis_message
 from app.services.usage import check_and_increment, release_quota
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
-from app.utils import LLMOutputTruncatedError, extract_xml_block, extract_xml_json
+from app.utils import LLMOutputTruncatedError, base52_to_number, extract_xml_block, extract_xml_json
 from app.utils.pii import truncate_for_log
 
 if TYPE_CHECKING:
@@ -61,14 +59,16 @@ class NodeNotFoundError(NodeServiceError, NotFoundError):
     self.node_id = node_id
 
 
-class InvalidChoiceError(NodeServiceError, BadRequestError):
-  """Raised when a choice index is out of bounds."""
+class InvalidTargetError(NodeServiceError, BadRequestError):
+  """Raised when a target_id is not a valid child of the given node."""
 
-  def __init__(self, node_id: str, choice_index: int, max_index: int):
-    super().__init__(f"Invalid choice index {choice_index} for node {node_id}. Valid range: 0-{max_index}")
+  def __init__(self, node_id: str, target_id: str, reason: str = ""):
+    detail = f"Invalid target '{target_id}' for node {node_id}"
+    if reason:
+      detail += f": {reason}"
+    super().__init__(detail)
     self.node_id = node_id
-    self.choice_index = choice_index
-    self.max_index = max_index
+    self.target_id = target_id
 
 
 class InvalidGenerationStatusError(NodeServiceError, ConflictError):
@@ -110,32 +110,72 @@ class DepthLimitReachedError(NodeServiceError, ForbiddenError):
 
 
 # =============================================================================
+# Session Choice Merging
+# =============================================================================
+
+
+def merge_choices(
+  base_choices: list[ChoiceMap],
+  base_choice_states: list[BaseChoiceStateMap],
+  custom_choices: list[CustomChoiceMap],
+) -> list[ChoiceDTO]:
+  """Merge root StoryNode base choices with NodeSession overlay."""
+  result: list[ChoiceDTO] = []
+  for i, choice in enumerate(base_choices):
+    explored = base_choice_states[i].is_explored if i < len(base_choice_states) else False
+    result.append(
+      ChoiceDTO(
+        label=choice.label,
+        outcome=choice.outcome,
+        target=choice.target,
+        is_created=bool(choice.is_created),
+        is_explored=bool(explored),
+      )
+    )
+  for cc in custom_choices:
+    result.append(
+      ChoiceDTO(
+        label=cc.label,
+        target=cc.target_node_id,
+        is_created=True,
+        is_explored=bool(cc.is_explored),
+        is_custom=True,
+        creator=cc.creator_id,
+        creator_email=cc.creator_email,
+        creator_display_name=cc.creator_display_name,
+      )
+    )
+  return result
+
+
+# =============================================================================
 # Pinecone Query Helpers
 # =============================================================================
 
 
 def _get_world_facts(world_id: str, node_text: str, top_k: int = 50) -> list[pinecone.PineconeWorldFact]:
   """Get the world facts for a given node."""
-  return [
-    pinecone.PineconeWorldFact.model_validate({**x.fields, "id": x._id})
-    for x in pinecone.search_records(  # type: ignore[reportUnknownReturnType]
+  hits = cast(
+    list[Any],
+    pinecone.search_records(
       query=node_text,
       top_k=top_k,
       filter={
         "world_id": {"$eq": world_id},
         "entity_type": {"$eq": pinecone.EntityType.WORLD_FACT},
       },
-    ).result.hits
-  ]
+    ).result.hits,
+  )
+  return [pinecone.PineconeWorldFact.model_validate({**x.fields, "id": x._id}) for x in hits]
 
 
 def _get_branch_facts(
   world_id: str, node_text: str, ancestors: list[str], top_k: int = 50
 ) -> list[pinecone.PineconeBranchFact]:
   """Get the branch facts for a given node."""
-  results: list[PineconeBranchFact] = [
-    pinecone.PineconeBranchFact.model_validate({**x.fields, "id": x._id})
-    for x in pinecone.search_records(  # type: ignore[reportUnknownReturnType]
+  hits = cast(
+    list[Any],
+    pinecone.search_records(
       query=node_text,
       top_k=top_k,
       filter={
@@ -143,24 +183,28 @@ def _get_branch_facts(
         "entity_type": {"$eq": pinecone.EntityType.BRANCH_FACT},
         "origin_node_id": {"$in": ancestors},
       },
-    ).result.hits
+    ).result.hits,
+  )
+  results: list[PineconeBranchFact] = [
+    pinecone.PineconeBranchFact.model_validate({**x.fields, "id": x._id}) for x in hits
   ]
   return sorted(results, key=lambda x: -ancestors.index(x.origin_node_id))
 
 
 def _get_similar_nodes(world_id: str, node_text: str, top_k: int = 3) -> list[pinecone.PineconeRecord]:
   """Get the similar story nodes for a given node."""
-  return [
-    pinecone.PineconeRecord.model_validate({**x.fields, "id": x._id})
-    for x in pinecone.search_records(  # type: ignore[reportUnknownReturnType]
+  hits = cast(
+    list[Any],
+    pinecone.search_records(
       query=node_text,
       top_k=top_k,
       filter={
         "world_id": {"$eq": world_id},
         "entity_type": {"$eq": pinecone.EntityType.NODE_TEXT},
       },
-    ).result.hits
-  ]
+    ).result.hits,
+  )
+  return [pinecone.PineconeRecord.model_validate({**x.fields, "id": x._id}) for x in hits]
 
 
 # =============================================================================
@@ -179,48 +223,8 @@ def get_node_entity(world_id: str, node_id: str) -> StoryNode:
   pk, sk = _node_keys(world_id, node_id)
   try:
     return StoryNode.get(pk, sk)
-  except StoryNode.DoesNotExist as e:  # type: ignore[reportGeneralTypeIssues]
+  except StoryNode.DoesNotExist as e:
     raise NodeNotFoundError(world_id, node_id) from e
-
-
-@tracer.capture_method
-def list_nodes(
-  world_id: str,
-  limit: int = 100,
-  cursor: str | None = None,
-) -> tuple[list[StoryNode], str | None]:
-  """Return nodes for a given world with cursor-based pagination.
-
-  Args:
-    world_id: The world identifier.
-    limit: Maximum number of nodes to return (default 100).
-    cursor: Opaque pagination token from a previous response.
-
-  Returns:
-    Tuple of (nodes, next_cursor).  ``next_cursor`` is None when there
-    are no more pages.
-  """
-  import base64
-  import json
-
-  pk = StoryNode.gsi2_pk(world_id)
-
-  last_evaluated_key = None
-  if cursor:
-    with contextlib.suppress(Exception):
-      last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
-
-  results: ResultIterator[StoryNode] = StoryNode.GSI2.query(  # type: ignore[reportUnknownReturnType]
-    hash_key=pk,
-    page_size=limit,
-    limit=limit,
-    last_evaluated_key=last_evaluated_key,
-  )
-  nodes = list(results)
-  next_cursor: str | None = None
-  if results.last_evaluated_key:
-    next_cursor = base64.urlsafe_b64encode(json.dumps(results.last_evaluated_key).encode()).decode()
-  return nodes, next_cursor
 
 
 def get_node(world_id: str, node_id: str) -> StoryNode:
@@ -240,48 +244,6 @@ def get_node_entities(world_id: str, node_ids: list[str]) -> list[StoryNode]:
 # =============================================================================
 
 
-async def _validate_and_prepare_choice(
-  node: StoryNode,
-  node_id: str,
-  choice_index: int | None,
-  custom_choice: str | None,
-  user_id: str | None,
-) -> int:
-  """Validate choice and prepare node for selection.
-
-  Returns:
-    Tuple of (choice_index, is_custom_choice)
-  """
-
-  # The choose flow only needs the node to exist and have valid choices.
-  # Processing status (fact extraction) is not required here -- the
-  # generate-text path will use whatever context is available at that time.
-
-  if custom_choice is not None:
-    custom_choice = sanitize_user_input(custom_choice)
-    choice_index = len(node.choices)
-    new_choice = ChoiceMap(
-      label=custom_choice,
-      target=node.get_child_id(choice_index),
-      is_custom=True,
-      creator=user_id,
-    )
-    node.choices.append(new_choice)
-    node.save()
-    logger.info("Added custom choice at index %s: %s", choice_index, truncate_for_log(custom_choice))
-  else:
-    if choice_index is None:
-      raise InvalidChoiceError(node_id, -1, len(node.choices) - 1 if node.choices else -1)
-    if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
-      max_index = len(node.choices) - 1 if node.choices else -1
-      raise InvalidChoiceError(node_id, choice_index, max_index)
-    # No save() needed here — the node is not modified when selecting an
-    # existing choice by index.  The is_created flag is set later in choose().
-    logger.info(f"Selected existing choice at index {choice_index}")
-
-  return choice_index
-
-
 def _build_previous_text(
   prev_story_nodes: list[StoryNode],
   selected_choice_label: str,
@@ -292,11 +254,10 @@ def _build_previous_text(
     prev_story_nodes_text += current_node.text
     if i < len(prev_story_nodes) - 1:
       next_node = prev_story_nodes[i + 1]
-      choice_idx = next_node.choice_index
-      if choice_idx is not None and choice_idx < len(current_node.choices):
-        choice_text = current_node.choices[choice_idx].label
+      if next_node.parent_choice:
+        choice_text = next_node.parent_choice.label
         prev_story_nodes_text += f'\n\nUser chose: "{choice_text}"'
-        if current_node.choices[choice_idx].is_custom:
+        if next_node.parent_choice.is_custom:
           prev_story_nodes_text += " *(custom choice)*"
         prev_story_nodes_text += "\n\n"
     else:
@@ -421,125 +382,208 @@ async def _stream_root_node(
 
 
 # =============================================================================
-# Main Choose Function
+# Choose Flow
 # =============================================================================
 
 
 @tracer.capture_method
-async def choose(
-  world_id: str,
+async def choose_with_session(
+  root_world_id: str,
+  session_id: str,
   node_id: str,
-  choice_index: int | None = None,
+  target_id: str | None = None,
   custom_choice: str | None = None,
   user_id: str | None = None,
-  session_id: str | None = None,
 ) -> StoryNode:
-  """Choose a story node option and initialize the next node without generating text.
-
-  If the node already exists, returns the existing node.
-  If the node doesn't exist, creates a new node with INITIALIZED generation status.
-
-  Args:
-    world_id: The world identifier
-    node_id: The current node identifier
-    choice_index: Index of an existing choice (mutually exclusive with custom_choice)
-    custom_choice: Free text custom choice (mutually exclusive with choice_index)
-    user_id: User ID for tracking custom choice creator
-
-  Returns:
-    The initialized or existing story node
-  """
-  logger.info(
-    "Choosing node %s with choice_index=%s, custom_choice=%s",
-    node_id,
-    choice_index,
-    truncate_for_log(custom_choice) if custom_choice else None,
-  )
-
-  # Validate and prepare choice
-  node = get_node_entity(world_id, node_id)
-
+  """Session-first choose: resolve a target_id to a base or custom choice, or create a new custom choice."""
+  node = get_node_entity(root_world_id, node_id)
   if node.depth >= ABSOLUTE_MAX_DEPTH:
-    raise DepthLimitReachedError(world_id, node_id, node.depth)
+    raise DepthLimitReachedError(root_world_id, node_id, node.depth)
 
-  choice_index = await _validate_and_prepare_choice(node, node_id, choice_index, custom_choice, user_id)
+  if custom_choice is not None:
+    return await _choose_custom_with_session(node, root_world_id, session_id, custom_choice, user_id)
+  if target_id is None:
+    raise InvalidTargetError(node_id, "", "target_id is required when custom_choice is not provided")
 
-  selected_choice = node.choices[choice_index]
-  new_node_id = selected_choice.target or node.get_child_id(choice_index)
+  parent_id = str(node.id)
+  if not target_id.startswith(parent_id) or len(target_id) <= len(parent_id):
+    raise InvalidTargetError(parent_id, target_id, "not a child of this node")
 
-  # Return existing node if already created
-  if selected_choice.is_created:
-    logger.info(f"Returning existing node {new_node_id} for choice {choice_index}")
-    try:
-      return get_node_entity(world_id, new_node_id)
-    except NodeNotFoundError:
-      logger.error(f"New node {new_node_id} not found even though parent choice is created. Continuing.")
+  suffix = target_id[len(parent_id) :]
+  choice_index = base52_to_number(suffix)
 
-  # Create new initialized node (without text).
-  # NOTE: These two writes are intentionally non-transactional.  If the process
-  # crashes between them, the child node exists but ``is_created`` on the parent
-  # remains False.  A retry will overwrite the child (same deterministic ID,
-  # still INITIALIZED with no content) and then set ``is_created``.  This is safe
-  # and avoids the added latency/complexity of DynamoDB TransactWriteItems.
-  parent_choice_dto = ChoiceDTO(
-    label=selected_choice.label,
-    outcome=selected_choice.outcome,
-    target=selected_choice.target,
-    is_created=bool(selected_choice.is_created),
-    is_custom=bool(selected_choice.is_custom),
-    creator=selected_choice.creator,
+  if choice_index < len(node.choices):
+    return await _choose_base_with_session(node, root_world_id, session_id, choice_index, target_id, user_id)
+
+  return await _choose_existing_custom_with_session(node, root_world_id, session_id, target_id, user_id)
+
+
+async def _choose_custom_with_session(
+  node: StoryNode,
+  root_world_id: str,
+  session_id: str,
+  custom_choice: str,
+  user_id: str | None,
+) -> StoryNode:
+  """Create a custom-choice child node scoped to this session."""
+  custom_choice = sanitize_user_input(custom_choice)
+
+  # Atomically claim the next custom choice index on the StoryNode.
+  # This ensures unique child IDs across concurrent sessions.
+  try:
+    if node.next_custom_choice_index is None:
+      node.update(
+        actions=[StoryNode.next_custom_choice_index.set(len(node.choices))],
+        condition=StoryNode.next_custom_choice_index.does_not_exist(),
+      )
+      node.refresh()
+  except UpdateError:
+    node.refresh()
+
+  node.update(
+    actions=[StoryNode.next_custom_choice_index.set(StoryNode.next_custom_choice_index + 1)],
   )
-  new_node_dto = StoryNodeDTO(
-    id=new_node_id,
-    world_id=world_id,
-    text=None,
-    story_summary=None,
-    title=None,
-    choices=[],
+  node.refresh()
+  actual_index = int(node.next_custom_choice_index) - 1
+  child_id = StoryNode.get_child_id_static(str(node.id), actual_index)
+
+  parent_choice_dto = ChoiceDTO(label=custom_choice, is_custom=True, creator=user_id)
+  child_dto = StoryNodeDTO(
+    id=child_id,
+    world_id=root_world_id,
     parent_choice=parent_choice_dto,
-    processing_status=StoryNodeProcessingStatus.PENDING,
+    source_session_id=session_id,
     generation_status=GenerationStatus.INITIALIZED,
+    processing_status=StoryNodeProcessingStatus.PENDING,
   )
-  new_node = StoryNode.from_dto(new_node_dto)
-  new_node.save()
-  node.choices[choice_index].is_created = True
-  node.save()
+  child = StoryNode.from_dto(child_dto)
+  child.source_session_id = session_id
+  child.save()
 
-  logger.info(f"Initialized new node {new_node_id} with generation_status=INITIALIZED")
+  create_node_session(session_id, child_id, root_world_id, parent_id=str(node.id))
 
-  if session_id:
-    try:
-      create_node_session(
-        session_id=session_id,
-        node_id=new_node_id,
-        root_world_id=world_id,
-        title=None,
-        base_choice_count=0,
-      )
+  parent_ns = get_node_session(session_id, str(node.id))
+  if not parent_ns:
+    parent_ns = create_node_session(
+      session_id=session_id,
+      node_id=str(node.id),
+      root_world_id=root_world_id,
+      title=node.title,
+      base_choice_count=len(node.choices),
+      parent_id=node.parent_id,
+    )
+  cc_map = CustomChoiceMap(
+    label=custom_choice,
+    target_node_id=child_id,
+    is_explored=True,
+    creator_id=user_id or "",
+  )
+  parent_ns.custom_choices.append(cc_map)
+  parent_ns.save()
 
-      parent_ns = get_node_session(session_id, node_id)
-      if parent_ns:
-        if custom_choice is not None:
-          custom_map = CustomChoiceMap(
-            label=custom_choice,
-            target_node_id=new_node_id,
-            is_explored=True,
-            creator_id=user_id or "",
-          )
-          parent_ns.custom_choices.append(custom_map)
-          parent_ns.save()
-        elif choice_index < len(parent_ns.base_choice_states):
-          parent_ns.base_choice_states[choice_index].is_explored = True
-          parent_ns.save()
-    except Exception:
-      logger.warning(
-        "Failed to dual-write session data for choose (session=%s, node=%s)",
-        session_id,
-        node_id,
-        exc_info=True,
-      )
+  logger.info("Created custom-choice node %s in session %s", child_id, session_id)
+  return child
 
-  return new_node
+
+async def _choose_existing_custom_with_session(
+  node: StoryNode,
+  root_world_id: str,
+  session_id: str,
+  target_id: str,
+  user_id: str | None,
+) -> StoryNode:
+  """Navigate to an already-created custom-choice child node by its target_id.
+
+  Looks up the session's ``custom_choices`` list to find a matching
+  ``target_node_id``, then returns the existing child node.
+  """
+  parent_ns = get_node_session(session_id, str(node.id))
+  if not parent_ns:
+    raise InvalidTargetError(str(node.id), target_id, "no session state for this node")
+
+  if not any(str(cc.target_node_id) == target_id for cc in parent_ns.custom_choices):
+    raise InvalidTargetError(str(node.id), target_id, "custom choice not found in this session")
+
+  child = get_node_entity(root_world_id, target_id)
+
+  if not get_node_session(session_id, target_id):
+    create_node_session(
+      session_id,
+      target_id,
+      root_world_id,
+      parent_id=str(node.id),
+      title=child.title,
+      base_choice_count=len(child.choices),
+    )
+
+  return child
+
+
+async def _choose_base_with_session(
+  node: StoryNode,
+  root_world_id: str,
+  session_id: str,
+  choice_index: int,
+  target_id: str,
+  user_id: str | None,
+) -> StoryNode:
+  """Select a base choice, creating the child StoryNode if needed, and ensuring NodeSession state."""
+  if not node.choices or choice_index < 0 or choice_index >= len(node.choices):
+    raise InvalidTargetError(str(node.id), target_id, "choice index out of range")
+
+  selected = node.choices[choice_index]
+
+  if selected.is_created:
+    child = get_node_entity(root_world_id, target_id)
+  else:
+    parent_choice_dto = ChoiceDTO(
+      label=selected.label,
+      outcome=selected.outcome,
+      target=target_id,
+    )
+    child_dto = StoryNodeDTO(
+      id=target_id,
+      world_id=root_world_id,
+      parent_choice=parent_choice_dto,
+      generation_status=GenerationStatus.INITIALIZED,
+      processing_status=StoryNodeProcessingStatus.PENDING,
+    )
+    child = StoryNode.from_dto(child_dto)
+    child.save()
+    node.choices[choice_index].is_created = True
+    node.save()
+
+  if not get_node_session(session_id, target_id):
+    create_node_session(
+      session_id,
+      target_id,
+      root_world_id,
+      parent_id=str(node.id),
+      title=child.title,
+      base_choice_count=len(child.choices),
+    )
+
+  parent_ns = get_node_session(session_id, str(node.id))
+  if not parent_ns:
+    parent_ns = create_node_session(
+      session_id=session_id,
+      node_id=str(node.id),
+      root_world_id=root_world_id,
+      title=node.title,
+      base_choice_count=len(node.choices),
+      parent_id=node.parent_id,
+    )
+
+  expected = len(node.choices)
+  if len(parent_ns.base_choice_states) < expected:
+    parent_ns.base_choice_states.extend(
+      BaseChoiceStateMap(is_explored=False) for _ in range(expected - len(parent_ns.base_choice_states))
+    )
+
+  parent_ns.base_choice_states[choice_index].is_explored = True
+  parent_ns.save()
+
+  return child
 
 
 # =============================================================================
@@ -634,11 +678,7 @@ async def generate_text(
       )
       world_meta = world_meta_result
 
-      if node.choice_index is None or node.choice_index >= len(parent_node.choices):
-        raise InvalidChoiceError(node_id, node.choice_index or -1, len(parent_node.choices) - 1)
-
-      selected_choice = parent_node.choices[node.choice_index]
-      next_deps = _build_next_node_deps(parent_node, world_meta, selected_choice)
+      next_deps = _build_next_node_deps(parent_node, world_meta, node.parent_choice)
       stream = _stream_next_node(next_deps, world_id=world_id)
 
     # Stream content and collect metadata
@@ -666,7 +706,6 @@ async def generate_text(
       ChoiceMap(
         label=choice.label,
         outcome=choice.outcome,
-        is_custom=False,
         target=StoryNode.get_child_id_static(node_id, i),
       )
       for i, choice in enumerate(metadata.choices)
@@ -682,9 +721,18 @@ async def generate_text(
           ns.title = metadata.title
           ns.base_choice_states = [BaseChoiceStateMap(is_explored=False) for _ in metadata.choices]
           ns.save()
+        else:
+          create_node_session(
+            session_id=session_id,
+            node_id=node_id,
+            root_world_id=world_id,
+            title=metadata.title,
+            base_choice_count=len(metadata.choices),
+            parent_id=node.parent_id,
+          )
       except Exception:
         logger.warning(
-          "Failed to update NodeSession after text generation (session=%s, node=%s)",
+          "Failed to update/create NodeSession after text generation (session=%s, node=%s)",
           session_id,
           node_id,
           exc_info=True,
@@ -717,7 +765,6 @@ async def generate_text(
 async def process_node(node: StoryNode) -> None:
   """Process a node: extract facts and upsert to Pinecone."""
   world_id = node.world_id
-  parent_node: StoryNode | None = get_node_entity(world_id, node.parent_id) if node.parent_id else None
 
   # Fetch facts from Pinecone.  A failure here is non-fatal: the node will be
   # processed with empty/partial context, degrading story quality but not
@@ -760,7 +807,7 @@ async def process_node(node: StoryNode) -> None:
   # Extract new facts via LLM
   fact_deps = llm.LLMFactExtractionDeps(
     text=node.text,
-    user_choice=parent_node.choices[node.choice_index].label if parent_node and node.choice_index else None,
+    user_choice=node.parent_choice.label if node.parent_choice else None,
   )
   facts = await llm.generate_facts_async(fact_deps)
 

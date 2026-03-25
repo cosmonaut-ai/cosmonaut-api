@@ -12,13 +12,13 @@ from pynamodb.attributes import (
 from app.models.entities.base import BaseCosmonautModel
 
 
-class BaseChoiceStateMap(MapAttribute):  # type: ignore[type-arg]
+class BaseChoiceStateMap(MapAttribute[str, BooleanAttribute]):
   """Tracks whether a base (LLM-generated) choice has been explored in this session."""
 
   is_explored: BooleanAttribute = BooleanAttribute(default=False)
 
 
-class CustomChoiceMap(MapAttribute):  # type: ignore[type-arg]
+class CustomChoiceMap(MapAttribute[str, UnicodeAttribute]):
   """A session-scoped custom choice added by a user, with creator attribution."""
 
   label: UnicodeAttribute = UnicodeAttribute()
@@ -47,6 +47,7 @@ class NodeSession(BaseCosmonautModel):
   session_id: UnicodeAttribute = UnicodeAttribute()
   root_world_id: UnicodeAttribute = UnicodeAttribute()
   title: UnicodeAttribute = UnicodeAttribute(null=True)
+  parent_id: UnicodeAttribute = UnicodeAttribute(null=True)
   base_choice_states: ListAttribute[BaseChoiceStateMap] = ListAttribute(of=BaseChoiceStateMap, default=list)
   custom_choices: ListAttribute[CustomChoiceMap] = ListAttribute(of=CustomChoiceMap, default=list)
 

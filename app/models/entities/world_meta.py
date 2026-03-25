@@ -7,6 +7,7 @@ from pynamodb.attributes import ListAttribute, MapAttribute, NumberAttribute, Un
 from app.models.dtos.world_meta import (
   CharacterDTO,
   GenerationStatus,
+  ImageGenerationStatus,
   LocationDTO,
   WorldMetaDTO,
   WorldVisibility,
@@ -15,7 +16,7 @@ from app.models.entities.base import BaseCosmonautModel
 from app.utils import coerce_datetime
 
 
-class Character(MapAttribute):  # type: ignore[type-arg]
+class Character(MapAttribute[str, UnicodeAttribute]):
   name: UnicodeAttribute = UnicodeAttribute()
   description: UnicodeAttribute = UnicodeAttribute()
   relationships: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
@@ -36,7 +37,7 @@ class Character(MapAttribute):  # type: ignore[type-arg]
     )
 
 
-class Location(MapAttribute):  # type: ignore[type-arg]
+class Location(MapAttribute[str, UnicodeAttribute]):
   name: UnicodeAttribute = UnicodeAttribute()
   description: UnicodeAttribute = UnicodeAttribute()
   connections: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
@@ -104,6 +105,7 @@ class WorldMeta(BaseCosmonautModel):
   world_image_width: UnicodeAttribute = UnicodeAttribute(null=True)
   world_image_height: UnicodeAttribute = UnicodeAttribute(null=True)
   world_image_size: UnicodeAttribute = UnicodeAttribute(null=True)
+  image_generation_status: UnicodeAttribute = UnicodeAttribute(null=True)
 
   def to_dto(self) -> WorldMetaDTO:
     return WorldMetaDTO(
@@ -130,6 +132,9 @@ class WorldMeta(BaseCosmonautModel):
       world_image_width=self.world_image_width,
       world_image_height=self.world_image_height,
       world_image_size=self.world_image_size,
+      image_generation_status=ImageGenerationStatus(self.image_generation_status)
+      if self.image_generation_status
+      else None,
       story_max_nodes=int(self.story_max_nodes),
       world_length=self.world_length,
       family_friendly=self.family_friendly == "true",
@@ -173,18 +178,21 @@ class WorldMeta(BaseCosmonautModel):
       world_image_width=dto.world_image_width,
       world_image_height=dto.world_image_height,
       world_image_size=dto.world_image_size,
+      image_generation_status=ImageGenerationStatus(dto.image_generation_status).value
+      if dto.image_generation_status
+      else None,
       updated_at=updated_at_dt,
     )
 
   def _on_save(self) -> None:
     """Keep GSI1SK in sync with ``updated_at`` for chronological ordering."""
     if self.author_id and self.updated_at:
-      self.GSI1SK = WorldMeta.gsi1_sk(self.updated_at.isoformat())  # type: ignore[reportConstantRedefinition]
+      self.GSI1SK = WorldMeta.gsi1_sk(self.updated_at.isoformat())
 
-  def can_user_read(self, user_id: str, user_email: str | None = None) -> bool:
-    if self.visibility == WorldVisibility.PUBLIC or self.author_id == user_id:
+  def can_user_read(self, user_id: str) -> bool:
+    if self.visibility in (WorldVisibility.PUBLIC, WorldVisibility.UNLISTED) or self.author_id == user_id:
       return True
-    return bool(user_email and user_email in (self.shared_with or []))
+    return user_id in (self.shared_with or [])
 
   def can_user_write(self, user_id: str) -> bool:
     return self.author_id == user_id

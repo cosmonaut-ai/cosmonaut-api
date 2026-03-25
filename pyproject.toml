@@ -24,6 +24,7 @@ dependencies = [
     "httpx>=0.28.0",
     "cachetools>=6.2.4",
     "sentry-sdk[fastapi]>=2.54.0",
+    "better-profanity>=0.7.0",
 ]
 
 
@@ -50,3 +51,10 @@ ignore = [
   "SIM108",  # Ternary operator not always more readable
 ]
 fixable = ["ALL"]
+
+[tool.ty.environment]
+python-version = "3.13"
+python = ".venv"
+
+[tool.ty.src]
+exclude = ["tests", "scripts"]

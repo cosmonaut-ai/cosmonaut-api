@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.models.dtos.base import DTOModel
 
@@ -19,10 +19,19 @@ class GenerationStatus(str, Enum):
   FAILED = "failed"
 
 
+class ImageGenerationStatus(str, Enum):
+  """Status of the world cover image generation."""
+
+  PENDING = "pending"
+  COMPLETED = "completed"
+  FAILED = "failed"
+
+
 class WorldVisibility(str, Enum):
   """Visibility of the world."""
 
   PRIVATE = "private"
+  UNLISTED = "unlisted"
   PUBLIC = "public"
 
 
@@ -44,17 +53,21 @@ class WorldCreateRequest(BaseModel):
 
 
 class WorldUpdateSharingRequest(BaseModel):
-  """Payload for sharing a world with a user."""
+  """Payload for updating world visibility and the shared_with allowlist."""
 
-  shared_with: list[EmailStr] | None = Field(default=None, max_length=50)
+  shared_with: list[str] | None = Field(default=None, max_length=50)
   visibility: WorldVisibility | None = None
 
-  @field_validator("shared_with", mode="before")
-  @classmethod
-  def normalize_emails(cls, v: list[str] | None) -> list[str] | None:
-    if v is None:
-      return v
-    return [email.strip().lower() for email in v]
+
+class InviteTokenDTO(DTOModel):
+  """Response DTO for an invite token."""
+
+  token: str
+  root_world_id: str
+  created_at: str
+  expires_at: str
+  use_count: int
+  invite_url: str
 
 
 class CharacterDTO(DTOModel):
@@ -75,6 +88,7 @@ class WorldMetaDTO(DTOModel):
   model_config = ConfigDict(extra="ignore", from_attributes=True)
 
   id: str | None = None
+  shareable_id: str | None = None
   title: str | None = None
   description: str | None = None
   genre: str | None = None
@@ -100,5 +114,6 @@ class WorldMetaDTO(DTOModel):
   world_image_width: str | None = None
   world_image_height: str | None = None
   world_image_size: str | None = None
+  image_generation_status: ImageGenerationStatus | None = None
   created_at: str | None = None
   updated_at: str | None = None

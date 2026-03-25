@@ -10,13 +10,9 @@ Architecture:
 
 from __future__ import annotations
 
-import contextlib
 import uuid
 from collections.abc import Callable
 from typing import Any
-
-from pynamodb.exceptions import UpdateError
-from pynamodb.pagination import ResultIterator
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
@@ -33,21 +29,21 @@ from app.models.dtos.story_node import (
 from app.models.dtos.world_meta import (
   CharacterDTO,
   GenerationStatus,
+  ImageGenerationStatus,
   LocationDTO,
   WorldCreateRequest,
   WorldMetaDTO,
   WorldVisibility,
 )
 from app.models.entities.story_node import StoryNode
-from app.models.entities.usage import UserUsage
+from app.models.entities.user import UserRecord
 from app.models.entities.world_meta import Character, Location, WorldMeta
 from app.services.llm.sanitize import sanitize_user_input
-from app.services.sessions import create_session, delete_sessions_for_world
+from app.services.s3 import delete_objects_by_prefix
+from app.services.sessions import create_session
 from app.services.sqs import send_world_generation_message
 from app.services.usage import (
-  StorageQuotaExceededError,
   check_and_increment,
-  check_storage_quota,
   get_or_create_usage,
   release_quota,
 )
@@ -111,95 +107,27 @@ def get_world_entity(world_id: str) -> WorldMeta:
   pk, sk = _world_keys(world_id)
   try:
     return WorldMeta.get(pk, sk)
-  except WorldMeta.DoesNotExist as e:  # type: ignore[reportGeneralTypeIssues]
+  except WorldMeta.DoesNotExist as e:
     raise WorldNotFoundError(world_id) from e
 
 
-def count_user_worlds(user_id: str) -> int:
-  """Count the total number of worlds owned by a user (GSI1 count query)."""
-  gsi1_pk = WorldMeta.gsi1_pk(user_id)
-  return WorldMeta.GSI1.count(hash_key=gsi1_pk)  # type: ignore[reportUnknownMemberType]
-
-
-@tracer.capture_method
-def list_worlds(
-  user_id: str,
-  limit: int = 50,
-  cursor: str | None = None,
-) -> tuple[list[WorldMeta], str | None]:
-  """Return worlds for a user with cursor-based pagination, ordered by most recent first.
-
-  Args:
-    user_id: Owner identifier.
-    limit: Maximum number of worlds to return per page (default 50).
-    cursor: Opaque pagination token from a previous response.
-
-  Returns:
-    Tuple of (worlds, next_cursor). ``next_cursor`` is None when there are
-    no more pages.
-  """
-  import base64
-  import json
-
-  gsi1_pk = WorldMeta.gsi1_pk(user_id)
-
-  last_evaluated_key = None
-  if cursor:
-    with contextlib.suppress(Exception):
-      last_evaluated_key = json.loads(base64.urlsafe_b64decode(cursor))
-
-  worlds: ResultIterator[WorldMeta] = WorldMeta.GSI1.query(  # type: ignore[reportUnknownReturnType]
-    hash_key=gsi1_pk,
-    scan_index_forward=False,
-    page_size=limit,
-    limit=limit,
-    last_evaluated_key=last_evaluated_key,
-  )
-  items = list(worlds)
-
-  next_cursor: str | None = None
-  if worlds.last_evaluated_key:
-    next_cursor = base64.urlsafe_b64encode(json.dumps(worlds.last_evaluated_key).encode()).decode()
-
-  return items, next_cursor
-
-
-def get_world(world_id: str) -> WorldMeta:
-  """Fetch a single world by identifier."""
-  return get_world_entity(world_id)
-
-
 def _increment_world_count(user_id: str) -> None:
-  """Atomically increment the saved_world_count with a limit check.
-
-  Uses a DynamoDB conditional update to prevent the race condition where
-  two concurrent requests both pass the quota check.
-
-  Raises ``StorageQuotaExceededError`` when the user is at capacity.
-  """
-  from app.core.config import get_tier_limits
-
-  usage = get_or_create_usage(user_id)
-  tier = str(usage.tier) if usage.tier else "FREE"
-  saved_worlds_limit: int = get_tier_limits(tier)["saved_worlds"]
-
-  try:
-    usage.update(
-      actions=[UserUsage.saved_world_count.set((UserUsage.saved_world_count | 0) + 1)],
-      condition=(UserUsage.saved_world_count < saved_worlds_limit) | UserUsage.saved_world_count.does_not_exist(),
-    )
-  except UpdateError:
-    count = int(usage.saved_world_count) if usage.saved_world_count else 0
-    raise StorageQuotaExceededError("saved_worlds", saved_worlds_limit, count) from None
+  """Atomically increment the saved_world_count tracker."""
+  record = get_or_create_usage(user_id)
+  swc = UserRecord.usage.saved_world_count
+  record.update(
+    actions=[swc.set((swc | 0) + 1)],  # type: ignore  # PynamoDB expression builder
+  )
 
 
 def _decrement_world_count(user_id: str) -> None:
   """Best-effort decrement of the saved world counter after deletion or failed creation."""
   try:
-    usage = get_or_create_usage(user_id)
-    usage.update(
-      actions=[UserUsage.saved_world_count.set((UserUsage.saved_world_count | 0) - 1)],
-      condition=(UserUsage.saved_world_count > 0),
+    record = get_or_create_usage(user_id)
+    swc = UserRecord.usage.saved_world_count
+    record.update(
+      actions=[swc.set((swc | 0) - 1)],  # type: ignore  # PynamoDB expression builder
+      condition=(swc > 0),  # type: ignore  # PynamoDB condition expression
     )
   except Exception:
     logger.warning(f"Failed to decrement world count for user {user_id}")
@@ -209,19 +137,14 @@ def _decrement_world_count(user_id: str) -> None:
 def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
   """Create a new world metadata record.
 
-  Expects a mapping aligned with the `WorldMeta` attributes.
-  Raises ``StorageQuotaExceededError`` if the user has reached their saved-worlds cap.
+  Expects a mapping aligned with the ``WorldMeta`` attributes.
   Raises ``QuotaExceededError`` if the user has reached their periodic world-creation limit.
   """
 
-  # 1. Optimistic pre-check for fast rejection (non-atomic).
-  check_storage_quota(user_id)
-
-  # 2. Atomically increment saved_world_count with a condition check.
-  #    This is the actual enforcement that prevents the race condition.
+  # 1. Track the saved world count (no limit enforced).
   _increment_world_count(user_id)
 
-  # 3. Atomically reserve a periodic slot (worlds created this billing period).
+  # 2. Atomically reserve a periodic slot (worlds created this billing period).
   #    Released below if the actual creation fails.
   try:
     check_and_increment(user_id, "worlds")
@@ -273,8 +196,10 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
   """
   world = get_world_entity(world_id)
 
-  # Fields that should never be updated via this endpoint
-  immutable_fields = {"id", "author_id", "created_at", "updated_at"}
+  # Fields that should never be updated via this endpoint.
+  # ``visibility`` is restricted to the dedicated /sharing endpoint
+  # to ensure the cascade (revoke_unauthorized_sessions) always fires.
+  immutable_fields = {"id", "author_id", "created_at", "updated_at", "visibility"}
 
   # Field converters: maps DTO field name to a converter function
   def convert_visibility(v: WorldVisibility) -> str:
@@ -282,6 +207,9 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
 
   def convert_generation_status(v: GenerationStatus) -> str:
     return GenerationStatus(v).value
+
+  def convert_image_generation_status(v: ImageGenerationStatus) -> str:
+    return ImageGenerationStatus(v).value
 
   def convert_characters(v: list[CharacterDTO]) -> list[Character]:
     return [Character.from_dto(c) for c in v]
@@ -292,6 +220,7 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
   converters: dict[str, Callable[[Any], Any]] = {
     "visibility": convert_visibility,
     "generation_status": convert_generation_status,
+    "image_generation_status": convert_image_generation_status,
     "characters": convert_characters,
     "locations": convert_locations,
   }
@@ -311,9 +240,19 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
 
 
 @tracer.capture_method
-def delete_world(world_id: str) -> None:
-  """Delete a world and any associated state."""
-  world = get_world_entity(world_id)
+def hard_delete_orphaned_world(world_id: str) -> None:
+  """Hard-delete a world that has zero remaining sessions.
+
+  Called after orphan detection (all sessions removed) and during
+  account deletion (GDPR right to erasure).  All cleanup operations
+  are idempotent, so concurrent calls are safe.
+  """
+  try:
+    world = get_world_entity(world_id)
+  except WorldNotFoundError:
+    logger.info("World %s already deleted (idempotent)", world_id)
+    return
+
   author_id = str(world.author_id) if world.author_id else None
 
   pk, _sk = _world_keys(world_id)
@@ -328,9 +267,10 @@ def delete_world(world_id: str) -> None:
     logger.exception("Failed to delete Pinecone records for world %s (non-fatal)", world_id)
 
   try:
-    delete_sessions_for_world(world_id)
+    delete_objects_by_prefix(f"worlds/{world_id}/")
+    delete_objects_by_prefix(f"audio/{world_id}/")
   except Exception:
-    logger.warning("Failed to delete sessions for world %s (non-fatal)", world_id, exc_info=True)
+    logger.exception("Failed to delete S3 objects for world %s (non-fatal)", world_id)
 
   if author_id:
     _decrement_world_count(author_id)
@@ -365,7 +305,7 @@ async def generate_lore(world: WorldMeta) -> WorldMeta:
     )
     for location in llm_world_info.locations
   ]
-  world.potential_endings = llm_world_info.endings or []  # type: ignore[reportAttributeAccessIssue]  # PynamoDB ListAttribute accepts list[str]
+  world.potential_endings = llm_world_info.endings or []  # type: ignore  # PynamoDB ListAttribute accepts list[str]
 
   return world
 

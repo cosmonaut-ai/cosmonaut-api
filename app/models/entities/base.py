@@ -17,13 +17,13 @@ from pynamodb.models import Model
 from app.core.config import settings
 
 
-class BaseGSI1Model(GlobalSecondaryIndex):  # type: ignore[type-arg]
+class BaseGSI1Model(GlobalSecondaryIndex["BaseCosmonautModel"]):
   """Base table binding for GSI1; individual entities supply their own attributes."""
 
   GSI1PK: ClassVar[UnicodeAttribute] = UnicodeAttribute(hash_key=True)
   GSI1SK: ClassVar[UnicodeAttribute] = UnicodeAttribute(range_key=True)
 
-  class Meta:  # type: ignore[misc]
+  class Meta:
     table_name = settings.DYNAMODB_TABLE_NAME
     region = settings.AWS_REGION
     projection = AllProjection()
@@ -41,7 +41,7 @@ class BaseCosmonautModel(Model):
   can override ``_on_save()``.
   """
 
-  class Meta:  # type: ignore[misc]
+  class Meta:
     table_name = settings.DYNAMODB_TABLE_NAME
     region = settings.AWS_REGION
     read_capacity_units = 5
@@ -57,7 +57,7 @@ class BaseCosmonautModel(Model):
 
   # -- Timestamp management ---------------------------------------------------
 
-  def save(  # type: ignore[override]
+  def save(
     self,
     condition: Condition | None = None,
     *,
@@ -71,13 +71,13 @@ class BaseCosmonautModel(Model):
     self._on_save()
     return super().save(condition=condition, add_version_condition=add_version_condition)
 
-  def update(  # type: ignore[override]
+  def update(
     self,
     actions: list[Action],
     condition: Condition | None = None,
     *,
     add_version_condition: bool = True,
-  ) -> Any:
+  ) -> dict[str, Any]:
     """Apply an update expression, automatically refreshing ``updated_at``."""
     actions = list(actions)
     actions.append(BaseCosmonautModel.updated_at.set(datetime.now(UTC)))

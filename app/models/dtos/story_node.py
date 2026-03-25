@@ -17,6 +17,7 @@ class ChoiceDTO(DTOModel):
   outcome: str | None = None
   target: str | None = None
   is_created: bool = False
+  is_explored: bool = False
   is_custom: bool = False
   creator: str | None = None  # User ID for custom choices
   creator_email: str | None = None
@@ -26,8 +27,8 @@ class ChoiceDTO(DTOModel):
 class ChooseRequestDTO(DTOModel):
   """Request body for the choose endpoint."""
 
-  choice_index: int | None = None  # For selecting existing choices
-  custom_choice: str | None = Field(None, max_length=200)  # For free text choices
+  target_id: str | None = None
+  custom_choice: str | None = Field(None, max_length=200)
 
 
 class StoryNodeProcessingStatus(str, Enum):
