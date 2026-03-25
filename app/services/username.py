@@ -14,6 +14,7 @@ from pynamodb.exceptions import PutError
 from app.core.errors import BadRequestError, ConflictError
 from app.core.observability import logger, tracer
 from app.models.entities.user import UsernameReservation
+from app.services.cognito import update_user_username
 from app.services.usage import get_or_create_usage
 
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9]+$")
@@ -124,6 +125,9 @@ def reserve_username(user_id: str, username: str) -> str:
   record.is_onboarded = True
   record.save()
   logger.info("Reserved username '%s' for user %s", username, user_id)
+
+  update_user_username(user_id, username)
+
   return username
 
 

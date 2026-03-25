@@ -18,6 +18,7 @@ from app.services.email import send_feedback_email
 from app.services.newsletter import subscribe, unsubscribe
 from app.services.secret_manager import get_secret_value
 from app.services.stripe_client import create_billing_portal_session, create_checkout_session
+from app.services.cognito import update_user_username
 from app.services.usage import get_or_create_usage
 from app.services.username import check_availability, reserve_username, validate_username
 
@@ -137,6 +138,11 @@ async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResp
   limits = get_tier_limits(tier)
 
   display = str(record.username) if record.username else (current_user.email or current_user.id[:8])
+
+  # Lazy sync: if DynamoDB has a username but the JWT doesn't, backfill Cognito.
+  # This is a safety net for users missed by the one-time backfill script.
+  if record.username and not current_user.app_username:
+    update_user_username(current_user.id, str(record.username))
 
   return UsageResponse(
     username=str(record.username) if record.username else None,

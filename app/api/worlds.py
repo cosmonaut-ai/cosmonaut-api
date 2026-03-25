@@ -13,7 +13,13 @@ from app.api.dependencies import (
 from app.core.observability import logger
 from app.core.security import User, get_current_user
 from app.models.dtos.base import PaginatedResponse
-from app.models.dtos.world_meta import InviteTokenDTO, WorldCreateRequest, WorldMetaDTO, WorldUpdateSharingRequest, WorldVisibility
+from app.models.dtos.world_meta import (
+  InviteTokenDTO,
+  WorldCreateRequest,
+  WorldMetaDTO,
+  WorldUpdateSharingRequest,
+  WorldVisibility,
+)
 from app.services.invite_tokens import (
   create_invite_token,
   delete_invite_token,
@@ -21,7 +27,12 @@ from app.services.invite_tokens import (
   token_to_dto,
 )
 from app.services.rate_limiter import check_rate_limit
-from app.services.sessions import delete_session_for_user, get_session_for_user, list_user_sessions, revoke_unauthorized_sessions
+from app.services.sessions import (
+  delete_session_for_user,
+  get_session_for_user,
+  list_user_sessions,
+  revoke_unauthorized_sessions,
+)
 
 router = APIRouter(prefix="/worlds", tags=["worlds"])
 
@@ -137,13 +148,18 @@ async def update_sharing(
   root_world_id = str(session.root_world_id)
   previous_visibility = world.visibility
 
-  world_dto = WorldMetaDTO(visibility=payload.visibility, shared_with=payload.shared_with)
+  # Apply shared_with via update_world (visibility is in the immutable
+  # skip-list there, so we handle it directly below).
+  world_dto = WorldMetaDTO(shared_with=payload.shared_with)
   world = world_service.update_world(root_world_id, world_dto)
 
-  if (
-    payload.visibility == WorldVisibility.PRIVATE
-    and previous_visibility != WorldVisibility.PRIVATE.value
-  ):
+  # Apply visibility directly — this is the only endpoint allowed to
+  # change it, ensuring the cascade always fires.
+  if payload.visibility is not None and payload.visibility.value != world.visibility:
+    world.visibility = payload.visibility.value
+    world.save()
+
+  if payload.visibility == WorldVisibility.PRIVATE and previous_visibility != WorldVisibility.PRIVATE.value:
     resolved_shared = [str(s) for s in (world.shared_with or [])]
     revoke_unauthorized_sessions(
       root_world_id=root_world_id,
