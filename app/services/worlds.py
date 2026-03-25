@@ -323,6 +323,18 @@ async def generate_narrator_profile(world: WorldMeta) -> WorldMeta:
   return world
 
 
+@tracer.capture_method
+def list_featured_worlds() -> list[WorldMeta]:
+  """Return featured worlds with public visibility, ordered by featured_order ascending."""
+  results = list(
+    WorldMeta.GSI2.query(
+      hash_key=WorldMeta.gsi2_pk_featured(),
+      scan_index_forward=True,
+    )
+  )
+  return [w for w in results if w.visibility == WorldVisibility.PUBLIC.value]
+
+
 def initialize_root_node(world: WorldMeta) -> StoryNode:
   """Initialize the root story node for a world without generating text.
 

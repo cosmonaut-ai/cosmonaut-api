@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from pynamodb.exceptions import UpdateError
 
 import app.services.story_nodes as node_service
-from app.api.dependencies import node_session_to_list_dto, require_session_read
+from app.api.dependencies import node_session_to_list_dto, require_session_read, require_world_read
 from app.core.errors import AppError, BadRequestError, WrongSessionForNodeError
 from app.core.observability import MetricUnit, logger, metrics
 from app.core.security import User, get_current_user
@@ -90,7 +90,9 @@ async def get_progress(
   current_user: User = Depends(get_current_user),
 ) -> ProgressResponse:
   """Return the last story node the authenticated user visited in this world."""
-  session, _ = require_session_read(world_id, current_user)
+  session, _ = require_world_read(world_id, current_user)
+  if session is None:
+    return ProgressResponse(current_node_id=None)
   progress_map = session.per_member_progress.attribute_values if session.per_member_progress else {}
   node_id_val = progress_map.get(current_user.id)
   return ProgressResponse(current_node_id=str(node_id_val) if node_id_val else None)

@@ -9,6 +9,7 @@ from app.api.dependencies import (
   membership_to_world_dto,
   require_session_read,
   require_session_write,
+  require_world_read,
 )
 from app.core.observability import logger
 from app.core.security import User, get_current_user
@@ -37,6 +38,15 @@ from app.services.sessions import (
 router = APIRouter(prefix="/worlds", tags=["worlds"])
 
 
+@router.get("/featured", response_model=list[WorldMetaDTO], summary="List featured public worlds")
+async def list_featured_worlds(
+  user: User = Depends(get_current_user),
+) -> list[WorldMetaDTO]:
+  """Return featured worlds with public visibility, ordered by featured_order ascending."""
+  worlds = world_service.list_featured_worlds()
+  return [w.to_dto() for w in worlds]
+
+
 @router.get("/", response_model=PaginatedResponse[WorldMetaDTO], summary="List available worlds")
 async def list_worlds(
   user: User = Depends(get_current_user),
@@ -61,9 +71,10 @@ async def get_world(
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Retrieve a single world by its identifier."""
-  session, world = require_session_read(world_id, user, invite_token=invite)
+  session, world = require_world_read(world_id, user, invite_token=invite)
   dto = world.to_dto()
-  dto.session_id = str(session.id)
+  if session:
+    dto.session_id = str(session.id)
   if world.author_id != user.id:
     dto.shared_with = None
   return dto
@@ -160,8 +171,7 @@ async def update_sharing(
     payload.visibility is None and world.visibility == WorldVisibility.PRIVATE.value
   )
   transitioning_to_private = (
-    payload.visibility == WorldVisibility.PRIVATE
-    and previous_visibility != WorldVisibility.PRIVATE.value
+    payload.visibility == WorldVisibility.PRIVATE and previous_visibility != WorldVisibility.PRIVATE.value
   )
 
   if is_now_private or transitioning_to_private:
