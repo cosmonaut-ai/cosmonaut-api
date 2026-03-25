@@ -107,3 +107,34 @@ def update_user_tier(user_id: str, tier: str) -> None:
     logger.exception(f"Failed to update Cognito tier for user {user_id}")
     # Non-fatal: the DynamoDB record is the source of truth for quota
     # enforcement. The Cognito attribute is a convenience for JWT claims.
+
+
+@tracer.capture_method
+def update_user_username(user_id: str, app_username: str) -> None:
+  """Update the ``custom:username`` attribute on a Cognito user.
+
+  Called after username reservation so that subsequent JWTs carry the
+  app-level handle directly in the ID token claims.
+  """
+  if not settings.COGNITO_USER_POOL_ID:
+    logger.warning("COGNITO_USER_POOL_ID not set; skipping username sync")
+    return
+
+  client = _get_cognito_client()
+
+  cognito_username = _resolve_cognito_username(client, user_id)
+  if not cognito_username:
+    logger.warning(f"Could not resolve Cognito username for sub {user_id}; skipping username sync")
+    return
+
+  try:
+    client.admin_update_user_attributes(
+      UserPoolId=settings.COGNITO_USER_POOL_ID,
+      Username=cognito_username,
+      UserAttributes=[{"Name": "custom:username", "Value": app_username}],
+    )
+    logger.info(f"Synced Cognito custom:username={app_username} for user {user_id}")
+  except Exception:
+    logger.exception(f"Failed to update Cognito username for user {user_id}")
+    # Non-fatal: DynamoDB is the source of truth. The Cognito attribute
+    # is a convenience for JWT claims; lazy sync will catch failures.
