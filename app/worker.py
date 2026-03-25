@@ -231,6 +231,7 @@ async def _generate_world(payload: GenerateWorldPayload):
   except Exception as e:
     logger.exception(f"Error generating world {world_id}: {e}")
     world.generation_status = GenerationStatus.FAILED
+    _sync_session_membership(world)
     raise
   finally:
     world.save()
