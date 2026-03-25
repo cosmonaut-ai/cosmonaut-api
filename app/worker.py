@@ -12,7 +12,7 @@ from app.core.observability import logger, metrics, tracer
 from app.core.sentry import init_sentry
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
 from app.models.dtos.story_node import StoryNodeProcessingStatus
-from app.models.dtos.world_meta import GenerationStatus
+from app.models.dtos.world_meta import GenerationStatus, ImageGenerationStatus
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
 from app.services import images, story_nodes, worlds
@@ -222,8 +222,10 @@ async def _generate_world(payload: GenerateWorldPayload):
     # 5. Enqueue image generation (fire-and-forget, non-blocking).
     # An SQS failure here must not undo the successful world generation.
     try:
+      world.image_generation_status = ImageGenerationStatus.PENDING.value
       send_world_image_generation_message(world_id)
     except SQSSendError:
+      world.image_generation_status = ImageGenerationStatus.FAILED.value
       logger.error(f"Failed to enqueue image generation for world {world_id} -- world will lack a cover image")
 
   except Exception as e:
@@ -248,6 +250,8 @@ async def _generate_world_image(payload: GenerateWorldImagePayload):
 
   try:
     await images.generate_world_image(world)
+    world.image_generation_status = ImageGenerationStatus.COMPLETED.value
+    world.save()
     metrics.add_metric(name="WorldImageGenerated", unit=MetricUnit.Count, value=1)
     logger.info(f"World {world_id} image generation complete.")
 
@@ -255,4 +259,7 @@ async def _generate_world_image(payload: GenerateWorldImagePayload):
 
   except Exception as e:
     logger.exception(f"Error generating image for world {world_id}: {e}")
+    world.image_generation_status = ImageGenerationStatus.FAILED.value
+    world.save()
+    _sync_session_membership(world)
     raise

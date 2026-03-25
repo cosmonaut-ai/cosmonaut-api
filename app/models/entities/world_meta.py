@@ -7,6 +7,7 @@ from pynamodb.attributes import ListAttribute, MapAttribute, NumberAttribute, Un
 from app.models.dtos.world_meta import (
   CharacterDTO,
   GenerationStatus,
+  ImageGenerationStatus,
   LocationDTO,
   WorldMetaDTO,
   WorldVisibility,
@@ -104,6 +105,7 @@ class WorldMeta(BaseCosmonautModel):
   world_image_width: UnicodeAttribute = UnicodeAttribute(null=True)
   world_image_height: UnicodeAttribute = UnicodeAttribute(null=True)
   world_image_size: UnicodeAttribute = UnicodeAttribute(null=True)
+  image_generation_status: UnicodeAttribute = UnicodeAttribute(null=True)
 
   def to_dto(self) -> WorldMetaDTO:
     return WorldMetaDTO(
@@ -130,6 +132,9 @@ class WorldMeta(BaseCosmonautModel):
       world_image_width=self.world_image_width,
       world_image_height=self.world_image_height,
       world_image_size=self.world_image_size,
+      image_generation_status=ImageGenerationStatus(self.image_generation_status)
+      if self.image_generation_status
+      else None,
       story_max_nodes=int(self.story_max_nodes),
       world_length=self.world_length,
       family_friendly=self.family_friendly == "true",
@@ -173,6 +178,9 @@ class WorldMeta(BaseCosmonautModel):
       world_image_width=dto.world_image_width,
       world_image_height=dto.world_image_height,
       world_image_size=dto.world_image_size,
+      image_generation_status=ImageGenerationStatus(dto.image_generation_status).value
+      if dto.image_generation_status
+      else None,
       updated_at=updated_at_dt,
     )
 

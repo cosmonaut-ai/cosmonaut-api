@@ -37,6 +37,7 @@ class SessionMembership(BaseCosmonautModel):
   world_length: UnicodeAttribute = UnicodeAttribute(null=True)
   world_image_url: UnicodeAttribute = UnicodeAttribute(null=True)
   world_image_alt_text: UnicodeAttribute = UnicodeAttribute(null=True)
+  image_generation_status: UnicodeAttribute = UnicodeAttribute(null=True)
   root_node_id: UnicodeAttribute = UnicodeAttribute(null=True)
   root_created_at: UnicodeAttribute = UnicodeAttribute(null=True)
   generation_status: UnicodeAttribute = UnicodeAttribute(null=True)

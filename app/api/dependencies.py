@@ -7,7 +7,7 @@ from fastapi import Depends
 from app.core.errors import ForbiddenError, SessionAccessDeniedError
 from app.core.security import User, get_current_user
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO
-from app.models.dtos.world_meta import GenerationStatus, WorldMetaDTO
+from app.models.dtos.world_meta import GenerationStatus, ImageGenerationStatus, WorldMetaDTO
 from app.models.entities.node_session import NodeSession
 from app.models.entities.session_membership import SessionMembership
 from app.models.entities.world_meta import WorldMeta
@@ -87,6 +87,9 @@ def membership_to_world_dto(membership: SessionMembership) -> WorldMetaDTO:
     root_node_id=membership.root_node_id,
     world_image_url=membership.world_image_url,
     world_image_alt_text=membership.world_image_alt_text,
+    image_generation_status=ImageGenerationStatus(membership.image_generation_status)
+    if membership.image_generation_status
+    else None,
     world_length=membership.world_length,
     family_friendly=membership.family_friendly == "true" if membership.family_friendly else None,
     created_at=str(membership.root_created_at) if membership.root_created_at else None,
