@@ -29,6 +29,7 @@ from app.models.dtos.story_node import (
 from app.models.dtos.world_meta import (
   CharacterDTO,
   GenerationStatus,
+  ImageGenerationStatus,
   LocationDTO,
   WorldCreateRequest,
   WorldMetaDTO,
@@ -207,6 +208,9 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
   def convert_generation_status(v: GenerationStatus) -> str:
     return GenerationStatus(v).value
 
+  def convert_image_generation_status(v: ImageGenerationStatus) -> str:
+    return ImageGenerationStatus(v).value
+
   def convert_characters(v: list[CharacterDTO]) -> list[Character]:
     return [Character.from_dto(c) for c in v]
 
@@ -216,6 +220,7 @@ def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
   converters: dict[str, Callable[[Any], Any]] = {
     "visibility": convert_visibility,
     "generation_status": convert_generation_status,
+    "image_generation_status": convert_image_generation_status,
     "characters": convert_characters,
     "locations": convert_locations,
   }

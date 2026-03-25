@@ -19,6 +19,14 @@ class GenerationStatus(str, Enum):
   FAILED = "failed"
 
 
+class ImageGenerationStatus(str, Enum):
+  """Status of the world cover image generation."""
+
+  PENDING = "pending"
+  COMPLETED = "completed"
+  FAILED = "failed"
+
+
 class WorldVisibility(str, Enum):
   """Visibility of the world."""
 
@@ -106,5 +114,6 @@ class WorldMetaDTO(DTOModel):
   world_image_width: str | None = None
   world_image_height: str | None = None
   world_image_size: str | None = None
+  image_generation_status: ImageGenerationStatus | None = None
   created_at: str | None = None
   updated_at: str | None = None

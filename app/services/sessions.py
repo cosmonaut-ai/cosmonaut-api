@@ -322,6 +322,8 @@ def update_membership_metadata(
     actions.append(SessionMembership.world_image_url.set(world.world_image_url))
   if world.world_image_alt_text:
     actions.append(SessionMembership.world_image_alt_text.set(world.world_image_alt_text))
+  if world.image_generation_status:
+    actions.append(SessionMembership.image_generation_status.set(world.image_generation_status))
   if world.generation_status:
     actions.append(SessionMembership.generation_status.set(world.generation_status))
   if world.created_at:
@@ -378,11 +380,13 @@ def delete_session_for_user(
       session.per_member_progress = progress
       session.save()
 
-  remaining = list(WorldSession.GSI3.query(
-    hash_key=WorldSession.gsi3_pk(root_world_id),
-    range_key_condition=WorldSession.GSI3SK.startswith("SESSION#"),
-    limit=1,
-  ))
+  remaining = list(
+    WorldSession.GSI3.query(
+      hash_key=WorldSession.gsi3_pk(root_world_id),
+      range_key_condition=WorldSession.GSI3SK.startswith("SESSION#"),
+      limit=1,
+    )
+  )
   return len(remaining) == 0
 
 
@@ -400,10 +404,12 @@ def revoke_unauthorized_sessions(
   allowed = set(shared_with) | {author_id}
   revoked = 0
 
-  gsi3_results = list(WorldSession.GSI3.query(
-    hash_key=WorldSession.gsi3_pk(root_world_id),
-    range_key_condition=WorldSession.GSI3SK.startswith("SESSION#"),
-  ))
+  gsi3_results = list(
+    WorldSession.GSI3.query(
+      hash_key=WorldSession.gsi3_pk(root_world_id),
+      range_key_condition=WorldSession.GSI3SK.startswith("SESSION#"),
+    )
+  )
 
   for result in gsi3_results:
     session_id = str(result.PK).removeprefix("SESSION#")

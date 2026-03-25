@@ -159,7 +159,15 @@ async def update_sharing(
     world.visibility = payload.visibility.value
     world.save()
 
-  if payload.visibility == WorldVisibility.PRIVATE and previous_visibility != WorldVisibility.PRIVATE.value:
+  is_now_private = (payload.visibility == WorldVisibility.PRIVATE) or (
+    payload.visibility is None and world.visibility == WorldVisibility.PRIVATE.value
+  )
+  transitioning_to_private = (
+    payload.visibility == WorldVisibility.PRIVATE
+    and previous_visibility != WorldVisibility.PRIVATE.value
+  )
+
+  if is_now_private or transitioning_to_private:
     resolved_shared = [str(s) for s in (world.shared_with or [])]
     revoke_unauthorized_sessions(
       root_world_id=root_world_id,
