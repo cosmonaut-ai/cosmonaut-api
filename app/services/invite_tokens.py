@@ -52,10 +52,12 @@ def create_invite_token(root_world_id: str, created_by: str) -> WorldInviteToken
 @tracer.capture_method
 def get_active_token(root_world_id: str) -> WorldInviteToken | None:
   """Return the active (non-expired) invite token for a world, if any."""
-  results = list(WorldInviteToken.GSI3.query(
-    hash_key=WorldInviteToken.gsi3_pk(root_world_id),
-    range_key_condition=WorldInviteToken.GSI3SK.startswith("INVITE#"),
-  ))
+  results = list(
+    WorldInviteToken.GSI3.query(
+      hash_key=WorldInviteToken.gsi3_pk(root_world_id),
+      range_key_condition=WorldInviteToken.GSI3SK.startswith("INVITE#"),
+    )
+  )
 
   now = datetime.now(UTC)
   for result in results:
@@ -111,9 +113,9 @@ def redeem_invite_token(token: str, user_id: str, root_world_id: str) -> None:
     if world.visibility == WorldVisibility.PRIVATE.value:
       current = [str(s) for s in (world.shared_with or [])]
       if user_id not in current:
-        current.append(user_id)
-        world.shared_with = current
-        world.save()
+        world.update(
+          actions=[WorldMeta.shared_with.set(WorldMeta.shared_with.append([user_id]))],
+        )
         logger.info("Auto-added user %s to shared_with for private world %s", user_id, root_world_id)
   except Exception:
     logger.warning("Failed to auto-add user %s to shared_with for world %s", user_id, root_world_id, exc_info=True)

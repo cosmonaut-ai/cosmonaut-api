@@ -59,7 +59,8 @@ class SessionMembership(BaseCosmonautModel):
   root_node_id: UnicodeAttribute = UnicodeAttribute(null=True)
   root_created_at: UnicodeAttribute = UnicodeAttribute(null=True)
   generation_status: UnicodeAttribute = UnicodeAttribute(null=True)
-  family_friendly: UnicodeAttribute = UnicodeAttribute(null=True)
+  vocab_level: UnicodeAttribute = UnicodeAttribute(null=True)
+  content_filter: UnicodeAttribute = UnicodeAttribute(null=True)
 
   # Live session state
   last_visited_node_id: UnicodeAttribute = UnicodeAttribute(null=True)

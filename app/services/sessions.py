@@ -338,8 +338,10 @@ def update_membership_metadata(
     actions.append(SessionMembership.root_created_at.set(created_at_str))
   if world.root_node_id:
     actions.append(SessionMembership.root_node_id.set(world.root_node_id))
-  if world.family_friendly:
-    actions.append(SessionMembership.family_friendly.set(world.family_friendly))
+  if world.vocab_level:
+    actions.append(SessionMembership.vocab_level.set(world.vocab_level))
+  if world.content_filter:
+    actions.append(SessionMembership.content_filter.set(world.content_filter))
 
   if not actions:
     return
@@ -569,7 +571,8 @@ def _create_membership(
       )
     membership.generation_status = world.generation_status
     membership.root_node_id = world.root_node_id
-    membership.family_friendly = world.family_friendly
+    membership.vocab_level = world.vocab_level
+    membership.content_filter = world.content_filter
 
   membership.save()
   return membership

@@ -6,33 +6,38 @@ alwaysApply: true
 
 # Python Linting & Type Checking
 
-## Required checks after editing Python files
+## ⚠️ MANDATORY: Run these checks after EVERY Python edit
 
-After any substantive Python edits, you **MUST** run the following commands
-**from within the `cosmonaut-api/` directory** (not the workspace root).
-All three must pass before considering work complete.
+**Every time** you modify any `.py` file under `cosmonaut-api/`, you **MUST**
+run **all** of the following checks **before** responding to the user, moving
+to the next task, or considering work complete. No exceptions.
+
+Run these commands **from within `cosmonaut-api/`** (not the workspace root):
 
 ```bash
 cd cosmonaut-api
 
-# 1. Ruff (style + imports) – fast, run first
-uv run ruff check .
+# 1. Format (auto-fix)
+ruff format .
 
-# 2. ty (type checking) – the project's primary type checker
-uv run ty check
+# 2. Lint (style + imports)
+ruff check --fix .
 
-# 3. (Optional) Run ruff format to auto-fix style
-uv run ruff format .
+# 3. Type check — REQUIRED, not optional
+ty check
 ```
 
-### Important: `ty check` must be run from the project directory
+**All three must exit cleanly.** If `ty check` reports errors, fix them
+before proceeding. Do not skip it, defer it, or treat it as optional.
+
+### `ty check` must be run from the project directory
 
 `ty` uses the `[tool.ty]` configuration in `pyproject.toml` (environment,
 src exclusions) and the `.venv` for type stubs. Running it from the workspace
 root or another directory will produce incorrect results or fail to find
 the project configuration. Always `cd cosmonaut-api` first.
 
-### Handling ty errors
+### Handling `ty` errors
 
 - **Unresolved import**: Ensure the import target exists and is not in the
   `[tool.ty.src] exclude` list. Third-party stubs may need installing into
@@ -40,6 +45,10 @@ the project configuration. Always `cd cosmonaut-api` first.
 - **Attribute access on dynamic types**: Use explicit type narrowing or
   `cast()` rather than suppressing. PynamoDB attributes return descriptor
   types at class level — access them through instances where possible.
+- **`invalid-assignment` on PynamoDB descriptors**: Do not assign directly
+  to PynamoDB `ListAttribute` or `MapAttribute` fields. Use the model's
+  `.update(actions=[...])` method with `.set()` / `.append()` expressions
+  instead (see `sessions.py` for examples).
 - **`possibly-unbound-attribute`**: Initialize all variables in every code
   branch, or add an explicit `None` default before conditional assignment.
 

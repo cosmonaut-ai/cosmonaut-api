@@ -124,7 +124,8 @@ def membership_to_world_dto(membership: SessionMembership) -> WorldMetaDTO:
     if membership.image_generation_status
     else None,
     world_length=membership.world_length,
-    family_friendly=membership.family_friendly == "true" if membership.family_friendly else None,
+    vocab_level=membership.vocab_level,
+    content_filter=membership.content_filter,
     created_at=str(membership.root_created_at) if membership.root_created_at else None,
     author_id=str(membership.user_id) if membership.role == "owner" else None,
     visibility=None,
