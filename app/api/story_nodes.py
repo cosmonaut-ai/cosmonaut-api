@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from pynamodb.exceptions import UpdateError
 
 import app.services.story_nodes as node_service
-from app.api.dependencies import node_session_to_list_dto, require_session_read
+from app.api.dependencies import node_session_to_list_dto, require_session_read, require_world_read
 from app.core.errors import AppError, BadRequestError, WrongSessionForNodeError
 from app.core.observability import MetricUnit, logger, metrics
 from app.core.security import User, get_current_user
@@ -43,8 +43,9 @@ async def list_nodes(
   """Return story nodes for a given world with optional pagination."""
   session, _ = require_session_read(world_id, current_user)
   session_id = str(session.id)
+  root_world_id = str(session.root_world_id)
   node_sessions, next_cursor = list_node_sessions(session_id, limit=limit, cursor=cursor)
-  dtos = [node_session_to_list_dto(ns, session_id) for ns in node_sessions]
+  dtos = [node_session_to_list_dto(ns, root_world_id) for ns in node_sessions]
   return PaginatedResponse[StoryNodeDTO](items=dtos, next_cursor=next_cursor)
 
 
@@ -66,7 +67,6 @@ async def get_node(
   if node.source_session_id and str(node.source_session_id) != session_id:
     raise WrongSessionForNodeError(f"Node {node_id} belongs to another session")
   dto = node.to_dto()
-  dto.world_id = session_id
   ns = get_node_session(session_id, node_id)
   dto.choices = merge_choices(
     node.choices,
@@ -90,7 +90,9 @@ async def get_progress(
   current_user: User = Depends(get_current_user),
 ) -> ProgressResponse:
   """Return the last story node the authenticated user visited in this world."""
-  session, _ = require_session_read(world_id, current_user)
+  session, _ = require_world_read(world_id, current_user)
+  if session is None:
+    return ProgressResponse(current_node_id=None)
   progress_map = session.per_member_progress.attribute_values if session.per_member_progress else {}
   node_id_val = progress_map.get(current_user.id)
   return ProgressResponse(current_node_id=str(node_id_val) if node_id_val else None)
@@ -140,7 +142,6 @@ async def choose(
   )
   update_session_progress(session_id, root_world_id, current_user.id, str(new_node.id))
   dto = new_node.to_dto()
-  dto.world_id = session_id
   ns = get_node_session(session_id, str(new_node.id))
   dto.choices = merge_choices(
     new_node.choices,
@@ -232,9 +233,7 @@ async def retry_processing(
   """
   session, _ = require_session_read(world_id, current_user)
   node = node_service.retry_processing(str(session.root_world_id), node_id)
-  dto = node.to_dto()
-  dto.world_id = str(session.id)
-  return dto
+  return node.to_dto()
 
 
 # ---------------------------------------------------------------------------

@@ -88,6 +88,7 @@ class WorldMetaDTO(DTOModel):
   model_config = ConfigDict(extra="ignore", from_attributes=True)
 
   id: str | None = None
+  session_id: str | None = None
   shareable_id: str | None = None
   title: str | None = None
   description: str | None = None
@@ -115,5 +116,6 @@ class WorldMetaDTO(DTOModel):
   world_image_height: str | None = None
   world_image_size: str | None = None
   image_generation_status: ImageGenerationStatus | None = None
+  featured_order: int | None = None
   created_at: str | None = None
   updated_at: str | None = None

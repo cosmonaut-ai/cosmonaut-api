@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pynamodb.attributes import ListAttribute, MapAttribute, NumberAttribute, UnicodeAttribute
+from pynamodb.indexes import AllProjection, GlobalSecondaryIndex
 
 from app.models.dtos.world_meta import (
   CharacterDTO,
@@ -58,11 +59,26 @@ class Location(MapAttribute[str, UnicodeAttribute]):
     )
 
 
+class WorldMetaGSI2Model(GlobalSecondaryIndex["WorldMeta"]):
+  """Sparse GSI for featured world discovery (GSI2PK = 'FEATURED')."""
+
+  GSI2PK: UnicodeAttribute = UnicodeAttribute(hash_key=True)
+  GSI2SK: UnicodeAttribute = UnicodeAttribute(range_key=True)
+
+  class Meta:
+    projection = AllProjection()
+
+
 class WorldMeta(BaseCosmonautModel):
   """Container for world-level metadata."""
 
   GSI1PK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI1PK", null=True)
   GSI1SK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI1SK", null=True)
+
+  GSI2: WorldMetaGSI2Model = WorldMetaGSI2Model()
+  GSI2PK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI2PK", null=True)
+  GSI2SK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI2SK", null=True)
+  featured_order: NumberAttribute = NumberAttribute(null=True)
 
   id: UnicodeAttribute = UnicodeAttribute()
   title: UnicodeAttribute = UnicodeAttribute(null=True)
@@ -138,6 +154,7 @@ class WorldMeta(BaseCosmonautModel):
       story_max_nodes=int(self.story_max_nodes),
       world_length=self.world_length,
       family_friendly=self.family_friendly == "true",
+      featured_order=int(self.featured_order) if self.featured_order is not None else None,
       created_at=self.created_at.isoformat() if self.created_at else None,
       updated_at=self.updated_at.isoformat() if self.updated_at else None,
     )
@@ -181,13 +198,18 @@ class WorldMeta(BaseCosmonautModel):
       image_generation_status=ImageGenerationStatus(dto.image_generation_status).value
       if dto.image_generation_status
       else None,
+      featured_order=dto.featured_order,
+      GSI2PK=cls.gsi2_pk_featured() if dto.featured_order is not None else None,
+      GSI2SK=cls.gsi2_sk_order(dto.featured_order) if dto.featured_order is not None else None,
       updated_at=updated_at_dt,
     )
 
   def _on_save(self) -> None:
-    """Keep GSI1SK in sync with ``updated_at`` for chronological ordering."""
+    """Keep GSI sort keys in sync with their source fields."""
     if self.author_id and self.updated_at:
       self.GSI1SK = WorldMeta.gsi1_sk(self.updated_at.isoformat())
+    if self.featured_order is not None:
+      self.GSI2SK = WorldMeta.gsi2_sk_order(int(self.featured_order))
 
   def can_user_read(self, user_id: str) -> bool:
     if self.visibility in (WorldVisibility.PUBLIC, WorldVisibility.UNLISTED) or self.author_id == user_id:
@@ -214,3 +236,11 @@ class WorldMeta(BaseCosmonautModel):
   @classmethod
   def gsi1_sk(cls, updated_at: str) -> str:
     return f"WORLD#{updated_at}"
+
+  @classmethod
+  def gsi2_pk_featured(cls) -> str:
+    return "FEATURED"
+
+  @classmethod
+  def gsi2_sk_order(cls, order: int) -> str:
+    return f"ORDER#{str(order).zfill(5)}"

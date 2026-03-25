@@ -9,6 +9,7 @@ from app.api.dependencies import (
   membership_to_world_dto,
   require_session_read,
   require_session_write,
+  require_world_read,
 )
 from app.core.observability import logger
 from app.core.security import User, get_current_user
@@ -37,6 +38,15 @@ from app.services.sessions import (
 router = APIRouter(prefix="/worlds", tags=["worlds"])
 
 
+@router.get("/featured", response_model=list[WorldMetaDTO], summary="List featured public worlds")
+async def list_featured_worlds(
+  user: User = Depends(get_current_user),
+) -> list[WorldMetaDTO]:
+  """Return featured worlds with public visibility, ordered by featured_order ascending."""
+  worlds = world_service.list_featured_worlds()
+  return [w.to_dto() for w in worlds]
+
+
 @router.get("/", response_model=PaginatedResponse[WorldMetaDTO], summary="List available worlds")
 async def list_worlds(
   user: User = Depends(get_current_user),
@@ -61,10 +71,10 @@ async def get_world(
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
   """Retrieve a single world by its identifier."""
-  session, world = require_session_read(world_id, user, invite_token=invite)
+  session, world = require_world_read(world_id, user, invite_token=invite)
   dto = world.to_dto()
-  dto.id = str(session.id)
-  dto.shareable_id = str(session.root_world_id)
+  if session:
+    dto.session_id = str(session.id)
   if world.author_id != user.id:
     dto.shared_with = None
   return dto
@@ -82,9 +92,8 @@ async def create_world(payload: WorldCreateRequest, user: User = Depends(get_cur
   world = world_service.create_world(payload, user.id)
   session = get_session_for_user(user.id, str(world.id))
   dto = world.to_dto()
-  dto.shareable_id = str(world.id)
   if session:
-    dto.id = str(session.id)
+    dto.session_id = str(session.id)
   return dto
 
 
@@ -102,8 +111,7 @@ async def update_world(
   session, _ = require_session_write(world_id, user)
   world = world_service.update_world(str(session.root_world_id), payload)
   dto = world.to_dto()
-  dto.id = str(session.id)
-  dto.shareable_id = str(session.root_world_id)
+  dto.session_id = str(session.id)
   return dto
 
 
@@ -163,8 +171,7 @@ async def update_sharing(
     payload.visibility is None and world.visibility == WorldVisibility.PRIVATE.value
   )
   transitioning_to_private = (
-    payload.visibility == WorldVisibility.PRIVATE
-    and previous_visibility != WorldVisibility.PRIVATE.value
+    payload.visibility == WorldVisibility.PRIVATE and previous_visibility != WorldVisibility.PRIVATE.value
   )
 
   if is_now_private or transitioning_to_private:
@@ -176,8 +183,7 @@ async def update_sharing(
     )
 
   dto = world.to_dto()
-  dto.id = str(session.id)
-  dto.shareable_id = root_world_id
+  dto.session_id = str(session.id)
   return dto
 
 

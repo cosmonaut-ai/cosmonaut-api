@@ -12,7 +12,7 @@ from app.models.entities.node_session import NodeSession
 from app.models.entities.session_membership import SessionMembership
 from app.models.entities.world_meta import WorldMeta
 from app.models.entities.world_session import WorldSession
-from app.services.sessions import find_or_create_session, find_session
+from app.services.sessions import find_or_create_session, find_session, get_session_for_user
 from app.services.usage import get_or_create_usage
 from app.services.worlds import get_world_entity
 
@@ -62,6 +62,39 @@ def require_session_read(
   return session, world
 
 
+def require_world_read(
+  world_id: str,
+  user: User,
+  invite_token: str | None = None,
+) -> tuple[WorldSession | None, WorldMeta]:
+  """Resolve world_id and verify access WITHOUT auto-creating a session.
+
+  Same dual-resolution and invite-token logic as ``require_session_read``,
+  but returns ``None`` for the session when the user has no existing session
+  instead of lazily creating one.
+  """
+  session = find_session(world_id)
+  if session is not None:
+    if user.id not in [str(m) for m in session.members]:
+      raise SessionAccessDeniedError(f"User {user.id} is not a member of session {world_id}")
+    world = get_world_entity(str(session.root_world_id))
+    return session, world
+
+  world = get_world_entity(world_id)
+  if not world.can_user_read(user.id):
+    if invite_token:
+      from app.services.invite_tokens import redeem_invite_token, validate_invite_token
+
+      token_entity = validate_invite_token(invite_token, world_id)
+      if token_entity:
+        redeem_invite_token(invite_token, user.id, world_id)
+        existing = get_session_for_user(user.id, world_id)
+        return existing, world
+    raise ForbiddenError(f"Not authorized to access world {world_id}")
+  existing = get_session_for_user(user.id, world_id)
+  return existing, world
+
+
 def require_session_write(world_id: str, user: User) -> tuple[WorldSession, WorldMeta]:
   """Same as session_read but also verifies world authorship."""
   session, world = require_session_read(world_id, user)
@@ -78,8 +111,8 @@ def require_session_write(world_id: str, user: User) -> tuple[WorldSession, Worl
 def membership_to_world_dto(membership: SessionMembership) -> WorldMetaDTO:
   """Construct a WorldMetaDTO from denormalized SessionMembership fields."""
   return WorldMetaDTO(
-    id=str(membership.session_id),
-    shareable_id=str(membership.root_world_id),
+    id=str(membership.root_world_id),
+    session_id=str(membership.session_id),
     title=membership.title,
     description=membership.description,
     genre=membership.genre,
@@ -98,7 +131,7 @@ def membership_to_world_dto(membership: SessionMembership) -> WorldMetaDTO:
   )
 
 
-def node_session_to_list_dto(ns: NodeSession, session_id: str) -> StoryNodeDTO:
+def node_session_to_list_dto(ns: NodeSession, root_world_id: str) -> StoryNodeDTO:
   """Build a graph-compatible StoryNodeDTO from NodeSession.
 
   Provides enough data for the graph page: node identity, title, parent_id
@@ -120,7 +153,7 @@ def node_session_to_list_dto(ns: NodeSession, session_id: str) -> StoryNodeDTO:
     )
   return StoryNodeDTO(
     id=str(ns.node_id),
-    world_id=session_id,
+    world_id=root_world_id,
     title=ns.title,
     parent_id=ns.parent_id,
     choices=choices,
