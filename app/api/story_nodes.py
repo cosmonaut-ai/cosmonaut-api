@@ -43,8 +43,9 @@ async def list_nodes(
   """Return story nodes for a given world with optional pagination."""
   session, _ = require_session_read(world_id, current_user)
   session_id = str(session.id)
+  root_world_id = str(session.root_world_id)
   node_sessions, next_cursor = list_node_sessions(session_id, limit=limit, cursor=cursor)
-  dtos = [node_session_to_list_dto(ns, session_id) for ns in node_sessions]
+  dtos = [node_session_to_list_dto(ns, root_world_id) for ns in node_sessions]
   return PaginatedResponse[StoryNodeDTO](items=dtos, next_cursor=next_cursor)
 
 
@@ -66,7 +67,6 @@ async def get_node(
   if node.source_session_id and str(node.source_session_id) != session_id:
     raise WrongSessionForNodeError(f"Node {node_id} belongs to another session")
   dto = node.to_dto()
-  dto.world_id = session_id
   ns = get_node_session(session_id, node_id)
   dto.choices = merge_choices(
     node.choices,
@@ -140,7 +140,6 @@ async def choose(
   )
   update_session_progress(session_id, root_world_id, current_user.id, str(new_node.id))
   dto = new_node.to_dto()
-  dto.world_id = session_id
   ns = get_node_session(session_id, str(new_node.id))
   dto.choices = merge_choices(
     new_node.choices,
@@ -232,9 +231,7 @@ async def retry_processing(
   """
   session, _ = require_session_read(world_id, current_user)
   node = node_service.retry_processing(str(session.root_world_id), node_id)
-  dto = node.to_dto()
-  dto.world_id = str(session.id)
-  return dto
+  return node.to_dto()
 
 
 # ---------------------------------------------------------------------------

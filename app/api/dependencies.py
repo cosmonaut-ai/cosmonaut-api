@@ -78,8 +78,8 @@ def require_session_write(world_id: str, user: User) -> tuple[WorldSession, Worl
 def membership_to_world_dto(membership: SessionMembership) -> WorldMetaDTO:
   """Construct a WorldMetaDTO from denormalized SessionMembership fields."""
   return WorldMetaDTO(
-    id=str(membership.session_id),
-    shareable_id=str(membership.root_world_id),
+    id=str(membership.root_world_id),
+    session_id=str(membership.session_id),
     title=membership.title,
     description=membership.description,
     genre=membership.genre,
@@ -98,7 +98,7 @@ def membership_to_world_dto(membership: SessionMembership) -> WorldMetaDTO:
   )
 
 
-def node_session_to_list_dto(ns: NodeSession, session_id: str) -> StoryNodeDTO:
+def node_session_to_list_dto(ns: NodeSession, root_world_id: str) -> StoryNodeDTO:
   """Build a graph-compatible StoryNodeDTO from NodeSession.
 
   Provides enough data for the graph page: node identity, title, parent_id
@@ -120,7 +120,7 @@ def node_session_to_list_dto(ns: NodeSession, session_id: str) -> StoryNodeDTO:
     )
   return StoryNodeDTO(
     id=str(ns.node_id),
-    world_id=session_id,
+    world_id=root_world_id,
     title=ns.title,
     parent_id=ns.parent_id,
     choices=choices,

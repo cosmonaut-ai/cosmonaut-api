@@ -88,6 +88,7 @@ class WorldMetaDTO(DTOModel):
   model_config = ConfigDict(extra="ignore", from_attributes=True)
 
   id: str | None = None
+  session_id: str | None = None
   shareable_id: str | None = None
   title: str | None = None
   description: str | None = None
