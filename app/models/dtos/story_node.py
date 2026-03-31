@@ -57,6 +57,13 @@ class StoryNodeContextDTO(DTOModel):
   similar_nodes: list[str]
 
 
+class AudioEntryDTO(DTOModel):
+  """Audio entry for a single voice on a story node."""
+
+  audio_url: str
+  timestamps_url: str | None = None
+
+
 class StoryNodeDTO(DTOModel):
   """Story node response DTO."""
 
@@ -75,4 +82,4 @@ class StoryNodeDTO(DTOModel):
   source_session_id: str | None = None
   processing_status: StoryNodeProcessingStatus = StoryNodeProcessingStatus.PENDING
   generation_status: GenerationStatus = GenerationStatus.INITIALIZED
-  audio: dict[str, str] = Field(default_factory=dict)
+  audio: dict[str, AudioEntryDTO] = Field(default_factory=dict)

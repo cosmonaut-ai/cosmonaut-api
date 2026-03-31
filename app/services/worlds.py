@@ -168,6 +168,7 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
       world_length=create_request.world_length.value,
       vocab_level=create_request.vocab_level.value,
       content_filter=create_request.content_filter.value,
+      max_choices=create_request.max_choices,
     )
 
     meta = WorldMeta.from_dto(meta_dto)

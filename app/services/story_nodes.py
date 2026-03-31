@@ -296,6 +296,7 @@ def _build_next_node_deps(
     is_custom_choice=selected_choice.is_custom,
     vocab_level=world_meta.vocab_level,
     content_filter=world_meta.content_filter,
+    max_choices=int(world_meta.max_choices) if world_meta.max_choices else None,
   )
 
 
@@ -663,6 +664,7 @@ async def generate_text(
         narrator_profile=world_meta.narrator_profile or "",
         vocab_level=world_meta.vocab_level,
         content_filter=world_meta.content_filter,
+        max_choices=int(world_meta.max_choices) if world_meta.max_choices else None,
       )
       stream = _stream_root_node(root_deps)
     else:

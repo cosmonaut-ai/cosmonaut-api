@@ -42,7 +42,7 @@ def _parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Migrate family_friendly to vocab_level + content_filter")
   parser.add_argument("--env", choices=["dev", "prod"], required=True, help="Target environment")
   parser.add_argument("--dry-run", action="store_true", help="Log changes without writing to DynamoDB")
-  parser.add_argument("--region", default="us-east-1", help="AWS region (default: us-east-1)")
+  parser.add_argument("--region", default="us-east-2", help="AWS region (default: us-east-2)")
   return parser.parse_args()
 
 
