@@ -117,6 +117,8 @@ class WorldMeta(BaseCosmonautModel):
   vocab_level: UnicodeAttribute = UnicodeAttribute(default=VocabLevel.ADULT.value)
   # Content filter strictness: "none", "moderate", or "strict".
   content_filter: UnicodeAttribute = UnicodeAttribute(default=ContentFilter.NONE.value)
+  # Optional fixed choice count per node (e.g. 2 for YT Shorts).
+  max_choices: NumberAttribute = NumberAttribute(null=True)
 
   shared_with: ListAttribute[UnicodeAttribute] = ListAttribute(of=UnicodeAttribute, default=list)
 
@@ -159,6 +161,7 @@ class WorldMeta(BaseCosmonautModel):
       world_length=self.world_length,
       vocab_level=self.vocab_level,
       content_filter=self.content_filter,
+      max_choices=int(self.max_choices) if self.max_choices else None,
       featured_order=int(self.featured_order) if self.featured_order is not None else None,
       created_at=self.created_at.isoformat() if self.created_at else None,
       updated_at=self.updated_at.isoformat() if self.updated_at else None,
@@ -195,6 +198,7 @@ class WorldMeta(BaseCosmonautModel):
       world_length=dto.world_length,
       vocab_level=dto.vocab_level or VocabLevel.ADULT.value,
       content_filter=dto.content_filter or ContentFilter.NONE.value,
+      max_choices=dto.max_choices,
       shared_with=dto.shared_with or [],
       world_image_url=dto.world_image_url,
       world_image_alt_text=dto.world_image_alt_text,

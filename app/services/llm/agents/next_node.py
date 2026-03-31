@@ -25,8 +25,6 @@ from app.services.llm.provider import get_storytelling_model
 from app.services.llm.sanitize import sanitize_user_input
 from app.services.llm.utils import format_model_with_descriptions
 
-SYSTEM_PROMPT = build_next_node_system_prompt()
-
 
 class NextNodeDeps(BaseModel):
   """Dependencies for next node generation."""
@@ -46,6 +44,7 @@ class NextNodeDeps(BaseModel):
   is_custom_choice: bool = Field(default=False, description="Whether this is a user-created custom choice.")
   vocab_level: str = Field(default="adult", description="Vocabulary complexity level.")
   content_filter: str = Field(default="none", description="Content filter strictness.")
+  max_choices: int | None = Field(default=None, description="Fixed choice count per node.")
 
 
 _agent: Agent[NextNodeDeps, str] = Agent(
@@ -64,9 +63,10 @@ def _build_system_prompt(ctx: RunContext[NextNodeDeps]) -> str:
   per-node context is passed as the user message via ``build_user_message``.
   """
   deps = ctx.deps
+  system_prompt = build_next_node_system_prompt(max_choices=deps.max_choices)
   directives = build_content_directives(deps.vocab_level, deps.content_filter)
 
-  return f"""{SYSTEM_PROMPT}
+  return f"""{system_prompt}
 {directives}
 
 ## Narrator Profile:

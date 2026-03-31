@@ -18,8 +18,6 @@ from app.services.llm.models import LLMWorldInfo
 from app.services.llm.provider import get_storytelling_model
 from app.services.llm.utils import format_model_with_descriptions
 
-SYSTEM_PROMPT = build_root_node_system_prompt()
-
 
 class RootNodeDeps(BaseModel):
   """Dependencies for root node generation."""
@@ -28,6 +26,7 @@ class RootNodeDeps(BaseModel):
   narrator_profile: str = Field(description="The narrator's profile.")
   vocab_level: str = Field(default="adult", description="Vocabulary complexity level.")
   content_filter: str = Field(default="none", description="Content filter strictness.")
+  max_choices: int | None = Field(default=None, description="Fixed choice count per node.")
 
 
 _agent: Agent[RootNodeDeps, str] = Agent(
@@ -40,8 +39,9 @@ _agent: Agent[RootNodeDeps, str] = Agent(
 @_agent.system_prompt
 def _build_system_prompt(ctx: RunContext[RootNodeDeps]) -> str:
   """Build system prompt for streaming root node generation."""
+  system_prompt = build_root_node_system_prompt(max_choices=ctx.deps.max_choices)
   directives = build_content_directives(ctx.deps.vocab_level, ctx.deps.content_filter)
-  return f"""{SYSTEM_PROMPT}
+  return f"""{system_prompt}
 {directives}
 
 ## Narrator Profile:

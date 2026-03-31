@@ -7,6 +7,7 @@ from functools import cached_property
 from pynamodb.attributes import BooleanAttribute, ListAttribute, MapAttribute, NumberAttribute, UnicodeAttribute
 
 from app.models.dtos.story_node import (
+  AudioEntryDTO,
   ChoiceDTO,
   GenerationStatus,
   StoryNodeContextDTO,
@@ -60,6 +61,13 @@ class StoryNodeContext(MapAttribute[str, UnicodeAttribute]):
       branch_facts=dto.branch_facts,
       similar_nodes=dto.similar_nodes,
     )
+
+
+class AudioEntryMap(MapAttribute):
+  """Nested map for a single voice's audio data within StoryNode.audio."""
+
+  audio_url: UnicodeAttribute = UnicodeAttribute()
+  timestamps_url: UnicodeAttribute = UnicodeAttribute(null=True)
 
 
 class StoryNode(BaseCosmonautModel):
@@ -165,7 +173,13 @@ class StoryNode(BaseCosmonautModel):
       context=self.context.to_dto() if self.context else None,
       processing_status=StoryNodeProcessingStatus(self.processing_status),
       generation_status=GenerationStatus(self.generation_status),
-      audio=dict(self.audio.attribute_values) if self.audio else {},
+      audio={
+        voice_id: AudioEntryDTO(
+          audio_url=entry["audio_url"] if isinstance(entry, dict) else str(entry),
+          timestamps_url=entry.get("timestamps_url") if isinstance(entry, dict) else None,
+        )
+        for voice_id, entry in (self.audio.attribute_values.items() if self.audio else {})
+      },
       source_session_id=self.source_session_id,
       created_at=self.created_at if self.created_at else None,
       updated_at=self.updated_at if self.updated_at else None,
@@ -204,7 +218,12 @@ class StoryNode(BaseCosmonautModel):
       processing_status=StoryNodeProcessingStatus(dto.processing_status).value,
       generation_status=GenerationStatus(dto.generation_status).value,
       context=StoryNodeContext.from_dto(dto.context) if dto.context else None,
-      audio=dto.audio if dto.audio else None,
+      audio={
+        voice_id: {"audio_url": entry.audio_url, "timestamps_url": entry.timestamps_url}
+        for voice_id, entry in dto.audio.items()
+      }
+      if dto.audio
+      else None,
       source_session_id=dto.source_session_id,
     )
 
