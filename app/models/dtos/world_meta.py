@@ -69,6 +69,7 @@ class WorldCreateRequest(BaseModel):
   content_filter: ContentFilter = Field(
     default=ContentFilter.NONE, description="Content filtering strictness for graphic material."
   )
+  max_choices: int | None = Field(default=None, ge=2, le=10, description="Fixed choice count per node.")
 
 
 class WorldUpdateSharingRequest(BaseModel):
@@ -130,6 +131,7 @@ class WorldMetaDTO(DTOModel):
   world_length: str | None = None
   vocab_level: str | None = None
   content_filter: str | None = None
+  max_choices: int | None = None
   world_image_url: str | None = None
   world_image_alt_text: str | None = None
   world_image_width: str | None = None

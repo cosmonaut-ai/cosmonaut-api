@@ -247,6 +247,7 @@ class AudioRequest(BaseModel):
 
 class AudioResponse(BaseModel):
   audio_url: str
+  timestamps_url: str | None = None
 
 
 @router.post(
@@ -294,14 +295,17 @@ async def generate_node_audio(
   if len(text) > MAX_NARRATION_CHARS:
     raise BadRequestError(f"Node text exceeds the maximum of {MAX_NARRATION_CHARS:,} characters for audio narration")
 
-  existing_audio: dict[str, str] = dict(node.audio.attribute_values) if node.audio else {}
+  existing_audio = dict(node.audio.attribute_values) if node.audio else {}
   if voice.id in existing_audio:
-    return AudioResponse(audio_url=existing_audio[voice.id])
+    entry = existing_audio[voice.id]
+    audio_url = entry["audio_url"] if isinstance(entry, dict) else str(entry)
+    timestamps_url = entry.get("timestamps_url") if isinstance(entry, dict) else None
+    return AudioResponse(audio_url=audio_url, timestamps_url=timestamps_url)
 
   check_and_increment(current_user.id, "audio", email=current_user.email)
 
   try:
-    cdn_url = await generate_and_store_audio(
+    audio_cdn_url, timestamps_cdn_url = await generate_and_store_audio(
       world_id=resolved_world_id,
       node_id=node_id,
       text=str(node.text),
@@ -313,18 +317,22 @@ async def generate_node_audio(
     logger.error(f"Audio generation failed for node {node_id}: {e}", exc_info=True)
     raise AppError("Audio generation failed") from e
 
+  audio_entry = {"audio_url": audio_cdn_url, "timestamps_url": timestamps_cdn_url}
   try:
     node.update(
       actions=[
-        StoryNode.audio[voice.id].set(cdn_url),  # type: ignore  # PynamoDB MapAttribute subscript
+        StoryNode.audio[voice.id].set(audio_entry),  # type: ignore  # PynamoDB MapAttribute subscript
       ],
       condition=StoryNode.audio[voice.id].does_not_exist() | StoryNode.audio.does_not_exist(),  # type: ignore  # PynamoDB condition expression
     )
   except UpdateError:
     release_quota(current_user.id, "audio")
     node.refresh()
-    refreshed_audio: dict[str, str] = dict(node.audio.attribute_values) if node.audio else {}
+    refreshed_audio = dict(node.audio.attribute_values) if node.audio else {}
     if voice.id in refreshed_audio:
-      return AudioResponse(audio_url=refreshed_audio[voice.id])
+      entry = refreshed_audio[voice.id]
+      audio_url = entry["audio_url"] if isinstance(entry, dict) else str(entry)
+      timestamps_url = entry.get("timestamps_url") if isinstance(entry, dict) else None
+      return AudioResponse(audio_url=audio_url, timestamps_url=timestamps_url)
 
-  return AudioResponse(audio_url=cdn_url)
+  return AudioResponse(audio_url=audio_cdn_url, timestamps_url=timestamps_cdn_url)

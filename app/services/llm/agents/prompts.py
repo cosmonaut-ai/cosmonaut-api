@@ -49,10 +49,13 @@ STORY_TEXT_RULES = """
 - Avoid excessive jargon. Unfamiliar terms or cliches are distracting.
 """
 
-# v1 — choice generation guidelines
-CHOICE_GUIDELINES = """
+
+# v2 — choice generation guidelines (parameterized by max_choices)
+def build_choice_guidelines(max_choices: int | None = None) -> str:
+  count_instruction = f"Exactly {max_choices}" if max_choices else "2-4"
+  return f"""
 ## Choices
-- 2-4 choices that emerge naturally from the scene (no arbitrary "door A vs door B")
+- {count_instruction} choices that emerge naturally from the scene (no arbitrary "door A vs door B")
 - All choices should feel viable — don't telegraph the "correct" answer
 - Don't shy away from providing "bad" or "dumb" choices. Let the user fail.
 - **Vary choice types**: mix actions, dialogue, observation, and retreat.
@@ -63,6 +66,7 @@ CHOICE_GUIDELINES = """
   - `outcome`: A brief description of what happens if this choice is selected
     (1 short sentence: "user finds the treasure", "user is slain by monster")
 """
+
 
 # v1 — metadata output guidelines
 METADATA_GUIDELINES = """
@@ -181,7 +185,7 @@ Create an engaging first scene that:
 """
 
 
-def build_root_node_system_prompt() -> str:
+def build_root_node_system_prompt(max_choices: int | None = None) -> str:
   """Assemble the full root-node system prompt from shared blocks."""
   return (
     ROOT_NODE_PREAMBLE
@@ -189,7 +193,7 @@ def build_root_node_system_prompt() -> str:
     + STORY_TEXT_RULES
     + PROSE_QUALITY
     + NARRATIVE_CONSTRAINTS
-    + CHOICE_GUIDELINES
+    + build_choice_guidelines(max_choices)
     + METADATA_GUIDELINES
     + OUTPUT_FORMAT
   )
@@ -259,7 +263,7 @@ The user's choice should have the following outcome:
 """
 
 
-def build_next_node_system_prompt() -> str:
+def build_next_node_system_prompt(max_choices: int | None = None) -> str:
   """Assemble the full next-node system prompt from shared blocks."""
   return (
     NEXT_NODE_PREAMBLE
@@ -267,7 +271,7 @@ def build_next_node_system_prompt() -> str:
     + STORY_TEXT_RULES
     + PROSE_QUALITY
     + NARRATIVE_CONSTRAINTS
-    + CHOICE_GUIDELINES
+    + build_choice_guidelines(max_choices)
     + NEXT_NODE_CHOICE_ADDENDUM
     + METADATA_GUIDELINES
     + OUTPUT_FORMAT
