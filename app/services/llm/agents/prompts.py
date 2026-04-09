@@ -50,16 +50,38 @@ STORY_TEXT_RULES = """
 """
 
 
-# v2 — choice generation guidelines (parameterized by max_choices)
+# v3 — choice generation guidelines (parameterized by max_choices)
 def build_choice_guidelines(max_choices: int | None = None) -> str:
-  count_instruction = f"Exactly {max_choices}" if max_choices else "2-4"
+  if max_choices:
+    count_instruction = (
+      f"Up to {max_choices} choices. Default to 2 or 3 — only use more if the"
+      " scene meaningfully presents that many distinct options"
+    )
+  else:
+    count_instruction = (
+      "Default to 2 or 3 choices. Only provide more if the scene meaningfully"
+      " presents many distinct options. Never pad with filler choices — every"
+      " option must feel impactful and lead to a meaningfully different"
+      " outcome. 2 strong choices are always better than several mediocre ones"
+    )
   return f"""
 ## Choices
-- {count_instruction} choices that emerge naturally from the scene (no arbitrary "door A vs door B")
+- {count_instruction}
+- Choices must emerge naturally from the scene (no arbitrary "door A vs door B")
 - All choices should feel viable — don't telegraph the "correct" answer
 - Don't shy away from providing "bad" or "dumb" choices. Let the user fail.
 - **Vary choice types**: mix actions, dialogue, observation, and retreat.
   Do not offer choices that are rephrased versions of each other.
+- Don't cater the outcome to the choice. Just because "search the room" is a 
+  viable choice, doesn't mean you should have the user find anything as a result.
+  Keep consequences realistic and in line with the story.
+- **Choices must be grounded in the narrative**: every choice must reference
+  only characters, locations, items, and concepts that have already appeared
+  in the story text up to this point. Do not use choices to introduce new
+  information, characters, or world elements the player hasn't encountered yet.
+  Choices should feel like natural next actions the player character would
+  consider given what they currently know and see — not what the narrator
+  or world info knows behind the scenes.
 - Each choice must be an object with:
   - `label`: A single action or response ("Go left" or "Ask the guard about
     the treasure" or "Investigate the library")
