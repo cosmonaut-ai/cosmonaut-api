@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Body, Depends, Path, Query, Request, status
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -182,31 +184,66 @@ async def generate_text(
   check_rate_limit(current_user.id, "generate-text")
   metrics.add_metric(name="StoryNodeStreamStarted", unit=MetricUnit.Count, value=1)
 
-  async def event_generator():
+  # Decouple LLM generation from the SSE response so that a client
+  # disconnect does not kill the in-flight generation.  The service
+  # generator runs in its own task and feeds chunks through a queue;
+  # if the client drops, the task still runs to completion and the
+  # node is properly saved as COMPLETED (or FAILED).
+  queue: asyncio.Queue[str | Exception | None] = asyncio.Queue()
+
+  async def _run_generation() -> None:
     try:
-      first_chunk = True
       async for chunk in node_service.generate_text(
         root_world_id, node_id, user_id=current_user.id, session_id=session_id
       ):
-        if await request.is_disconnected():
-          logger.info("Client disconnected during text generation for node %s", node_id)
+        await queue.put(chunk)
+      await queue.put(None)
+    except Exception as exc:
+      await queue.put(exc)
+
+  generation_task = asyncio.create_task(_run_generation())
+
+  async def event_generator():
+    try:
+      first_chunk = True
+      while True:
+        try:
+          item = await asyncio.wait_for(queue.get(), timeout=5.0)
+        except TimeoutError:
+          if await request.is_disconnected():
+            logger.info("Client disconnected during text generation for node %s", node_id)
+            return
+          continue
+
+        if item is None:
+          yield "data: [DONE]\n\n"
           return
+
+        if isinstance(item, Exception):
+          if isinstance(item, QuotaExceededError | NodeServiceError | WorldNotFoundError):
+            yield f"event: error\ndata: {item!s}\n\n"
+          else:
+            logger.error(f"Unexpected error during text generation for node {node_id}: {item}", exc_info=True)
+            yield "event: error\ndata: An unexpected error occurred during generation\n\n"
+          return
+
+        chunk: str = item
         if first_chunk:
           chunk = chunk.lstrip()
           first_chunk = False
         if chunk:
           chunk_escaped = chunk.replace("\n", "\\n")
           yield f"data: {chunk_escaped}\n\n"
-      yield "data: [DONE]\n\n"
-    except QuotaExceededError as e:
-      yield f"event: error\ndata: {e!s}\n\n"
-    except NodeServiceError as e:
-      yield f"event: error\ndata: {e!s}\n\n"
-    except WorldNotFoundError as e:
-      yield f"event: error\ndata: {e!s}\n\n"
-    except Exception as e:
-      logger.error(f"Unexpected error during text generation for node {node_id}: {e}", exc_info=True)
-      yield "event: error\ndata: An unexpected error occurred during generation\n\n"
+    finally:
+      # If the client disconnected, log but let the task finish in the
+      # background.  If the generator ended normally, await the task to
+      # propagate any unexpected errors.
+      if generation_task.done():
+        exc = generation_task.exception()
+        if exc:
+          logger.error("Generation task failed for node %s: %s", node_id, exc, exc_info=exc)
+      else:
+        logger.info("SSE response ended for node %s; generation continues in background", node_id)
 
   return StreamingResponse(
     event_generator(),
