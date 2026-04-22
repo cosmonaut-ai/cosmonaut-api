@@ -12,6 +12,7 @@ from app.api.dependencies import (
   require_world_read,
 )
 from app.core.observability import logger
+from app.core.posthog import posthog_client
 from app.core.security import User, get_current_user
 from app.models.dtos.base import PaginatedResponse
 from app.models.dtos.world_meta import (
@@ -77,6 +78,8 @@ async def get_world(
     dto.session_id = str(session.id)
   if world.author_id != user.id:
     dto.shared_with = None
+  if invite:
+    posthog_client.capture("world_joined", distinct_id=user.id, properties={"visibility": world.visibility})
   return dto
 
 
@@ -94,6 +97,7 @@ async def create_world(payload: WorldCreateRequest, user: User = Depends(get_cur
   dto = world.to_dto()
   if session:
     dto.session_id = str(session.id)
+  posthog_client.capture("world_created", distinct_id=user.id, properties={"visibility": world.visibility})
   return dto
 
 
@@ -140,6 +144,8 @@ async def delete_world(
   if is_orphaned:
     world_service.hard_delete_orphaned_world(root_world_id)
 
+  posthog_client.capture("world_deleted", distinct_id=user.id, properties={"is_orphaned": is_orphaned})
+
 
 @router.post(
   "/{world_id}/sharing",
@@ -184,6 +190,14 @@ async def update_sharing(
 
   dto = world.to_dto()
   dto.session_id = str(session.id)
+  posthog_client.capture(
+    "world_shared",
+    distinct_id=user.id,
+    properties={
+      "visibility": world.visibility,
+      "shared_with_count": len(world.shared_with or []),
+    },
+  )
   return dto
 
 
