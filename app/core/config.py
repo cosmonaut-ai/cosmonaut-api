@@ -91,6 +91,12 @@ class Settings(BaseSettings):
   # Admin
   ADMIN_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the admin portal API key.")
 
+  # PostHog
+  POSTHOG_PROJECT_TOKEN_PARAM: str = Field(
+    default="/dev/cosmonaut/posthog_project_token", description="PostHog project token for analytics."
+  )
+  POSTHOG_HOST: str = Field(default="https://us.i.posthog.com", description="PostHog ingestion host.")
+
   # Dev access control
   DEV_ALLOWED_EMAILS: list[str] = Field(
     default=["imatson9119@gmail.com", "ian@cosmonaut-ai.com"],

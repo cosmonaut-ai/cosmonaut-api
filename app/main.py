@@ -24,6 +24,7 @@ from app.api.worlds import router as worlds_router
 from app.core.config import settings
 from app.core.errors import AppError, RateLimitError
 from app.core.observability import logger, metrics, tracer
+from app.core.posthog import posthog_client
 from app.core.security import get_current_user
 from app.core.sentry import init_sentry
 
@@ -94,7 +95,8 @@ async def inject_logger_context(request: Request, call_next: Callable[[Request],
   logger.append_keys(request_id=request_id, request_path=request.url.path)
   sentry_sdk.set_tag("request_id", request_id)
   try:
-    response: Response = await call_next(request)
+    with posthog_client.new_context():
+      response: Response = await call_next(request)
   finally:
     logger.remove_keys(["request_id", "request_path", "user_id"])
     metrics.flush_metrics()

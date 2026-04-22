@@ -11,6 +11,7 @@ from app.core.cloudfront import create_signed_cookies
 from app.core.config import get_tier_limits, settings
 from app.core.errors import AppError, BadRequestError, ExternalServiceError, RateLimitError
 from app.core.observability import MetricUnit, logger, metrics
+from app.core.posthog import posthog_client
 from app.core.security import User, get_current_user
 from app.models.entities.rate_limit import RateLimitRecord
 from app.services.account import delete_account
@@ -116,6 +117,7 @@ async def create_session(response: Response, current_user: User = Depends(get_cu
     )
 
   metrics.add_metric(name="AuthSessionCreated", unit=MetricUnit.Count, value=1)
+  posthog_client.capture("user_session_created", distinct_id=current_user.id, properties={"tier": current_user.tier})
   return {"status": "session_created"}
 
 
@@ -191,6 +193,7 @@ async def create_checkout(
     logger.error(f"Stripe checkout session creation failed: {e}")
     raise ExternalServiceError("Failed to create checkout session") from e
 
+  posthog_client.capture("checkout_initiated", distinct_id=current_user.id, properties={"tier": payload.tier})
   return CheckoutResponse(checkout_url=checkout_url)
 
 
@@ -206,6 +209,7 @@ async def delete_user_account(current_user: User = Depends(get_current_user)) ->
   """
   try:
     await delete_account(user_id=current_user.id, cognito_username=current_user.username, email=current_user.email)
+    posthog_client.capture("account_deleted", distinct_id=current_user.id)
     return {"status": "deleted"}
   except ClientError:
     logger.exception("Account deletion failed for user %s", current_user.id)
@@ -275,6 +279,11 @@ async def submit_feedback(
     message=payload.message,
   )
 
+  posthog_client.capture(
+    "feedback_submitted",
+    distinct_id=current_user.id,
+    properties={"category": payload.category, "message_length": len(payload.message), "tier": tier},
+  )
   return {"status": "submitted"}
 
 
@@ -300,6 +309,7 @@ async def update_newsletter(
     else:
       await unsubscribe(email)
 
+  posthog_client.capture("newsletter_preference_updated", distinct_id=current_user.id, properties={"opted_in": payload.opted_in})
   return {"status": "subscribed" if payload.opted_in else "unsubscribed"}
 
 
@@ -338,6 +348,7 @@ async def set_username(
   Usernames are permanent and cannot be changed once set.
   """
   stored = reserve_username(current_user.id, payload.username)
+  posthog_client.capture("username_set", distinct_id=current_user.id)
   return UsernameSetResponse(username=stored)
 
 
