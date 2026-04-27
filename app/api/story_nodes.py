@@ -13,7 +13,7 @@ import app.services.story_nodes as node_service
 from app.api.dependencies import node_session_to_list_dto, require_session_read, require_world_read
 from app.core.errors import AppError, BadRequestError, WrongSessionForNodeError
 from app.core.observability import MetricUnit, logger, metrics
-from app.core.posthog import posthog_client
+from app.core.posthog import capture as ph_capture
 from app.core.security import User, get_current_user
 from app.models.dtos.base import PaginatedResponse
 from app.models.dtos.story_node import ChooseRequestDTO, GenerationStatus, StoryNodeDTO
@@ -151,10 +151,14 @@ async def choose(
     ns.base_choice_states if ns else [],
     ns.custom_choices if ns else [],
   )
-  posthog_client.capture(
+  ph_capture(
     "story_choice_made",
     distinct_id=current_user.id,
-    properties={"is_custom_choice": request.custom_choice is not None},
+    properties={
+      "is_custom_choice": request.custom_choice is not None,
+      "world_id": root_world_id,
+      "source": "server",
+    },
   )
   return dto
 
@@ -203,13 +207,22 @@ async def generate_text(
         root_world_id, node_id, user_id=current_user.id, session_id=session_id
       ):
         await queue.put(chunk)
-      posthog_client.capture("story_text_generated", distinct_id=current_user.id)
+      ph_capture(
+        "story_text_generated",
+        distinct_id=current_user.id,
+        properties={"world_id": root_world_id, "node_id": node_id, "source": "server"},
+      )
       await queue.put(None)
     except Exception as exc:
-      posthog_client.capture(
+      ph_capture(
         "story_text_generation_failed",
         distinct_id=current_user.id,
-        properties={"error_type": type(exc).__name__},
+        properties={
+          "error_type": type(exc).__name__,
+          "world_id": root_world_id,
+          "node_id": node_id,
+          "source": "server",
+        },
       )
       await queue.put(exc)
 
@@ -384,5 +397,15 @@ async def generate_node_audio(
       timestamps_url = entry.get("timestamps_url") if isinstance(entry, dict) else None
       return AudioResponse(audio_url=audio_url, timestamps_url=timestamps_url)
 
-  posthog_client.capture("audio_narration_generated", distinct_id=current_user.id, properties={"voice_id": voice.id})
+  ph_capture(
+    "audio_narration_generated",
+    distinct_id=current_user.id,
+    properties={
+      "voice_id": voice.id,
+      "world_id": resolved_world_id,
+      "node_id": node_id,
+      "text_length": len(text),
+      "source": "server",
+    },
+  )
   return AudioResponse(audio_url=audio_cdn_url, timestamps_url=timestamps_cdn_url)

@@ -9,6 +9,9 @@ from pydantic import TypeAdapter
 from pynamodb.exceptions import UpdateError
 
 from app.core.observability import logger, metrics, tracer
+from app.core.posthog import capture as ph_capture
+from app.core.posthog import flush as ph_flush
+from app.core.posthog import init_posthog
 from app.core.sentry import init_sentry
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
 from app.models.dtos.story_node import StoryNodeProcessingStatus
@@ -20,6 +23,7 @@ from app.services.sessions import create_node_session, get_session_for_user, upd
 from app.services.sqs import SQSSendError, send_world_image_generation_message
 
 init_sentry()
+init_posthog()
 
 
 def _sync_session_membership(world: WorldMeta) -> None:
@@ -69,10 +73,8 @@ def handler(event: SQSEvent, context: Any) -> HandlerReturn:
 
   failed_message_ids: list[str] = loop.run_until_complete(_process_batch(event.records))
 
-  # Return the AWS-standard partial batch failure response so that only failed
-  # messages are retried.  The previous format ("failed_message_ids") was not
-  # recognized by the Lambda/SQS integration, causing failed messages to be
-  # silently dropped instead of retried.
+  ph_flush()
+
   return {
     "batchItemFailures": [{"itemIdentifier": mid} for mid in failed_message_ids],
   }
@@ -204,6 +206,11 @@ async def _generate_world(payload: GenerateWorldPayload):
     root_node = worlds.initialize_root_node(world)
 
     world.generation_status = GenerationStatus.COMPLETED
+    ph_capture(
+      "world_generation_completed",
+      distinct_id=str(world.author_id),
+      properties={"world_id": world_id, "source": "server"},
+    )
     logger.info(f"World {world_id} generation complete.")
 
     # 4. Update session membership with populated world metadata + create root NodeSession
@@ -231,6 +238,11 @@ async def _generate_world(payload: GenerateWorldPayload):
   except Exception as e:
     logger.exception(f"Error generating world {world_id}: {e}")
     world.generation_status = GenerationStatus.FAILED
+    ph_capture(
+      "world_generation_failed",
+      distinct_id=str(world.author_id),
+      properties={"world_id": world_id, "error_type": type(e).__name__, "source": "server"},
+    )
     _sync_session_membership(world)
     raise
   finally:

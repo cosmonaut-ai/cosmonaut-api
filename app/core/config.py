@@ -91,10 +91,8 @@ class Settings(BaseSettings):
   # Admin
   ADMIN_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the admin portal API key.")
 
-  # PostHog
-  POSTHOG_PROJECT_TOKEN_PARAM: str = Field(
-    default="/dev/cosmonaut/posthog_project_token", description="PostHog project token for analytics."
-  )
+  # PostHog (write-only project token, not a secret)
+  POSTHOG_PROJECT_TOKEN: str = Field(default="", description="PostHog project token (write-only, not sensitive).")
   POSTHOG_HOST: str = Field(default="https://us.i.posthog.com", description="PostHog ingestion host.")
 
   # Dev access control

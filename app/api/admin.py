@@ -101,7 +101,12 @@ async def admin_ban_user(
 ) -> dict[str, str]:
   """Disable the user in Cognito and invalidate all active sessions."""
   logger.info("Admin: banning user %s", user_id)
-  cognito_service.ban_user(user_id)
+  try:
+    cognito_service.ban_user(user_id)
+  except ValueError as e:
+    raise HTTPException(status_code=404, detail=str(e)) from None
+  except RuntimeError as e:
+    raise HTTPException(status_code=502, detail=str(e)) from None
   return {"status": "banned"}
 
 
@@ -115,5 +120,10 @@ async def admin_unban_user(
 ) -> dict[str, str]:
   """Re-enable a previously disabled Cognito user."""
   logger.info("Admin: unbanning user %s", user_id)
-  cognito_service.unban_user(user_id)
+  try:
+    cognito_service.unban_user(user_id)
+  except ValueError as e:
+    raise HTTPException(status_code=404, detail=str(e)) from None
+  except RuntimeError as e:
+    raise HTTPException(status_code=502, detail=str(e)) from None
   return {"status": "unbanned"}

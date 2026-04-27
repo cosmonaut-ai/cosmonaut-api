@@ -156,10 +156,14 @@ def ban_user(user_id: str) -> None:
   if not username:
     raise ValueError(f"Could not resolve Cognito username for sub {user_id}")
 
-  client.admin_disable_user(
-    UserPoolId=settings.COGNITO_USER_POOL_ID,
-    Username=username,
-  )
+  try:
+    client.admin_disable_user(
+      UserPoolId=settings.COGNITO_USER_POOL_ID,
+      Username=username,
+    )
+  except Exception:
+    logger.exception("Failed to disable Cognito user %s (sub %s)", username, user_id)
+    raise RuntimeError(f"Failed to disable Cognito user {user_id}") from None
   logger.info("Disabled Cognito user %s (sub %s)", username, user_id)
 
   try:
@@ -184,8 +188,12 @@ def unban_user(user_id: str) -> None:
   if not username:
     raise ValueError(f"Could not resolve Cognito username for sub {user_id}")
 
-  client.admin_enable_user(
-    UserPoolId=settings.COGNITO_USER_POOL_ID,
-    Username=username,
-  )
+  try:
+    client.admin_enable_user(
+      UserPoolId=settings.COGNITO_USER_POOL_ID,
+      Username=username,
+    )
+  except Exception:
+    logger.exception("Failed to re-enable Cognito user %s (sub %s)", username, user_id)
+    raise RuntimeError(f"Failed to re-enable Cognito user {user_id}") from None
   logger.info("Re-enabled Cognito user %s (sub %s)", username, user_id)
