@@ -12,6 +12,7 @@ from pynamodb.exceptions import UpdateError
 import app.services.story_nodes as node_service
 from app.api.dependencies import node_session_to_list_dto, require_session_read, require_world_read
 from app.core.errors import AppError, BadRequestError, WrongSessionForNodeError
+from app.core.llm_telemetry import flush as llm_flush
 from app.core.observability import MetricUnit, logger, metrics
 from app.core.posthog import capture as ph_capture
 from app.core.security import User, get_current_user
@@ -225,6 +226,11 @@ async def generate_text(
         },
       )
       await queue.put(exc)
+    finally:
+      # Flush OTel LLM spans here rather than in the request middleware: the
+      # middleware's finally block fires when StreamingResponse is returned,
+      # before this generation task runs and before the Claude span exists.
+      llm_flush()
 
   generation_task = asyncio.create_task(_run_generation())
 
