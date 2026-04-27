@@ -98,16 +98,16 @@ async def admin_delete_account(
 )
 async def admin_ban_user(
   user_id: str = Path(..., description="Cognito sub (UUID) of the user to ban"),
-) -> dict[str, str]:
+) -> dict[str, str | bool]:
   """Disable the user in Cognito and invalidate all active sessions."""
   logger.info("Admin: banning user %s", user_id)
   try:
-    cognito_service.ban_user(user_id)
+    sessions_revoked = cognito_service.ban_user(user_id)
   except ValueError as e:
     raise HTTPException(status_code=404, detail=str(e)) from None
   except RuntimeError as e:
     raise HTTPException(status_code=502, detail=str(e)) from None
-  return {"status": "banned"}
+  return {"status": "banned", "sessions_revoked": sessions_revoked}
 
 
 @router.post(
