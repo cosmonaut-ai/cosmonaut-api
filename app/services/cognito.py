@@ -141,15 +141,18 @@ def update_user_username(user_id: str, app_username: str) -> None:
 
 
 @tracer.capture_method
-def ban_user(user_id: str) -> None:
+def ban_user(user_id: str) -> bool:
   """Disable a Cognito user and invalidate all active sessions.
 
   Prevents the user from authenticating and immediately revokes any
   existing tokens via a global sign-out.
+
+  Returns True if both the disable and the global sign-out succeeded,
+  False if the sign-out step failed (the account is still disabled).
   """
   if not settings.COGNITO_USER_POOL_ID:
     logger.warning("COGNITO_USER_POOL_ID not set; skipping ban")
-    return
+    return False
 
   client = _get_cognito_client()
   username = _resolve_cognito_username(client, user_id)
@@ -172,8 +175,10 @@ def ban_user(user_id: str) -> None:
       Username=username,
     )
     logger.info("Global sign-out for user %s", username)
+    return True
   except Exception:
-    logger.exception("Global sign-out failed for user %s (non-fatal)", username)
+    logger.exception("Global sign-out failed for user %s; existing tokens may remain valid", username)
+    return False
 
 
 @tracer.capture_method
