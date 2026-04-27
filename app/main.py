@@ -23,6 +23,7 @@ from app.api.webhooks import router as webhooks_router
 from app.api.worlds import router as worlds_router
 from app.core.config import settings
 from app.core.errors import AppError, RateLimitError
+from app.core.llm_telemetry import init_llm_telemetry
 from app.core.observability import logger, metrics, tracer
 from app.core.posthog import capture_exception as ph_capture_exception
 from app.core.posthog import flush as ph_flush
@@ -33,6 +34,7 @@ from app.core.sentry import init_sentry
 
 init_sentry()
 init_posthog()
+init_llm_telemetry()
 
 app = FastAPI(title="Cosmonaut AI API", version="0.1.0")
 
