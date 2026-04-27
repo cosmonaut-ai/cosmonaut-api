@@ -24,11 +24,15 @@ from app.api.worlds import router as worlds_router
 from app.core.config import settings
 from app.core.errors import AppError, RateLimitError
 from app.core.observability import logger, metrics, tracer
-from app.core.posthog import posthog_client
+from app.core.posthog import capture_exception as ph_capture_exception
+from app.core.posthog import flush as ph_flush
+from app.core.posthog import identify as ph_identify
+from app.core.posthog import init_posthog
 from app.core.security import get_current_user
 from app.core.sentry import init_sentry
 
 init_sentry()
+init_posthog()
 
 app = FastAPI(title="Cosmonaut AI API", version="0.1.0")
 
@@ -38,6 +42,7 @@ async def app_error_handler(request: Request, exc: AppError) -> JSONResponse:
   """Map domain exceptions to structured JSON error responses."""
   if exc.status_code >= 500:
     sentry_sdk.capture_exception(exc)
+    ph_capture_exception(exc)
   metrics.add_metric(name="AppError", unit=MetricUnit.Count, value=1)
   metrics.add_dimension(name="status_code", value=str(exc.status_code))
   headers: dict[str, str] = {}
@@ -68,6 +73,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
   """Catch-all for unhandled exceptions that bypass AppError/validation handlers."""
   sentry_sdk.capture_exception(exc)
+  ph_capture_exception(exc)
   logger.exception("Unhandled exception on %s %s", request.method, request.url.path)
   metrics.add_metric(name="UnhandledError", unit=MetricUnit.Count, value=1)
   return JSONResponse(
@@ -82,7 +88,7 @@ app.add_middleware(
   allow_origins=settings.CORS_ORIGINS,
   allow_credentials=True,
   allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  allow_headers=["Authorization", "Content-Type"],
+  allow_headers=["Authorization", "Content-Type", "X-PostHog-Distinct-Id", "X-PostHog-Session-Id"],
   expose_headers=["X-New-Node-Id"],
 )
 
@@ -94,10 +100,15 @@ async def inject_logger_context(request: Request, call_next: Callable[[Request],
   request_id = request.headers.get("x-request-id") or str(uuid4())
   logger.append_keys(request_id=request_id, request_path=request.url.path)
   sentry_sdk.set_tag("request_id", request_id)
+
+  posthog_distinct_id = request.headers.get("x-posthog-distinct-id")
+  if posthog_distinct_id:
+    ph_identify(posthog_distinct_id)
+
   try:
-    with posthog_client.new_context():
-      response: Response = await call_next(request)
+    response: Response = await call_next(request)
   finally:
+    ph_flush()
     logger.remove_keys(["request_id", "request_path", "user_id"])
     metrics.flush_metrics()
   return response

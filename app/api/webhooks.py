@@ -17,7 +17,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 
 from app.core.config import PRICE_TO_TIER, settings
 from app.core.observability import MetricUnit, logger, metrics
-from app.core.posthog import posthog_client
+from app.core.posthog import capture as ph_capture
 from app.models.entities.rate_limit import RateLimitRecord
 from app.services.cognito import get_user_contact_info, update_user_tier
 from app.services.email import (
@@ -180,7 +180,7 @@ def _handle_checkout_completed(event: stripe.Event) -> None:
   if email:
     send_subscription_welcome(email, name, tier)
 
-  posthog_client.capture("subscription_started", distinct_id=user_id, properties={"tier": tier})
+  ph_capture("subscription_started", distinct_id=user_id, properties={"tier": tier, "source": "server"})
   logger.info(f"Checkout completed: user={user_id} tier={tier}")
 
 
@@ -209,7 +209,7 @@ def _handle_invoice_paid(event: stripe.Event) -> None:
   if email:
     send_subscription_renewed(email, name, tier)
 
-  posthog_client.capture("subscription_renewed", distinct_id=user_id, properties={"tier": tier})
+  ph_capture("subscription_renewed", distinct_id=user_id, properties={"tier": tier, "source": "server"})
   logger.info(f"Invoice paid (renewal): user={user_id} tier={tier}")
 
 
@@ -259,7 +259,11 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
         send_subscription_cancellation_scheduled(email, name, cancel_dt)
 
     if not already_pending:
-      posthog_client.capture("subscription_cancellation_scheduled", distinct_id=user_id, properties={"cancel_at": cancel_dt.isoformat()})
+      ph_capture(
+        "subscription_cancellation_scheduled",
+        distinct_id=user_id,
+        properties={"cancel_at": cancel_dt.isoformat(), "source": "server"},
+      )
     logger.info(
       "Subscription cancellation scheduled: user=%s cancel_at=%s email_sent=%s",
       user_id,
@@ -314,7 +318,9 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
       update_tier(user_id, new_tier, stripe_customer_id=customer_id)
       update_user_tier(user_id, new_tier)
 
-      posthog_client.capture("subscription_plan_changed", distinct_id=user_id, properties={"new_tier": new_tier})
+      ph_capture(
+        "subscription_plan_changed", distinct_id=user_id, properties={"new_tier": new_tier, "source": "server"}
+      )
       logger.info(f"Subscription plan changed: user={user_id} new_tier={new_tier}")
     return
 
@@ -369,7 +375,11 @@ def _handle_invoice_payment_failed(event: stripe.Event) -> None:
   if email:
     send_payment_failed(email, name)
 
-  posthog_client.capture("subscription_payment_failed", distinct_id=user_id)
+  ph_capture(
+    "subscription_payment_failed",
+    distinct_id=user_id,
+    properties={"subscription_id": subscription_id, "source": "server"},
+  )
   logger.warning(f"Invoice payment failed: user={user_id} sub={subscription_id} -- downgraded to FREE")
 
 
@@ -388,7 +398,7 @@ def _handle_subscription_deleted(event: stripe.Event) -> None:
   if email:
     send_subscription_ended(email, name)
 
-  posthog_client.capture("subscription_cancelled", distinct_id=user_id)
+  ph_capture("subscription_cancelled", distinct_id=user_id, properties={"source": "server"})
   logger.info(f"Subscription deleted → FREE: user={user_id}")
 
 
