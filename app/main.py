@@ -23,7 +23,8 @@ from app.api.webhooks import router as webhooks_router
 from app.api.worlds import router as worlds_router
 from app.core.config import settings
 from app.core.errors import AppError, RateLimitError
-from app.core.llm_telemetry import init_llm_telemetry
+from app.core.llm_telemetry import flush as llm_flush
+from app.core.llm_telemetry import init_llm_telemetry, set_request_distinct_id
 from app.core.observability import logger, metrics, tracer
 from app.core.posthog import capture_exception as ph_capture_exception
 from app.core.posthog import flush as ph_flush
@@ -106,11 +107,13 @@ async def inject_logger_context(request: Request, call_next: Callable[[Request],
   posthog_distinct_id = request.headers.get("x-posthog-distinct-id")
   if posthog_distinct_id:
     ph_identify(posthog_distinct_id)
+    set_request_distinct_id(posthog_distinct_id)
 
   try:
     response: Response = await call_next(request)
   finally:
     ph_flush()
+    llm_flush()
     logger.remove_keys(["request_id", "request_path", "user_id"])
     metrics.flush_metrics()
   return response

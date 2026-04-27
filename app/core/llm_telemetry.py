@@ -6,6 +6,12 @@ PostHog with model name, latency, token counts, and estimated cost.
 
 Call init_llm_telemetry() once at application startup before any LLM calls
 are made. No-ops when ENV is local or POSTHOG_PROJECT_TOKEN is empty.
+
+In Lambda, call flush() at the end of each request so queued spans are
+exported before the process can be frozen — same reason ph_flush() exists.
+
+Call set_request_distinct_id(user_id) once per request (e.g. in middleware)
+to associate all LLM spans in that request with a PostHog user.
 """
 
 from __future__ import annotations
@@ -16,13 +22,13 @@ from app.core.config import settings
 
 log = logging.getLogger(__name__)
 
-_initialized = False
+_provider = None
 
 
 def init_llm_telemetry() -> None:
-  global _initialized
+  global _provider
 
-  if _initialized:
+  if _provider is not None:
     return
 
   if settings.ENV == "local" or not settings.POSTHOG_PROJECT_TOKEN:
@@ -36,17 +42,42 @@ def init_llm_telemetry() -> None:
   from opentelemetry.sdk.trace import TracerProvider
   from posthog.ai.otel import PostHogSpanProcessor
 
-  provider = TracerProvider(resource=Resource.create({"service.name": settings.POWERTOOLS_SERVICE_NAME}))
-  provider.add_span_processor(
+  _provider = TracerProvider(resource=Resource.create({"service.name": settings.POWERTOOLS_SERVICE_NAME}))
+  _provider.add_span_processor(
     PostHogSpanProcessor(
       api_key=settings.POSTHOG_PROJECT_TOKEN,
       host=settings.POSTHOG_HOST,
     )
   )
-  trace.set_tracer_provider(provider)
+  trace.set_tracer_provider(_provider)
 
   GoogleGenerativeAiInstrumentor().instrument()
   AnthropicInstrumentor().instrument()
 
-  _initialized = True
   log.info("LLM telemetry initialized (host=%s)", settings.POSTHOG_HOST)
+
+
+def set_request_distinct_id(distinct_id: str) -> None:
+  """Attach a PostHog distinct_id to the active OTel span for the current request.
+
+  Call this once per request after the user is known so that LLM spans are
+  attributed to the correct user in PostHog LLM analytics.
+  """
+  if _provider is None:
+    return
+  from opentelemetry import trace
+
+  span = trace.get_current_span()
+  if span.is_recording():
+    span.set_attribute("posthog.distinct_id", distinct_id)
+
+
+def flush() -> None:
+  """Force-flush queued OTel spans to PostHog.
+
+  Must be called at the end of each request in Lambda environments where
+  the process may be frozen before the BatchSpanProcessor's background
+  thread gets a chance to export — same reason ph_flush() exists.
+  """
+  if _provider is not None:
+    _provider.force_flush(timeout_millis=2000)
