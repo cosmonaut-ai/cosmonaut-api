@@ -8,6 +8,8 @@ from aws_lambda_powertools.utilities.data_classes import SQSEvent, event_source
 from pydantic import TypeAdapter
 from pynamodb.exceptions import UpdateError
 
+from app.core.llm_telemetry import flush as llm_flush
+from app.core.llm_telemetry import init_llm_telemetry
 from app.core.observability import logger, metrics, tracer
 from app.core.posthog import capture as ph_capture
 from app.core.posthog import flush as ph_flush
@@ -24,6 +26,7 @@ from app.services.sqs import SQSSendError, send_world_image_generation_message
 
 init_sentry()
 init_posthog()
+init_llm_telemetry()
 
 
 def _sync_session_membership(world: WorldMeta) -> None:
@@ -74,6 +77,7 @@ def handler(event: SQSEvent, context: Any) -> HandlerReturn:
   failed_message_ids: list[str] = loop.run_until_complete(_process_batch(event.records))
 
   ph_flush()
+  llm_flush()
 
   return {
     "batchItemFailures": [{"itemIdentifier": mid} for mid in failed_message_ids],
