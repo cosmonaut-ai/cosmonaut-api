@@ -29,6 +29,7 @@ def init_llm_telemetry() -> None:
     log.info("LLM telemetry disabled (env=%s)", settings.ENV)
     return
 
+  from opentelemetry import trace
   from opentelemetry.instrumentation.anthropic import AnthropicInstrumentor
   from opentelemetry.instrumentation.google_generativeai import GoogleGenerativeAiInstrumentor
   from opentelemetry.sdk.resources import Resource
@@ -42,9 +43,10 @@ def init_llm_telemetry() -> None:
       host=settings.POSTHOG_HOST,
     )
   )
+  trace.set_tracer_provider(provider)
 
-  GoogleGenerativeAiInstrumentor().instrument(tracer_provider=provider)
-  AnthropicInstrumentor().instrument(tracer_provider=provider)
+  GoogleGenerativeAiInstrumentor().instrument()
+  AnthropicInstrumentor().instrument()
 
   _initialized = True
   log.info("LLM telemetry initialized (host=%s)", settings.POSTHOG_HOST)
