@@ -16,13 +16,20 @@ to associate all LLM spans in that request with a PostHog user.
 
 from __future__ import annotations
 
+import contextvars
 import logging
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
+
+if TYPE_CHECKING:
+  from opentelemetry.sdk.trace import ReadableSpan, Span
 
 log = logging.getLogger(__name__)
 
 _provider = None
+
+_distinct_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("posthog_distinct_id", default=None)
 
 
 def init_llm_telemetry() -> None:
@@ -39,10 +46,35 @@ def init_llm_telemetry() -> None:
   from opentelemetry.instrumentation.anthropic import AnthropicInstrumentor
   from opentelemetry.instrumentation.google_generativeai import GoogleGenerativeAiInstrumentor
   from opentelemetry.sdk.resources import Resource
-  from opentelemetry.sdk.trace import TracerProvider
+  from opentelemetry.sdk.trace import SpanProcessor, TracerProvider
   from posthog.ai.otel import PostHogSpanProcessor
 
+  class _DistinctIdInjector(SpanProcessor):
+    """Injects posthog.distinct_id from the request-scoped context variable
+    into every span at creation time.
+
+    PostHogSpanProcessor only processes gen_ai.* spans and reads
+    posthog.distinct_id from the span's own attributes — it does not
+    traverse parent spans. Without this injector, LLM spans created by
+    the Google/Anthropic instrumentors would lack user attribution.
+    """
+
+    def on_start(self, span: Span, parent_context: object = None) -> None:
+      distinct_id = _distinct_id_var.get()
+      if distinct_id and span.is_recording():
+        span.set_attribute("posthog.distinct_id", distinct_id)
+
+    def on_end(self, span: ReadableSpan) -> None:
+      pass
+
+    def shutdown(self) -> None:
+      pass
+
+    def force_flush(self, timeout_millis: int = 30000) -> bool:
+      return True
+
   _provider = TracerProvider(resource=Resource.create({"service.name": settings.POWERTOOLS_SERVICE_NAME}))
+  _provider.add_span_processor(_DistinctIdInjector())
   _provider.add_span_processor(
     PostHogSpanProcessor(
       api_key=settings.POSTHOG_PROJECT_TOKEN,
@@ -58,18 +90,19 @@ def init_llm_telemetry() -> None:
 
 
 def set_request_distinct_id(distinct_id: str) -> None:
-  """Attach a PostHog distinct_id to the active OTel span for the current request.
+  """Store the PostHog distinct_id in request-scoped context.
 
-  Call this once per request after the user is known so that LLM spans are
-  attributed to the correct user in PostHog LLM analytics.
+  Call this once per request after the user is known so that all LLM spans
+  created during the request carry the posthog.distinct_id attribute.
+  The _DistinctIdInjector SpanProcessor reads this context variable in
+  on_start and stamps it onto every new span.
   """
-  if _provider is None:
-    return
-  from opentelemetry import trace
+  _distinct_id_var.set(distinct_id)
 
-  span = trace.get_current_span()
-  if span.is_recording():
-    span.set_attribute("posthog.distinct_id", distinct_id)
+
+def clear_request_distinct_id() -> None:
+  """Reset the per-request distinct_id at the end of the request."""
+  _distinct_id_var.set(None)
 
 
 def flush() -> None:
