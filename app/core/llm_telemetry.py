@@ -86,6 +86,33 @@ def init_llm_telemetry() -> None:
   GoogleGenerativeAiInstrumentor().instrument()
   AnthropicInstrumentor().instrument()
 
+  # ---- Workaround 1: AnthropicAsyncStream missing async-context-manager ----
+  # The upstream wrapper implements __aiter__/__anext__ but not
+  # __aenter__/__aexit__. The Anthropic SDK's AsyncStream supports both,
+  # and pydantic-ai relies on `async with response:` after create(stream=True).
+  # Without this patch every instrumented streaming call crashes with:
+  #   "'AnthropicAsyncStream' object does not support the asynchronous
+  #    context manager protocol"
+  try:
+    from opentelemetry.instrumentation.anthropic.streaming import AnthropicAsyncStream
+
+    if not hasattr(AnthropicAsyncStream, "__aenter__"):
+
+      async def _aenter(self):
+        await self.__wrapped__.__aenter__()
+        return self
+
+      async def _aexit(self, exc_type, exc_val, exc_tb):
+        if not self._instrumentation_completed:
+          self._complete_instrumentation()
+        return await self.__wrapped__.__aexit__(exc_type, exc_val, exc_tb)
+
+      AnthropicAsyncStream.__aenter__ = _aenter
+      AnthropicAsyncStream.__aexit__ = _aexit
+  except Exception:
+    log.warning("Failed to patch AnthropicAsyncStream async-context-manager", exc_info=True)
+
+  # ---- Workaround 2: Vertex AI beta messages not instrumented ----
   # The AnthropicInstrumentor patches the standard beta messages classes
   # (anthropic.resources.beta.messages.messages) and Bedrock-specific ones,
   # but NOT the Vertex AI-specific classes (anthropic.lib.vertex._beta_messages).
