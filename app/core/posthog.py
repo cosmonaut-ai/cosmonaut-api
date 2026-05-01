@@ -59,9 +59,9 @@ def capture_exception(exception: Exception, distinct_id: str | None = None) -> N
 
 
 def identify(distinct_id: str, properties: dict | None = None) -> None:
-  """Identify a user with optional properties (no-op when disabled)."""
+  """Set person properties for a user (no-op when disabled)."""
   if _client is not None:
-    _client.identify(distinct_id, properties=properties or {})
+    _client.set(distinct_id=distinct_id, properties=properties or {})
 
 
 def flush() -> None:

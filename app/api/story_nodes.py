@@ -15,6 +15,7 @@ from app.core.errors import AppError, BadRequestError, WrongSessionForNodeError
 from app.core.llm_telemetry import flush as llm_flush
 from app.core.observability import MetricUnit, logger, metrics
 from app.core.posthog import capture as ph_capture
+from app.core.posthog import flush as ph_flush
 from app.core.security import User, get_current_user
 from app.models.dtos.base import PaginatedResponse
 from app.models.dtos.story_node import ChooseRequestDTO, GenerationStatus, StoryNodeDTO
@@ -227,10 +228,12 @@ async def generate_text(
       )
       await queue.put(exc)
     finally:
-      # Flush OTel LLM spans here rather than in the request middleware: the
-      # middleware's finally block fires when StreamingResponse is returned,
-      # before this generation task runs and before the Claude span exists.
+      # Flush OTel LLM spans and PostHog events here rather than in the
+      # request middleware: the middleware's finally block fires when
+      # StreamingResponse is returned, before this generation task runs
+      # and before the Claude span exists.
       llm_flush()
+      ph_flush()
 
   generation_task = asyncio.create_task(_run_generation())
 
