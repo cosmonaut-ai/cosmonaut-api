@@ -46,16 +46,13 @@ def get_client() -> Posthog | None:
 def capture(event: str, distinct_id: str, properties: dict | None = None) -> None:
   """Safely capture an analytics event (no-op when PostHog is disabled)."""
   if _client is not None:
-    _client.capture(distinct_id, event=event, properties=properties or {})
+    _client.capture(event, distinct_id=distinct_id, properties=properties or {})
 
 
 def capture_exception(exception: Exception, distinct_id: str | None = None) -> None:
   """Forward an exception to PostHog for error tracking (no-op when disabled)."""
   if _client is not None:
-    props: dict = {"$exception_type": type(exception).__name__, "$exception_message": str(exception)}
-    if distinct_id:
-      props["distinct_id"] = distinct_id
-    _client.capture(distinct_id or "server", event="$exception", properties=props)
+    _client.capture_exception(exception, distinct_id=distinct_id or "server")
 
 
 def identify(distinct_id: str, properties: dict | None = None) -> None:
