@@ -8,8 +8,14 @@ from aws_lambda_powertools.utilities.data_classes import SQSEvent, event_source
 from pydantic import TypeAdapter
 from pynamodb.exceptions import UpdateError
 
-from app.core.llm_telemetry import flush as llm_flush
-from app.core.llm_telemetry import init_llm_telemetry
+from app.core.llm_telemetry import (
+  clear_request_distinct_id,
+  init_llm_telemetry,
+  set_request_distinct_id,
+)
+from app.core.llm_telemetry import (
+  flush as llm_flush,
+)
 from app.core.observability import logger, metrics, tracer
 from app.core.posthog import capture as ph_capture
 from app.core.posthog import flush as ph_flush
@@ -117,15 +123,24 @@ async def _process_task(payload: SQSPayload):
   """
   Router for specific task logic.
   """
-  match payload:
-    case AnalyzeNodePayload():
-      await _analyze_node(payload)
+  try:
+    world_for_id = worlds.get_world_entity(payload.world_id)
+    set_request_distinct_id(str(world_for_id.author_id))
+  except Exception:
+    logger.debug("Could not resolve author_id for telemetry (world_id=%s)", payload.world_id)
 
-    case GenerateWorldPayload():
-      await _generate_world(payload)
+  try:
+    match payload:
+      case AnalyzeNodePayload():
+        await _analyze_node(payload)
 
-    case GenerateWorldImagePayload():
-      await _generate_world_image(payload)
+      case GenerateWorldPayload():
+        await _generate_world(payload)
+
+      case GenerateWorldImagePayload():
+        await _generate_world_image(payload)
+  finally:
+    clear_request_distinct_id()
 
 
 async def _analyze_node(payload: AnalyzeNodePayload):

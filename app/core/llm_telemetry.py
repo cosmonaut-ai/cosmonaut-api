@@ -86,6 +86,26 @@ def init_llm_telemetry() -> None:
   GoogleGenerativeAiInstrumentor().instrument()
   AnthropicInstrumentor().instrument()
 
+  # The AnthropicInstrumentor patches the standard beta messages classes
+  # (anthropic.resources.beta.messages.messages) and Bedrock-specific ones,
+  # but NOT the Vertex AI-specific classes (anthropic.lib.vertex._beta_messages).
+  # pydantic-ai calls client.beta.messages.create() which on AsyncAnthropicVertex
+  # routes through the Vertex classes, leaving those calls uninstrumented.
+  # Copy the FunctionWrapper descriptors so Vertex calls produce spans too.
+  try:
+    from anthropic.lib.vertex._beta_messages import AsyncMessages as VertexBetaAsync
+    from anthropic.lib.vertex._beta_messages import Messages as VertexBetaSync
+    from anthropic.resources.beta.messages.messages import AsyncMessages as StdBetaAsync
+    from anthropic.resources.beta.messages.messages import Messages as StdBetaSync
+
+    for method_name in ("create", "stream"):
+      for std_cls, vertex_cls in ((StdBetaAsync, VertexBetaAsync), (StdBetaSync, VertexBetaSync)):
+        patched = std_cls.__dict__.get(method_name)
+        if patched is not None:
+          setattr(vertex_cls, method_name, patched)
+  except Exception:
+    log.warning("Failed to patch Vertex AI Anthropic beta messages — Vertex LLM spans may be missing", exc_info=True)
+
   log.info("LLM telemetry initialized (host=%s)", settings.POSTHOG_HOST)
 
 
