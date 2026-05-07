@@ -29,13 +29,13 @@ Story nodes can have AI-generated audio narrations via ElevenLabs TTS. Customers
 
 ### Tier Limits
 
-| Tier      | Audio narrations per period | Period  | Reset behaviour                 |
-| --------- | --------------------------- | ------- | ------------------------------- |
-| FREE      | 10                          | 7 days  | **Never resets** (lifetime cap) |
-| EXPLORER  | 30                          | 30 days | Resets each billing period      |
-| COSMONAUT | 150                         | 30 days | Resets each billing period      |
+| Tier      | Audio narrations | Period  | Reset behaviour                 |
+| --------- | ---------------- | ------- | ------------------------------- |
+| FREE      | 10               | N/A     | **Never resets** (lifetime cap) |
+| EXPLORER  | 10               | N/A     | **Never resets** (lifetime cap, shared with Free) |
+| COSMONAUT | 150              | 30 days | Resets each billing period      |
 
-> Free-tier audio is a one-time allowance — once the 10 narrations are used, the user must upgrade to generate more. Paid tiers get fresh quota each billing cycle.
+> Free and Explorer tiers share a lifetime audio pool of 10 narrations — once used, the user must upgrade to Cosmonaut for monthly audio. The audio counter persists across FREE ↔ EXPLORER tier changes. Only Cosmonaut gets fresh audio quota each billing cycle.
 
 ---
 
@@ -139,13 +139,13 @@ The existing usage endpoint includes audio fields:
 {
   "tier": "EXPLORER",
   "nodes_used": 42,
-  "nodes_limit": 500,
+  "nodes_limit": 200,
   "worlds_created": 3,
   "worlds_limit": 20,
   "worlds_stored": 3,
   "worlds_stored_limit": 50,
-  "audio_narrations_used": 12,
-  "audio_narrations_limit": 30,
+  "audio_narrations_used": 7,
+  "audio_narrations_limit": 10,
   "period_end": "2026-03-08T00:00:00+00:00",
   "pending_cancellation": false,
   "cancellation_date": null,
@@ -155,8 +155,8 @@ The existing usage endpoint includes audio fields:
 }
 ```
 
-- `audio_narrations_used` — how many audio narrations the user has generated this period (or lifetime for free tier).
-- `audio_narrations_limit` — the user's tier cap.
+- `audio_narrations_used` — how many audio narrations the user has generated (lifetime for Free/Explorer, per-period for Cosmonaut).
+- `audio_narrations_limit` — the user's tier cap (10 lifetime for Free/Explorer, 150/month for Cosmonaut).
 
 ---
 
@@ -270,7 +270,7 @@ else:
 Display audio usage alongside existing usage meters:
 
 ```
-Audio narrations: 12 / 30
+Audio narrations: 7 / 10
 ```
 
 ### 5. Clean Up

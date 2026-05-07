@@ -111,7 +111,7 @@ settings: Settings = Settings()
 # ---------------------------------------------------------------------------
 TIER_LIMITS: dict[str, dict[str, int]] = {
   "FREE": {"worlds": 3, "nodes": 30, "reset_days": 7, "audio_limit": 10},
-  "EXPLORER": {"worlds": 20, "nodes": 500, "reset_days": 30, "audio_limit": 30},
+  "EXPLORER": {"worlds": 20, "nodes": 200, "reset_days": 30, "audio_limit": 10},
   "COSMONAUT": {"worlds": 100, "nodes": 2000, "reset_days": 30, "audio_limit": 150},
 }
 

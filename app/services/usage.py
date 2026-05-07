@@ -142,9 +142,9 @@ def get_or_create_usage(user_id: str, email: str | None = None) -> UserRecord:
     tier = str(u.tier) if u.tier else "FREE"
     u.nodes_used = 0
     u.worlds_created = 0
-    # Skip resetting audio_narrations_used for FREE tier to enforce a lifetime cap.
-    # Paid tiers reset audio usage each billing period.
-    if tier != "FREE":
+    # FREE and EXPLORER share a lifetime audio pool (10 narrations, never resets).
+    # Only COSMONAUT gets fresh audio quota each billing period.
+    if tier == "COSMONAUT":
       u.audio_narrations_used = 0
     u.period_end = _new_period_end(tier)
     record.updated_at = now
@@ -223,17 +223,30 @@ def update_tier(
 
   Resets usage counters and starts a new billing period for the given tier.
   Clears any pending cancellation state.
+
+  Audio reset logic:
+  - FREE and EXPLORER share a lifetime audio pool (10 narrations, never resets).
+    Changing between FREE ↔ EXPLORER must NOT reset audio_narrations_used.
+  - COSMONAUT has its own monthly pool (150/month, resets each period).
+    Upgrading TO Cosmonaut resets audio; downgrading FROM Cosmonaut does not.
   """
   record = get_or_create_usage(user_id)
   now = datetime.now(UTC)
   u = record.usage
+
+  old_tier = str(u.tier) if u.tier else "FREE"
 
   u.tier = tier
   if stripe_customer_id is not None:
     u.stripe_customer_id = stripe_customer_id
   u.nodes_used = 0
   u.worlds_created = 0
-  u.audio_narrations_used = 0
+
+  # Only reset audio when upgrading TO Cosmonaut (which has its own monthly pool).
+  # FREE ↔ EXPLORER transitions preserve the shared lifetime audio counter.
+  if tier == "COSMONAUT" and old_tier != "COSMONAUT":
+    u.audio_narrations_used = 0
+
   u.period_end = _new_period_end(tier)
   u.pending_cancellation = False
   u.cancellation_date = None
@@ -243,7 +256,7 @@ def update_tier(
   record.updated_at = now
   record.save()
 
-  logger.info(f"Updated tier for user {user_id} to {tier}")
+  logger.info(f"Updated tier for user {user_id} to {tier} (from {old_tier})")
   return record
 
 
@@ -304,7 +317,9 @@ def reset_period(user_id: str) -> UserRecord:
 
   u.nodes_used = 0
   u.worlds_created = 0
-  u.audio_narrations_used = 0
+  # FREE and EXPLORER share a lifetime audio pool — only Cosmonaut resets audio.
+  if tier == "COSMONAUT":
+    u.audio_narrations_used = 0
   u.period_end = _new_period_end(tier)
   u.pending_cancellation = False
   u.cancellation_date = None
