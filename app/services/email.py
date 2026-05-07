@@ -176,13 +176,19 @@ def _tier_limits_html(tier: str) -> str:
   """Return an HTML snippet listing the key limits for a tier."""
   limits = get_tier_limits(tier)
   period = "week" if limits.get("reset_days", 30) <= 7 else "month"
+  # FREE and EXPLORER share a lifetime audio pool; only COSMONAUT resets monthly.
+  audio_desc = (
+    f"{limits['audio_limit']} audio narrations per {period}"
+    if tier == "COSMONAUT"
+    else f"{limits['audio_limit']} audio narrations (one-time)"
+  )
   return f"""<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:16px 0 24px;">
   <tr><td style="padding:16px 20px;background-color:{_CODE_BG};border:1px solid {_CARD_BORDER};border-radius:12px;">
     <p style="margin:0 0 8px;font-size:14px;font-weight:600;color:{_FG};">Your plan includes:</p>
     <p style="margin:0;font-size:14px;color:{_MUTED};line-height:1.8;">
       &bull; {limits["worlds"]} worlds per {period}<br>
       &bull; {limits["nodes"]:,} story nodes per {period}<br>
-      &bull; {limits["audio_limit"]} audio narrations per {period}
+      &bull; {audio_desc}
     </p>
   </td></tr>
   </table>"""
