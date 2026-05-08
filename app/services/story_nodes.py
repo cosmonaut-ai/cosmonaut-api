@@ -29,13 +29,14 @@ from app.services.llm.sanitize import sanitize_llm_output, sanitize_user_input
 from app.services.pinecone import PineconeBranchFact
 from app.services.sessions import create_node_session, get_node_session
 from app.services.sqs import SQSSendError, send_node_analysis_message
-from app.services.usage import check_and_increment, release_quota
+from app.services.usage import check_and_increment, check_quota, release_quota
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
 from app.utils import LLMOutputTruncatedError, base52_to_number, extract_xml_block, extract_xml_json
 from app.utils.pii import truncate_for_log
 
 if TYPE_CHECKING:
   from app.models.entities.world_meta import WorldMeta
+  from app.services.usage import QuotaExceededError
 
 
 class NodeServiceError(Exception):
@@ -428,6 +429,9 @@ async def _choose_custom_with_session(
   user_id: str | None,
 ) -> StoryNode:
   """Create a custom-choice child node scoped to this session."""
+  if user_id:
+    check_quota(user_id, "nodes")
+
   custom_choice = sanitize_user_input(custom_choice)
 
   # Atomically claim the next custom choice index on the StoryNode.
@@ -507,6 +511,8 @@ async def _choose_existing_custom_with_session(
     raise InvalidTargetError(str(node.id), target_id, "custom choice not found in this session")
 
   child = get_node_entity(root_world_id, target_id)
+  if user_id and str(child.generation_status) == GenerationStatus.INITIALIZED.value:
+    check_quota(user_id, "nodes")
 
   if not get_node_session(session_id, target_id):
     create_node_session(
@@ -537,7 +543,11 @@ async def _choose_base_with_session(
 
   if selected.is_created:
     child = get_node_entity(root_world_id, target_id)
+    if user_id and str(child.generation_status) == GenerationStatus.INITIALIZED.value:
+      check_quota(user_id, "nodes")
   else:
+    if user_id:
+      check_quota(user_id, "nodes")
     parent_choice_dto = ChoiceDTO(
       label=selected.label,
       outcome=selected.outcome,
@@ -750,6 +760,12 @@ async def generate_text(
     except SQSSendError:
       logger.error(f"Failed to enqueue analysis for node {node_id} -- node will remain in PENDING processing_status")
 
+  except QuotaExceededError:
+    logger.info(f"Quota exceeded for nodes for user {user_id}")
+    if user_id:
+      release_quota(user_id, "nodes")
+    node.generation_status = GenerationStatus.INITIALIZED.value
+    node.save()
   except Exception as e:
     logger.error(f"Error generating text for node {node_id}: {e}")
     if user_id:

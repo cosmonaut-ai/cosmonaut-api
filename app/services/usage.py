@@ -155,6 +155,23 @@ def get_or_create_usage(user_id: str, email: str | None = None) -> UserRecord:
 
 
 @tracer.capture_method
+def check_quota(user_id: str, metric: Literal["worlds", "nodes", "audio"]) -> None:
+  """Raise ``QuotaExceededError`` if the user has hit their tier limit for *metric*.
+
+  Read-only check that does NOT increment the counter.  Use as a pre-flight
+  guard to avoid creating resources that would be orphaned when the subsequent
+  ``check_and_increment`` in the generation path fails.
+  """
+  record = get_or_create_usage(user_id)
+  tier = str(record.usage.tier) if record.usage.tier else "FREE"
+  limits = get_tier_limits(tier)
+  limit_value: int = limits[_METRIC_LIMIT_KEY[metric]]
+  current = getattr(record.usage, _METRIC_ATTR[metric]) or 0
+  if current >= limit_value:
+    raise QuotaExceededError(metric, limit_value)
+
+
+@tracer.capture_method
 def check_and_increment(user_id: str, metric: Literal["worlds", "nodes", "audio"], email: str | None = None) -> None:
   """Atomically increment *metric* if the user is within their tier's quota.
 
