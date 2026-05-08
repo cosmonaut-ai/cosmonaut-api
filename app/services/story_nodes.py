@@ -647,12 +647,11 @@ async def generate_text(
       return
     raise InvalidGenerationStatusError(node_id, current_status, allowed_statuses) from None
 
-  # Enforce node quota after winning the status transition so that losing
-  # concurrent requests (or retries after a network error) do not waste quota.
-  if user_id:
-    check_and_increment(user_id, "nodes")
-
   try:
+    # Enforce node quota after winning the status transition so that losing
+    # concurrent requests (or retries after a network error) do not waste quota.
+    if user_id:
+      check_and_increment(user_id, "nodes")
     # Select appropriate stream generator based on node type
     if node.parent_id is None:
       # Root node: use root node agent
