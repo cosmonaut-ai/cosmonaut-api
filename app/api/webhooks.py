@@ -18,6 +18,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from app.core.config import PRICE_TO_TIER, settings
 from app.core.observability import MetricUnit, logger, metrics
 from app.core.posthog import capture as ph_capture
+from app.core.posthog import identify as ph_identify
 from app.models.entities.rate_limit import RateLimitRecord
 from app.services.cognito import get_user_contact_info, update_user_tier
 from app.services.email import (
@@ -50,6 +51,21 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 def _get_stripe_api_key() -> str:
   return get_secret_value(settings.STRIPE_API_KEY_PARAM)
+
+
+def _identify_user(user_id: str, email: str | None = None, name: str | None = None) -> None:
+  """Associate a Cognito user ID with person properties in PostHog.
+
+  Webhook handlers only have the Cognito sub (UUID) — without an explicit
+  identify call PostHog creates an anonymous person with no email or name.
+  """
+  props: dict[str, str] = {}
+  if email:
+    props["email"] = email
+  if name:
+    props["name"] = name
+  if props:
+    ph_identify(user_id, props)
 
 
 def _get_webhook_secret() -> str:
@@ -177,6 +193,7 @@ def _handle_checkout_completed(event: stripe.Event) -> None:
   update_user_tier(user_id, tier)
 
   email, name = get_user_contact_info(user_id)
+  _identify_user(user_id, email, name)
   if email:
     send_subscription_welcome(email, name, tier)
 
@@ -206,6 +223,7 @@ def _handle_invoice_paid(event: stripe.Event) -> None:
   clear_pending_cancellation(user_id)
 
   email, name = get_user_contact_info(user_id)
+  _identify_user(user_id, email, name)
   if email:
     send_subscription_renewed(email, name, tier)
 
@@ -228,6 +246,9 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
   sub_status = subscription.get("status", "")
   cancel_at_period_end = subscription.get("cancel_at_period_end", False)
   cancel_at = subscription.get("cancel_at")  # Unix timestamp or None
+
+  email, name = get_user_contact_info(user_id)
+  _identify_user(user_id, email, name)
 
   # Persist raw Stripe status for frontend visibility
   update_subscription_status(user_id, sub_status)
@@ -253,10 +274,8 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
 
     set_pending_cancellation(user_id, cancel_dt)
 
-    if not already_pending:
-      email, name = get_user_contact_info(user_id)
-      if email:
-        send_subscription_cancellation_scheduled(email, name, cancel_dt)
+    if not already_pending and email:
+      send_subscription_cancellation_scheduled(email, name, cancel_dt)
 
     if not already_pending:
       ph_capture(
@@ -298,7 +317,6 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
       effective_dt = datetime.fromtimestamp(effective_ts, tz=UTC) if effective_ts else datetime.now(UTC)
       set_pending_plan_change(user_id, pending_tier, effective_dt)
 
-      email, name = get_user_contact_info(user_id)
       if email:
         send_subscription_plan_change_scheduled(email, name, pending_tier, effective_dt)
 
@@ -314,14 +332,30 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
 
     new_tier = _resolve_tier_from_subscription(subscription)
     if new_tier:
-      customer_id = str(subscription.get("customer", ""))
-      update_tier(user_id, new_tier, stripe_customer_id=customer_id)
-      update_user_tier(user_id, new_tier)
+      # Only apply the change if the tier actually differs from the user's
+      # current tier.  Stripe fires subscription.updated for many reasons
+      # (metadata edits, payment method changes, the Subscription.modify call
+      # in _handle_checkout_completed, etc.) — none of which are plan changes.
+      current_record = get_or_create_usage(user_id)
+      current_tier = str(current_record.usage.tier) if current_record.usage.tier else "FREE"
 
-      ph_capture(
-        "subscription_plan_changed", distinct_id=user_id, properties={"new_tier": new_tier, "source": "server"}
-      )
-      logger.info(f"Subscription plan changed: user={user_id} new_tier={new_tier}")
+      if new_tier != current_tier:
+        customer_id = str(subscription.get("customer", ""))
+        update_tier(user_id, new_tier, stripe_customer_id=customer_id)
+        update_user_tier(user_id, new_tier)
+
+        ph_capture(
+          "subscription_plan_changed",
+          distinct_id=user_id,
+          properties={"new_tier": new_tier, "old_tier": current_tier, "source": "server"},
+        )
+        logger.info(f"Subscription plan changed: user={user_id} {current_tier} → {new_tier}")
+      else:
+        logger.info(
+          "Subscription updated but tier unchanged (%s) for user=%s; skipping update_tier",
+          current_tier,
+          user_id,
+        )
     return
 
   # -- Past due (payment failed, Stripe retrying) --
@@ -372,6 +406,7 @@ def _handle_invoice_payment_failed(event: stripe.Event) -> None:
   update_subscription_status(user_id, "past_due")
 
   email, name = get_user_contact_info(user_id)
+  _identify_user(user_id, email, name)
   if email:
     send_payment_failed(email, name)
 
@@ -395,6 +430,7 @@ def _handle_subscription_deleted(event: stripe.Event) -> None:
   update_user_tier(user_id, "FREE")
 
   email, name = get_user_contact_info(user_id)
+  _identify_user(user_id, email, name)
   if email:
     send_subscription_ended(email, name)
 
