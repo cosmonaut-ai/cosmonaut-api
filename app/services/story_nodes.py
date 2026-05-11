@@ -245,25 +245,31 @@ def get_node_entities(world_id: str, node_ids: list[str]) -> list[StoryNode]:
 # =============================================================================
 
 
-def _build_previous_text(
+def _build_choice_text(choice: ChoiceMap) -> str:
+  """Build the text for a choice."""
+  text = '<user_choice custom="' + str(choice.is_custom) + '">\n'
+  text += choice.label
+  text += "</user_choice>\n"
+  return text
+
+
+def _build_story_summary(
   prev_story_nodes: list[StoryNode],
-  selected_choice_label: str,
+  selected_choice: ChoiceMap,
 ) -> str:
-  """Build the previous story text for context."""
-  prev_story_nodes_text = ""
+  """Build the story summary for context."""
+  summary = ""
   for i, current_node in enumerate(prev_story_nodes):
-    prev_story_nodes_text += current_node.text
+    summary += '<node_summary depth="' + str(i) + '">\n'
+    summary += current_node.story_summary
+    summary += "</node_summary>\n"
     if i < len(prev_story_nodes) - 1:
       next_node = prev_story_nodes[i + 1]
       if next_node.parent_choice:
-        choice_text = next_node.parent_choice.label
-        prev_story_nodes_text += f'\n\nUser chose: "{choice_text}"'
-        if next_node.parent_choice.is_custom:
-          prev_story_nodes_text += " *(custom choice)*"
-        prev_story_nodes_text += "\n\n"
+        summary += _build_choice_text(next_node.parent_choice)
     else:
-      prev_story_nodes_text += f'\n\nUser chose: "{selected_choice_label}"\n\n'
-  return prev_story_nodes_text
+      summary += _build_choice_text(selected_choice)
+  return summary or "Nothing to summarize."
 
 
 def _build_next_node_deps(
@@ -274,7 +280,7 @@ def _build_next_node_deps(
   """Build the dependencies for next node generation."""
   llm_world_info = world_meta_to_llm_world_info(world_meta)
   prev_story_nodes = get_node_entities(node.world_id, node.ancestors[-10:])
-  prev_story_nodes_text = _build_previous_text(prev_story_nodes, selected_choice.label)
+  prev_story_summary = _build_story_summary(prev_story_nodes, selected_choice)
 
   # Safely access context attributes; context may be None if the parent node
   # hasn't been processed yet (e.g., SQS worker hasn't completed analysis).
@@ -285,9 +291,8 @@ def _build_next_node_deps(
 
   return llm.NextNodeDeps(
     world_info=llm_world_info,
-    story_summary=node.story_summary or "The story begins.",
+    prev_story_summary=prev_story_summary,
     story_max_nodes=int(world_meta.story_max_nodes or 10),
-    previous_text=prev_story_nodes_text,
     user_choice=selected_choice.label,
     choice_outcome=selected_choice.outcome,
     world_facts=world_facts,

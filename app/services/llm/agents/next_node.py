@@ -22,7 +22,6 @@ from app.services.llm.agents.prompts import (
 )
 from app.services.llm.models import LLMWorldInfo
 from app.services.llm.provider import get_storytelling_model
-from app.services.llm.sanitize import sanitize_user_input
 from app.services.llm.utils import format_model_with_descriptions
 
 
@@ -30,8 +29,7 @@ class NextNodeDeps(BaseModel):
   """Dependencies for next node generation."""
 
   world_info: LLMWorldInfo
-  story_summary: str = Field(description="A summary of the story up to this point.")
-  previous_text: str = Field(description="The previous story node text.")
+  prev_story_summary: str = Field(description="A summary of the story up to this point.")
   user_choice: str = Field(description="The user's choice.")
   choice_outcome: str | None = Field(default=None, description="The outcome of the user's choice.")
   world_facts: list[str] = Field(
@@ -91,12 +89,7 @@ def build_user_message(deps: NextNodeDeps) -> str:
   world_facts = "\n".join(f"- {f}" for f in deps.world_facts) if deps.world_facts else "None"
   branch_facts = "\n".join(f"- {f}" for f in deps.branch_facts) if deps.branch_facts else "None"
 
-  sanitized_choice = sanitize_user_input(deps.user_choice)
-
   custom_choice_note = CUSTOM_CHOICE_INSTRUCTIONS if deps.is_custom_choice else ""
-  choice_outcome_note = (
-    CHOICE_OUTCOME_INSTRUCTIONS.format(choice_outcome=deps.choice_outcome) if deps.choice_outcome else ""
-  )
 
   return f"""Continue the story.
 
@@ -105,23 +98,22 @@ def build_user_message(deps: NextNodeDeps) -> str:
 {progress_pct:.0f}%
 
 ## Story Summary:
-{deps.story_summary}
+{deps.prev_story_summary}
 
-## Player's Choice:
-<user_choice>
-{sanitized_choice}
+## User's Last Choice:
+<user_choice custom="{deps.is_custom_choice}">
+{deps.user_choice}
 </user_choice>
 {custom_choice_note}
-{choice_outcome_note}
+
+### Choice Outcome:
+{CHOICE_OUTCOME_INSTRUCTIONS.format(choice_outcome=deps.choice_outcome)}
 
 ## World Facts:
 {world_facts}
 
-## Branch Facts (newest first):
+## Branch Facts (newest to oldest):
 {branch_facts}
-
-## Recent Text (last 5 nodes):
-{deps.previous_text}
 """
 
 
