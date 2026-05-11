@@ -103,7 +103,7 @@ def build_user_message(deps: NextNodeDeps) -> str:
 ## Story Summary:
 {deps.prev_story_summary}
 
-## User's Last Choice:
+## User's Latest Choice:
 <user_choice custom="{deps.is_custom_choice}">
 {deps.user_choice}
 </user_choice>
