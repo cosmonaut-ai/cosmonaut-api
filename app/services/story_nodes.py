@@ -245,14 +245,6 @@ def get_node_entities(world_id: str, node_ids: list[str]) -> list[StoryNode]:
 # =============================================================================
 
 
-def _build_choice_text(choice: ChoiceMap) -> str:
-  """Build the text for a choice."""
-  text = '<user_choice custom="' + str(choice.is_custom) + '">\n'
-  text += choice.label
-  text += "\n</user_choice>\n"
-  return text
-
-
 def _build_story_summary(
   prev_story_nodes: list[StoryNode],
   selected_choice: ChoiceMap,
@@ -266,9 +258,9 @@ def _build_story_summary(
     if i < len(prev_story_nodes) - 1:
       next_node = prev_story_nodes[i + 1]
       if next_node.parent_choice:
-        summary += _build_choice_text(next_node.parent_choice)
-    else:
-      summary += _build_choice_text(selected_choice)
+        summary += '<user_choice custom="' + str(next_node.parent_choice.is_custom) + '">\n'
+        summary += next_node.parent_choice.label
+        summary += "\n</user_choice>\n"
   return summary or "Nothing to summarize."
 
 
