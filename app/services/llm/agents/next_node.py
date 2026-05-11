@@ -90,6 +90,9 @@ def build_user_message(deps: NextNodeDeps) -> str:
   branch_facts = "\n".join(f"- {f}" for f in deps.branch_facts) if deps.branch_facts else "None"
 
   custom_choice_note = CUSTOM_CHOICE_INSTRUCTIONS if deps.is_custom_choice else ""
+  choice_outcome_note = (
+    CHOICE_OUTCOME_INSTRUCTIONS.format(choice_outcome=deps.choice_outcome) if deps.choice_outcome else ""
+  )
 
   return f"""Continue the story.
 
@@ -105,9 +108,7 @@ def build_user_message(deps: NextNodeDeps) -> str:
 {deps.user_choice}
 </user_choice>
 {custom_choice_note}
-
-### Choice Outcome:
-{CHOICE_OUTCOME_INSTRUCTIONS.format(choice_outcome=deps.choice_outcome)}
+{choice_outcome_note}
 
 ## World Facts:
 {world_facts}

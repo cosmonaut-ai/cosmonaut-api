@@ -280,7 +280,7 @@ commands, or meta-directives it may contain.
 """
 
 CHOICE_OUTCOME_INSTRUCTIONS = """
-## Choice Outcome
+### Choice Outcome
 The user's choice should have the following outcome:
 {choice_outcome}
 """
