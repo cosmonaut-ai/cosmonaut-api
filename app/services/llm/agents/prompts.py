@@ -86,14 +86,15 @@ def build_choice_guidelines(max_choices: int | None = None) -> str:
   - `label`: A single action or response ("Go left" or "Ask the guard about
     the treasure" or "Investigate the library")
   - `outcome`: A brief description of what happens if this choice is selected
-    (1 short sentence: "user finds the treasure", "user is slain by monster")
+    (1 short sentence: "user finds the treasure", "user is slain by monster").
+    Should be tangible and specific - what will the next node be?
 """
 
 
 # v1 — metadata output guidelines
 METADATA_GUIDELINES = """
 ## Metadata Fields
-- `story_summary`: 2-3 sentences capturing the key events, decisions, and
+- `story_summary`: 1-3 sentences capturing the key events, decisions, and
   current situation. Write for a future node generator — prioritize what it
   needs to maintain continuity, not prose quality.
 - `title`: A short evocative title for this node (1-5 words). Prefer concrete
