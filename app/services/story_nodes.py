@@ -249,7 +249,7 @@ def _build_choice_text(choice: ChoiceMap) -> str:
   """Build the text for a choice."""
   text = '<user_choice custom="' + str(choice.is_custom) + '">\n'
   text += choice.label
-  text += "</user_choice>\n"
+  text += "\n</user_choice>\n"
   return text
 
 
@@ -262,7 +262,7 @@ def _build_story_summary(
   for i, current_node in enumerate(prev_story_nodes):
     summary += '<node_summary depth="' + str(i) + '">\n'
     summary += current_node.story_summary
-    summary += "</node_summary>\n"
+    summary += "\n</node_summary>\n"
     if i < len(prev_story_nodes) - 1:
       next_node = prev_story_nodes[i + 1]
       if next_node.parent_choice:
