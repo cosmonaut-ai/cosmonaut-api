@@ -242,7 +242,7 @@ Signs you should end the story:
 - The player character dies or is permanently incapacitated
 - The central conflict is resolved (for better or worse)
 - The player's choice wraps up the narrative thread with finality
-- The player made a catastrophically bad decision with no plausible way out
+- The player made a bad decision with no way out
 
 Do NOT:
 - Introduce a deus ex machina to save a doomed character
@@ -254,7 +254,7 @@ Do NOT:
 - 20-70%: Escalation — raise stakes, reveal conflict
 - 70-90%: Climax — force confrontation, narrow options
 - 90+%: Resolution — close threads, deliver endings
-This pacing is a guideline, not a hard requirement. Early endings from bad choices are expected and encouraged.
+This pacing is a guideline, not a hard requirement. Use this measurement to guide your pacing - think about how much time you have left in the story and how much you need to get to the ending. Early endings from bad choices are expected and encouraged.
 
 ## Story Text
 - 200 words max
