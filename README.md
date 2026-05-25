@@ -1,83 +1,108 @@
 # Cosmonaut API
 
-FastAPI backend for Cosmonaut AI — an interactive choose-your-own-adventure storytelling platform. Runs as AWS Lambda functions behind API Gateway.
+FastAPI backend for [Cosmonaut AI](https://cosmonaut-ai.com), an AI-powered interactive storytelling platform. This service owns story generation, authenticated API routes, streaming generation, billing, media generation, and background workers.
+
+The API is designed to run locally for development and in AWS Lambda behind API Gateway for deployed environments.
+
+## Repository Role
+
+Cosmonaut is split across several public repositories:
+
+- [`cosmonaut-web`](https://github.com/cosmonaut-ai/cosmonaut-web): SvelteKit frontend.
+- [`cosmonaut-api`](https://github.com/cosmonaut-ai/cosmonaut-api): Backend API and workers.
+- [`cosmonaut-infra`](https://github.com/cosmonaut-ai/cosmonaut-infra): Terraform infrastructure.
+- [`cosmonaut-android`](https://github.com/cosmonaut-ai/cosmonaut-android): Native Android client.
 
 ## Stack
 
-- **Python 3.13**, **FastAPI**
-- **DynamoDB** (single-table design via PynamoDB)
-- **Pinecone** (vector search for story facts)
-- **Vertex AI** (Gemini + Claude via Google Cloud) for story generation
-- **ElevenLabs** for text-to-speech audio narration
-- **Stripe** for subscription billing
-- **AWS Cognito** for authentication (JWT validation)
+- Python 3.13, FastAPI, Mangum, AWS Lambda
+- DynamoDB via PynamoDB
+- SQS-backed background workers
+- Pinecone for vector memory
+- Vertex AI / Gemini for story generation
+- ElevenLabs for text-to-speech narration
+- Stripe for subscription billing
+- AWS Cognito JWT validation
+- PostHog and Sentry for observability
 
-## Prerequisites
+## Local Setup
+
+Prerequisites:
 
 - Python 3.13+
-- [uv](https://docs.astral.sh/uv/) package manager
-- AWS CLI configured with credentials
-- GCP credentials for Vertex AI (service account JSON or ADC)
-
-## Setup
+- [`uv`](https://docs.astral.sh/uv/)
+- AWS credentials if you need to touch AWS-backed resources
+- GCP credentials if you are exercising Vertex-backed generation locally
 
 ```bash
-# Create venv and install dependencies
 uv venv --python 3.13 .venv
 uv sync
-
-# Copy and fill in environment variables
 cp .env.example .envrc
-# Edit .envrc with your values, then:
-direnv allow
-# Or: source .envrc
+```
 
-# Run locally
+Fill in `.envrc`, then load it with `direnv allow` or `source .envrc`.
+
+For local development without Cognito, keep `MOCK_AUTH=true`. Some routes still depend on configured local AWS, Pinecone, Stripe, ElevenLabs, or Vertex resources when those integrations are exercised.
+
+Run the API locally:
+
+```bash
 uv run uvicorn app.main:app --reload --port 8000
 ```
 
-## Linting & Type Checking
+## Verification
+
+Run these checks before opening a pull request:
 
 ```bash
-# Ruff (lint + format)
-uv run ruff check .
-uv run ruff format .
-
-# BasedPyright (strict type checking)
-uv run --with basedpyright basedpyright
+ruff format .
+ruff check --fix .
+ty check
 ```
 
-Configuration: `pyproject.toml` (Ruff), `pyrightconfig.json` (Pyright).
+The type checker is [`ty`](https://github.com/astral-sh/ty), configured in `pyproject.toml`. Run it from the repository root so it picks up the project configuration and virtual environment.
 
 ## Project Structure
 
-```
+```text
 app/
-├── api/              # FastAPI route handlers
-│   ├── auth.py       # Session, checkout, billing, account deletion
-│   ├── worlds.py     # World CRUD, sharing
-│   ├── story_nodes.py# Node generation, choices, audio
-│   ├── webhooks.py   # Stripe webhook handler
-│   ├── meta.py       # Public OG metadata for social bots
-│   └── voices.py     # TTS voice listing
-├── core/             # Configuration, security, observability
-├── models/           # DynamoDB entities and DTOs
-├── services/         # Business logic and external integrations
-│   ├── llm/          # Multi-agent LLM pipeline
-│   │   ├── agents/   # Story agents (root_node, next_node, world_info, etc.)
-│   │   ├── provider.py  # Vertex AI client with retry
-│   │   └── sanitize.py  # Prompt injection defense
-│   ├── audio.py      # ElevenLabs TTS
+├── api/               # FastAPI route handlers
+├── core/              # Config, auth, observability, PostHog/Sentry helpers
+├── models/            # DynamoDB models and API DTOs
+├── services/          # Business logic and external integrations
+│   ├── llm/           # Story-generation agents and provider code
+│   ├── audio.py       # ElevenLabs narration
 │   ├── stripe_client.py
-│   ├── usage.py      # Tier quota enforcement
-│   └── ...
-├── main.py           # FastAPI app entrypoint
-└── worker.py         # SQS Lambda worker entrypoint
+│   └── usage.py       # Subscription quota enforcement
+├── main.py            # FastAPI app entry point
+└── worker.py          # SQS Lambda worker entry point
 ```
+
+## Documentation
+
+Start with [`docs/README.md`](docs/README.md). The most useful references are:
+
+- [`docs/api-spec.md`](docs/api-spec.md): public API behavior and DTOs.
+- [`docs/audio-implementation.md`](docs/audio-implementation.md): narration API and frontend integration notes.
+- [`docs/frontend-world-options.md`](docs/frontend-world-options.md): world creation option contract.
+- [`docs/tech-spec.md`](docs/tech-spec.md): system design and generation loop.
 
 ## Deployment
 
-Push to `main` (prod) or `develop` (dev) triggers GitHub Actions:
-Docker build → ECR push → Lambda function code update (4 functions: api, worker-fast, worker-slow, api-streaming).
+GitHub Actions deploys pushes to `main` as production and `develop` as development. Deployment builds a Docker image, pushes it to ECR, then updates the API, streaming API, fast worker, and slow worker Lambda functions.
 
-See `ARCHITECTURE.md` at the workspace root for the full system overview.
+Documentation-only commits should use `[skip ci]` when they do not need a deployment.
+
+## Security
+
+Do not put raw credentials in source. Local configuration should stay in ignored files, runtime secrets should live in AWS SSM Parameter Store, and GitHub Actions secrets should be used only for CI/CD credentials.
+
+See [`SECURITY.md`](SECURITY.md) for disclosure and secret-handling guidance.
+
+## Contributing
+
+Issues and pull requests are welcome. Please keep changes focused, include tests or validation output for behavior changes, and avoid committing generated artifacts.
+
+## License
+
+Apache-2.0. See [`LICENSE`](LICENSE).

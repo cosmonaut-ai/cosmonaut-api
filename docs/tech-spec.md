@@ -1,7 +1,7 @@
 # Cosmonaut AI: Technical Design Specification
 
 **Version:** 1.3
-**Date:** December 19, 2025
+**Date:** May 25, 2026
 **Owner:** Matson Software LLC
 
 ## 1. Executive Summary
@@ -12,7 +12,7 @@ Cosmonaut AI is a "Choose Your Own Adventure" platform utilizing Generative AI. 
 
 The infrastructure is fully defined in Terraform (`cosmonaut-infra`) and deployed via GitHub Actions using OIDC authentication.
 
-- **Compute:** AWS Lambda (Python 3.11) behind API Gateway HTTP API (v2).
+- **Compute:** AWS Lambda (Python 3.13) behind API Gateway HTTP API (v2).
 - **Database:** Amazon DynamoDB (On-Demand Capacity).
 - **Vector Store:** Pinecone (Serverless).
 - **Hosting:** AWS S3 + CloudFront (OAC Secured).
@@ -65,7 +65,7 @@ The infrastructure is fully defined in Terraform (`cosmonaut-infra`) and deploye
 
 We utilize a single Pinecone Index partitioned by **Metadata Filters** to handle three distinct types of memory.
 
-- **Secrets Path:** `/env/cosmonaut/pinecone_api_key`
+- **Secrets Path:** `/<env>/cosmonaut/pinecone_api_key`
 - **Metric:** Cosine Similarity.
 
 ### 4.1 Vector Entities & Schema

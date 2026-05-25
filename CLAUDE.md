@@ -10,8 +10,7 @@ Create and install the venv (requires Python 3.13+):
 
 ```sh
 uv venv --python 3.13 .venv
-uv pip install -e .
-uv pip install boto3-stubs[all] httpx pytest
+uv sync
 ```
 
 ## Linting
