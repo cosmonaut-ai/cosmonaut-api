@@ -210,4 +210,8 @@ __marimo__/
 
 # CI/CD generated files
 client-config.json
+
+# Local agent workspace files
+.agents/
+.claude/
 extension_layer/
