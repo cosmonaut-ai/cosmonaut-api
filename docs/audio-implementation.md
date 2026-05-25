@@ -187,41 +187,16 @@ All endpoints that return a `StoryNodeDTO` now include an `audio` dictionary map
 
 ### 1. API Client
 
-Add functions to call the new endpoints:
+The current frontend API helpers live in `src/lib/api/voices.ts`:
 
 ```typescript
-// Fetch available voices
-async function listVoices(): Promise<{ id: string; display_name: string }[]> {
-  const response = await fetch(`${API_BASE}/voices/`);
-  return response.json();
-}
+import { listVoices, generateNodeAudio } from '$lib/api/voices';
 
-// Generate audio with a specific voice
-async function generateNodeAudio(
-  worldId: string,
-  nodeId: string,
-  voiceId: string,
-): Promise<{ audio_url: string }> {
-  const response = await fetch(
-    `${API_BASE}/worlds/${worldId}/nodes/${nodeId}/audio`,
-    {
-      method: 'POST',
-      headers: { ...getAuthHeaders(), 'Content-Type': 'application/json' },
-      body: JSON.stringify({ voice_id: voiceId }),
-    },
-  );
-
-  if (!response.ok) {
-    if (response.status === 429) {
-      throw new QuotaExceededError('audio');
-    }
-    const body = await response.json();
-    throw new ApiError(response.status, body.detail);
-  }
-
-  return response.json();
-}
+const voices = await listVoices();
+const { audio_url, timestamps_url } = await generateNodeAudio(worldId, nodeId, voiceId);
 ```
+
+These helpers use the shared `apiRequest` wrapper for auth headers and normalized API errors.
 
 ### 2. Voice Selection UI
 
@@ -231,7 +206,7 @@ async function generateNodeAudio(
 
 ### 3. Node View Integration
 
-In `StoryNodeView.svelte` (or equivalent component):
+In the narration component used by the story node view:
 
 **State**:
 
@@ -275,7 +250,7 @@ Audio narrations: 7 / 10
 
 ### 5. Clean Up
 
-The existing browser-native `window.speechSynthesis` implementation should be removed or hidden behind a fallback option, since ElevenLabs audio is now the primary narration method.
+Do not reintroduce browser-native `window.speechSynthesis` as the primary narration path. The production narration UI should use the generated audio API and CDN-hosted MP3 files.
 
 ---
 
