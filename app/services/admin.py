@@ -5,6 +5,8 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any, cast
 
+from botocore.exceptions import ClientError
+
 from app.core.config import settings
 from app.core.errors import BadRequestError, ExternalServiceError, NotFoundError
 from app.core.observability import logger, tracer
@@ -75,6 +77,12 @@ def _email_prefix_filter(email_prefix: str | None) -> str | None:
   return f'email ^= "{cleaned}"'
 
 
+def _external_cognito_error(action: str, exc: ClientError) -> ExternalServiceError:
+  code = exc.response.get("Error", {}).get("Code", type(exc).__name__)
+  logger.warning("Cognito %s failed: %s", action, code, exc_info=True)
+  return ExternalServiceError(f"Cognito {action} failed: {code}")
+
+
 @tracer.capture_method
 def list_cognito_users(
   email_prefix: str | None = None,
@@ -99,7 +107,11 @@ def list_cognito_users(
     params["PaginationToken"] = pagination_token
 
   client = cast(Any, cognito_service._get_cognito_client())
-  response = client.list_users(**params)
+  try:
+    response = client.list_users(**params)
+  except ClientError as exc:
+    raise _external_cognito_error("list users", exc) from exc
+
   users = [_parse_cognito_user(user) for user in cast(list[dict[str, Any]], response.get("Users", []))]
   return users, _encode_token_cursor(response.get("PaginationToken"))
 
@@ -111,11 +123,15 @@ def find_cognito_user_by_sub(user_id: str) -> AdminCognitoUserDTO | None:
     raise ExternalServiceError("COGNITO_USER_POOL_ID is not configured")
 
   client = cast(Any, cognito_service._get_cognito_client())
-  response = client.list_users(
-    UserPoolId=settings.COGNITO_USER_POOL_ID,
-    Filter=f'sub = "{user_id}"',
-    Limit=1,
-  )
+  try:
+    response = client.list_users(
+      UserPoolId=settings.COGNITO_USER_POOL_ID,
+      Filter=f'sub = "{user_id}"',
+      Limit=1,
+    )
+  except ClientError as exc:
+    raise _external_cognito_error("look up user", exc) from exc
+
   users = cast(list[dict[str, Any]], response.get("Users", []))
   if not users:
     return None
@@ -251,8 +267,27 @@ def _offset_from_cursor(cursor: str | None) -> int:
   return 0
 
 
+def _world_matches_search(world: WorldMeta, search: str | None) -> bool:
+  if not search:
+    return True
+
+  needle = search.strip().lower()
+  if not needle:
+    return True
+
+  values = [
+    world.id,
+    world.title,
+    world.author_id,
+    world.genre,
+    world.visibility,
+    world.generation_status,
+  ]
+  return any(needle in str(value).lower() for value in values if value)
+
+
 @tracer.capture_method
-def list_all_worlds(limit: int, cursor: str | None) -> tuple[list[WorldMeta], str | None]:
+def list_all_worlds(limit: int, cursor: str | None, search: str | None = None) -> tuple[list[WorldMeta], str | None]:
   """List all world metadata records, sorted by created_at descending.
 
   There is no current all-worlds-by-created-at index, so this preserves the
@@ -266,6 +301,7 @@ def list_all_worlds(limit: int, cursor: str | None) -> tuple[list[WorldMeta], st
     )
   )
   fallback = datetime.min.replace(tzinfo=UTC)
+  worlds = [world for world in worlds if _world_matches_search(world, search)]
   worlds.sort(key=lambda world: world.created_at or fallback, reverse=True)
 
   end = offset + limit

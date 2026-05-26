@@ -124,9 +124,10 @@ async def admin_update_user_tier(
 async def admin_list_worlds(
   limit: int = Query(50, ge=1, le=200, description="Maximum number of worlds to return"),
   cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
+  search: str | None = Query(None, description="Optional title, world ID, author ID, or genre search"),
 ) -> PaginatedResponse[WorldMetaDTO]:
   """List all root world metadata records for the admin worlds table."""
-  worlds, next_cursor = admin_service.list_all_worlds(limit=limit, cursor=cursor)
+  worlds, next_cursor = admin_service.list_all_worlds(limit=limit, cursor=cursor, search=search)
   return PaginatedResponse(items=[world.to_dto() for world in worlds], next_cursor=next_cursor)
 
 
