@@ -4,6 +4,8 @@ Generates narrator voice profile for story generation.
 Uses structured output with deps properly injected into system prompt.
 """
 
+from typing import cast
+
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
@@ -49,10 +51,13 @@ class NarratorDeps(BaseModel):
 
 
 # Module-level agent instantiation
-_agent: Agent[NarratorDeps, LLMNarratorProfile] = Agent(  # type: ignore[invalid-assignment]  # output_type generic not inferred
-  model=get_utility_model(),
-  deps_type=NarratorDeps,
-  output_type=LLMNarratorProfile,
+_agent = cast(
+  Agent[NarratorDeps, LLMNarratorProfile],
+  Agent(
+    model=get_utility_model(),
+    deps_type=NarratorDeps,
+    output_type=LLMNarratorProfile,
+  ),
 )
 
 

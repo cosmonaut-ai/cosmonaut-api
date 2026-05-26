@@ -4,6 +4,8 @@ Extracts world and branch facts from story text for narrative consistency.
 Uses structured output with deps properly injected into system prompt.
 """
 
+from typing import cast
+
 from pydantic import BaseModel, Field
 from pydantic_ai import Agent, RunContext
 
@@ -72,10 +74,13 @@ class FactExtractionDeps(BaseModel):
 
 
 # Module-level agent instantiation
-_agent: Agent[FactExtractionDeps, LLMFactExtraction] = Agent(  # type: ignore[invalid-assignment]  # output_type generic not inferred
-  model=get_utility_model(),
-  deps_type=FactExtractionDeps,
-  output_type=LLMFactExtraction,
+_agent = cast(
+  Agent[FactExtractionDeps, LLMFactExtraction],
+  Agent(
+    model=get_utility_model(),
+    deps_type=FactExtractionDeps,
+    output_type=LLMFactExtraction,
+  ),
 )
 
 

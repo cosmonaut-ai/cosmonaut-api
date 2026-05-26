@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, cast
+
+from pynamodb.expressions.update import Action
 
 from app.core.errors import SessionNotFoundError
 from app.core.observability import logger, tracer
@@ -316,7 +318,7 @@ def update_membership_metadata(
 
   Called from the worker after world generation and image generation complete.
   """
-  actions = []
+  actions: list[Action] = []
   if world.title:
     actions.append(SessionMembership.title.set(world.title))
   if world.description:
@@ -443,12 +445,15 @@ def revoke_unauthorized_sessions(
     if not remaining:
       delete_session(session_id)
     elif len(remaining) < len(members):
-      session.members = remaining  # type: ignore[assignment]  # PynamoDB ListAttribute
       progress = dict(session.per_member_progress or {})
       for uid in unauthorized:
         progress.pop(uid, None)
-      session.per_member_progress = progress
-      session.save()
+      session.update(
+        actions=[
+          WorldSession.members.set(cast(Any, remaining)),
+          WorldSession.per_member_progress.set(progress),
+        ]
+      )
 
   if revoked:
     logger.info("Revoked %d session memberships for world %s", revoked, root_world_id)

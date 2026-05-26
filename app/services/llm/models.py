@@ -48,7 +48,10 @@ class LLMStoryNode(BaseModel):
 
   text: str = Field(description="The text of the story node.")
   choices: list[LLMChoice] = Field(
-    description="The choices available from this node. Prefer 2-3 choices; more only when distinct options exist. If ending, provide no choices."
+    description=(
+      "The choices available from this node. Prefer 2-3 choices; more only when distinct options exist. "
+      "If ending, provide no choices."
+    )
   )
   story_summary: str = Field(description="A summary of the story up to this node.")
   title: str = Field(description="A short 1-5 word title for the story node.")

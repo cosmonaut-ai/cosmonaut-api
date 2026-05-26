@@ -15,7 +15,7 @@ from starlette.responses import JSONResponse
 
 from app.api.admin import router as admin_router
 from app.api.auth import router as auth_router
-from app.api.dependencies import require_onboarded
+from app.api.dependencies import require_admin, require_onboarded
 from app.api.meta import router as meta_router
 from app.api.story_nodes import router as story_nodes_router
 from app.api.voices import router as voices_router
@@ -142,7 +142,7 @@ app.include_router(voices_router)
 # Webhook router – no auth (Stripe signature verification instead)
 app.include_router(webhooks_router)
 
-# Admin router – API-key auth (X-Admin-Key header, dependency on the router itself)
-app.include_router(admin_router)
+# Admin router – JWT auth plus Cognito group authorization for all child routes
+app.include_router(admin_router, dependencies=[Depends(require_admin)])
 
 nest_asyncio.apply()
