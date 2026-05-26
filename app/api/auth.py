@@ -13,6 +13,7 @@ from app.core.errors import AppError, BadRequestError, ExternalServiceError, Rat
 from app.core.observability import MetricUnit, logger, metrics
 from app.core.posthog import capture as ph_capture
 from app.core.security import User, get_current_user
+from app.models.dtos.usage import UsageResponse
 from app.models.entities.rate_limit import RateLimitRecord
 from app.services.account import delete_account
 from app.services.cognito import update_user_username
@@ -51,26 +52,6 @@ class CheckoutResponse(BaseModel):
 
 class BillingPortalResponse(BaseModel):
   portal_url: str
-
-
-class UsageResponse(BaseModel):
-  username: str | None
-  display_name: str
-  is_onboarded: bool
-  tier: str
-  nodes_used: int
-  nodes_limit: int
-  worlds_created: int
-  worlds_limit: int
-  audio_narrations_used: int
-  audio_narrations_limit: int
-  period_end: str | None
-  pending_cancellation: bool
-  cancellation_date: str | None
-  subscription_status: str | None
-  pending_tier: str | None
-  pending_tier_date: str | None
-  newsletter_opted_in: bool
 
 
 class UsernameCheckResponse(BaseModel):

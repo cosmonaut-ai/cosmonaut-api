@@ -88,9 +88,6 @@ class Settings(BaseSettings):
   # Frontend
   FRONTEND_DOMAIN: str = Field(default="dev.cosmonaut-ai.com", description="Public frontend domain for canonical URLs.")
 
-  # Admin
-  ADMIN_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the admin portal API key.")
-
   # PostHog (write-only project token, not a secret)
   POSTHOG_PROJECT_TOKEN: str = Field(default="", description="PostHog project token (write-only, not sensitive).")
   POSTHOG_HOST: str = Field(default="https://us.i.posthog.com", description="PostHog ingestion host.")

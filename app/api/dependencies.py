@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import Depends
 
 from app.core.errors import ForbiddenError, SessionAccessDeniedError
+from app.core.observability import logger
 from app.core.security import User, get_current_user
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO
 from app.models.dtos.world_meta import GenerationStatus, ImageGenerationStatus, WorldMetaDTO
@@ -22,6 +23,14 @@ def require_onboarded(current_user: User = Depends(get_current_user)) -> User:
   record = get_or_create_usage(current_user.id, email=current_user.email)
   if not record.is_onboarded:
     raise ForbiddenError("Onboarding required")
+  return current_user
+
+
+def require_admin(current_user: User = Depends(get_current_user)) -> User:
+  """Reject requests from users outside the Admin or Owner Cognito groups."""
+  if not current_user.is_admin:
+    logger.warning("Admin access denied for user %s", current_user.id)
+    raise ForbiddenError("Admin access required")
   return current_user
 
 

@@ -13,6 +13,8 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.observability import logger
 
+ADMIN_GROUPS = frozenset({"Admin", "Owner"})
+
 
 # --- Data Models ---
 class User(BaseModel):
@@ -28,7 +30,7 @@ class User(BaseModel):
 
   @property
   def is_admin(self) -> bool:
-    return "Admin" in self.groups or "Owner" in self.groups
+    return any(group in ADMIN_GROUPS for group in self.groups)
 
 
 # --- JWKS Management ---
