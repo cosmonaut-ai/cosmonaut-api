@@ -55,6 +55,51 @@ def _new_period_end(tier: str) -> datetime:
   return datetime.now(UTC) + timedelta(days=reset_days)
 
 
+def _clean_optional(value: str | None) -> str | None:
+  if value is None:
+    return None
+  cleaned = value.strip()
+  return cleaned or None
+
+
+def _sync_directory_snapshot(
+  record: UserRecord,
+  *,
+  email: str | None = None,
+  app_username: str | None = None,
+  cognito_username: str | None = None,
+  email_verified: bool | None = None,
+  enabled: bool | None = None,
+) -> bool:
+  """Update non-authoritative identity fields cached for admin directory reads."""
+  changed = False
+
+  cleaned_email = _clean_optional(email)
+  if cleaned_email is not None and record.email != cleaned_email:
+    record.email = cleaned_email
+    changed = True
+
+  cleaned_app_username = _clean_optional(app_username)
+  if cleaned_app_username is not None and not record.username:
+    record.username = cleaned_app_username
+    changed = True
+
+  cleaned_cognito_username = _clean_optional(cognito_username)
+  if cleaned_cognito_username is not None and record.cognito_username != cleaned_cognito_username:
+    record.cognito_username = cleaned_cognito_username
+    changed = True
+
+  if email_verified is not None and record.email_verified != email_verified:
+    record.email_verified = email_verified
+    changed = True
+
+  if enabled is not None and record.enabled != enabled:
+    record.enabled = enabled
+    changed = True
+
+  return changed
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -84,7 +129,15 @@ def _check_and_consume_tombstone(email: str) -> dict[str, Any] | None:
 
 
 @tracer.capture_method
-def get_or_create_usage(user_id: str, email: str | None = None) -> UserRecord:
+def get_or_create_usage(
+  user_id: str,
+  email: str | None = None,
+  *,
+  app_username: str | None = None,
+  cognito_username: str | None = None,
+  email_verified: bool | None = None,
+  enabled: bool | None = None,
+) -> UserRecord:
   """Return the ``UserRecord``, creating a FREE-tier default if absent.
 
   Also performs a *lazy period reset*: if ``period_end`` has passed the
@@ -103,6 +156,11 @@ def get_or_create_usage(user_id: str, email: str | None = None) -> UserRecord:
         PK=UserRecord.pk(user_id),
         SK=UserRecord.sk(),
         user_id=user_id,
+        username=_clean_optional(app_username),
+        email=_clean_optional(email),
+        cognito_username=_clean_optional(cognito_username),
+        email_verified=email_verified,
+        enabled=enabled,
         usage=UsageData(
           tier="FREE",
           nodes_used=carried["nodes_used"] if period_still_active else 0,
@@ -122,6 +180,11 @@ def get_or_create_usage(user_id: str, email: str | None = None) -> UserRecord:
         PK=UserRecord.pk(user_id),
         SK=UserRecord.sk(),
         user_id=user_id,
+        username=_clean_optional(app_username),
+        email=_clean_optional(email),
+        cognito_username=_clean_optional(cognito_username),
+        email_verified=email_verified,
+        enabled=enabled,
         usage=UsageData(
           tier="FREE",
           nodes_used=0,
@@ -134,6 +197,15 @@ def get_or_create_usage(user_id: str, email: str | None = None) -> UserRecord:
 
     record.save()
     return record
+
+  needs_save = _sync_directory_snapshot(
+    record,
+    email=email,
+    app_username=app_username,
+    cognito_username=cognito_username,
+    email_verified=email_verified,
+    enabled=enabled,
+  )
 
   # Lazy period reset
   u = record.usage
@@ -148,8 +220,11 @@ def get_or_create_usage(user_id: str, email: str | None = None) -> UserRecord:
       u.audio_narrations_used = 0
     u.period_end = _new_period_end(tier)
     record.updated_at = now
-    record.save()
+    needs_save = True
     logger.info(f"Period reset for user {user_id} (tier={tier})")
+
+  if needs_save or not record.GSI2PK:
+    record.save()
 
   return record
 

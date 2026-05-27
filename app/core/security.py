@@ -24,6 +24,7 @@ class User(BaseModel):
   email: str
   username: str
   app_username: str | None = None
+  email_verified: bool | None = None
   groups: list[str] = []
   tier: str = "FREE"
   stripe_customer_id: str | None = None
@@ -77,6 +78,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
       email="imatson9119@gmail.com",
       username="CosmonautDev",
       app_username="CosmonautDev",
+      email_verified=True,
       groups=["Owner"],
       tier="COSMONAUT",
     )
@@ -160,11 +162,20 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
     if isinstance(raw_groups, list):
       groups = [str(g) for g in cast(list[Any], raw_groups)]
 
+    raw_email_verified = payload.get("email_verified")
+    if isinstance(raw_email_verified, bool):
+      email_verified = raw_email_verified
+    elif raw_email_verified is None:
+      email_verified = None
+    else:
+      email_verified = str(raw_email_verified).lower() == "true"
+
     user = User(
       id=payload["sub"],
       email=payload.get("email", ""),
       username=payload.get("cognito:username", ""),
       app_username=payload.get("custom:username"),
+      email_verified=email_verified,
       groups=groups,
       tier=payload.get("custom:tier", "FREE"),
       stripe_customer_id=payload.get("custom:stripe_customer_id"),

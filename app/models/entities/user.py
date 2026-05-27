@@ -24,6 +24,7 @@ from pynamodb.attributes import (
   UnicodeAttribute,
   UTCDateTimeAttribute,
 )
+from pynamodb.indexes import AllProjection, GlobalSecondaryIndex
 
 from app.models.entities.base import BaseCosmonautModel
 
@@ -59,6 +60,16 @@ class UsageData(MapAttribute[str, UnicodeAttribute]):
 # ---------------------------------------------------------------------------
 
 
+class UserRecordGSI2Model(GlobalSecondaryIndex["UserRecord"]):
+  """Sparse GSI for the admin user directory."""
+
+  GSI2PK: UnicodeAttribute = UnicodeAttribute(hash_key=True)
+  GSI2SK: UnicodeAttribute = UnicodeAttribute(range_key=True)
+
+  class Meta:
+    projection = AllProjection()
+
+
 class UserRecord(BaseCosmonautModel):
   """Per-user profile and usage record.
 
@@ -69,10 +80,20 @@ class UserRecord(BaseCosmonautModel):
 
   user_id: UnicodeAttribute = UnicodeAttribute()
   username: UnicodeAttribute = UnicodeAttribute(null=True)
+  email: UnicodeAttribute = UnicodeAttribute(null=True)
+  cognito_username: UnicodeAttribute = UnicodeAttribute(null=True)
+  cognito_status: UnicodeAttribute = UnicodeAttribute(null=True)
+  email_verified: BooleanAttribute = BooleanAttribute(null=True)
+  enabled: BooleanAttribute = BooleanAttribute(null=True)
   is_onboarded: BooleanAttribute = BooleanAttribute(default=False)
   newsletter_opted_in: BooleanAttribute = BooleanAttribute(default=False)
 
   usage: UsageData = UsageData(default_for_new=UsageData)
+
+  # Sparse admin directory index. Populated only for real app users.
+  GSI2: UserRecordGSI2Model = UserRecordGSI2Model()
+  GSI2PK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI2PK", null=True)
+  GSI2SK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI2SK", null=True)
 
   # ── Key helpers ──────────────────────────────────────────────────────────
 
@@ -83,6 +104,20 @@ class UserRecord(BaseCosmonautModel):
   @classmethod
   def sk(cls) -> str:
     return "USAGE"
+
+  @classmethod
+  def gsi2_pk_user_profiles(cls) -> str:
+    return "USER_PROFILES"
+
+  @classmethod
+  def gsi2_sk_created(cls, created_at: str, user_id: str) -> str:
+    return f"CREATED#{created_at}#{user_id}"
+
+  def _on_save(self) -> None:
+    """Keep admin-directory GSI keys in sync with the record creation time."""
+    if self.created_at:
+      self.GSI2PK = UserRecord.gsi2_pk_user_profiles()
+      self.GSI2SK = UserRecord.gsi2_sk_created(self.created_at.isoformat(), str(self.user_id))
 
 
 # ---------------------------------------------------------------------------

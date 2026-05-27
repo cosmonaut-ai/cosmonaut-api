@@ -13,14 +13,15 @@ AdminTier = Literal["FREE", "EXPLORER", "COSMONAUT"]
 
 
 class AdminCognitoUserDTO(DTOModel):
-  """Cognito metadata surfaced in the admin UI."""
+  """App-user directory metadata surfaced in the admin UI."""
 
-  username: str
+  username: str | None = None
+  cognito_username: str | None = None
   sub: str
   email: str
   tier: str
   stripe_customer_id: str | None = None
-  email_verified: bool
+  email_verified: bool | None = None
   created_at: str | None = None
   status: str | None = None
   enabled: bool | None = None
