@@ -11,8 +11,8 @@ username, status, and enabled flag).
 
 Usage:
   python -m scripts.backfill_user_directory --env dev --dry-run
-  COGNITO_USER_POOL_ID=us-east-2_xxx python -m scripts.backfill_user_directory --env dev --sync-cognito
-  python -m scripts.backfill_user_directory --env prod
+  python -m scripts.backfill_user_directory --env dev --sync-cognito
+  python -m scripts.backfill_user_directory --env prod --sync-cognito --dry-run
 
 IMPORTANT: --env must be parsed and DYNAMODB_TABLE_NAME set before any app.*
 imports, because PynamoDB binds Meta.table_name at class-definition time.
@@ -28,6 +28,11 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
+_COGNITO_USER_POOL_IDS = {
+  "dev": "us-east-2_GWLKBPNKF",
+  "prod": "us-east-2_NE7ZsAjT9",
+}
+
 
 def _parse_args() -> argparse.Namespace:
   parser = argparse.ArgumentParser(description="Backfill app-user directory GSI keys on UserRecord")
@@ -40,7 +45,7 @@ def _parse_args() -> argparse.Namespace:
   )
   parser.add_argument(
     "--user-pool-id",
-    help="Cognito user pool ID to use with --sync-cognito; defaults to COGNITO_USER_POOL_ID",
+    help="Override the Cognito user pool ID selected from --env",
   )
   return parser.parse_args()
 
@@ -48,8 +53,7 @@ def _parse_args() -> argparse.Namespace:
 _cli_args = _parse_args()
 os.environ["DYNAMODB_TABLE_NAME"] = f"cosmonaut-{_cli_args.env}"
 os.environ["ENV"] = _cli_args.env
-if _cli_args.user_pool_id:
-  os.environ["COGNITO_USER_POOL_ID"] = _cli_args.user_pool_id
+os.environ["COGNITO_USER_POOL_ID"] = _cli_args.user_pool_id or _COGNITO_USER_POOL_IDS[_cli_args.env]
 
 from app.models.entities.user import UserRecord  # noqa: E402
 from app.services import cognito as cognito_service  # noqa: E402
@@ -228,6 +232,7 @@ def print_report(result: BackfillResult, dry_run: bool) -> None:
 def main() -> None:
   args = _cli_args
   log.info("Target table: %s", os.environ["DYNAMODB_TABLE_NAME"])
+  log.info("Target Cognito user pool: %s", os.environ["COGNITO_USER_POOL_ID"])
   if args.sync_cognito:
     log.info("Cognito identity sync enabled for existing app users")
   if args.dry_run:
