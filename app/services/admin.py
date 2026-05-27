@@ -54,7 +54,8 @@ def _parse_cognito_user(user: dict[str, Any]) -> AdminCognitoUserDTO:
         attrs[name] = str(attr.get("Value", ""))
 
   return AdminCognitoUserDTO(
-    username=str(user.get("Username") or ""),
+    username=attrs.get("custom:username") or None,
+    cognito_username=str(user.get("Username") or "") or None,
     sub=attrs.get("sub", ""),
     email=attrs.get("email", ""),
     tier=attrs.get("custom:tier") or "FREE",
@@ -81,6 +82,31 @@ def _external_cognito_error(action: str, exc: ClientError) -> ExternalServiceErr
   code = exc.response.get("Error", {}).get("Code", type(exc).__name__)
   logger.warning("Cognito %s failed: %s", action, code, exc_info=True)
   return ExternalServiceError(f"Cognito {action} failed: {code}")
+
+
+def _user_record_to_dto(record: UserRecord) -> AdminCognitoUserDTO:
+  usage = record.usage
+  return AdminCognitoUserDTO(
+    username=str(record.username) if record.username else None,
+    cognito_username=str(record.cognito_username) if record.cognito_username else None,
+    sub=str(record.user_id),
+    email=str(record.email) if record.email else "",
+    tier=str(usage.tier) if usage.tier else "FREE",
+    stripe_customer_id=str(usage.stripe_customer_id) if usage.stripe_customer_id else None,
+    email_verified=bool(record.email_verified) if record.email_verified is not None else None,
+    created_at=record.created_at.isoformat() if record.created_at else None,
+    status=str(record.cognito_status) if record.cognito_status else None,
+    enabled=bool(record.enabled) if record.enabled is not None else None,
+  )
+
+
+def _app_user_matches_email_prefix(user: AdminCognitoUserDTO, email_prefix: str | None) -> bool:
+  if not email_prefix:
+    return True
+  cleaned = email_prefix.strip().lower()
+  if not cleaned:
+    return True
+  return user.email.lower().startswith(cleaned)
 
 
 @tracer.capture_method
@@ -117,6 +143,40 @@ def list_cognito_users(
 
 
 @tracer.capture_method
+def list_app_users(
+  email_prefix: str | None = None,
+  limit: int = 60,
+  cursor: str | None = None,
+) -> tuple[list[AdminCognitoUserDTO], str | None]:
+  """List app-created users from the DynamoDB admin directory, newest first."""
+  last_key = decode_cursor(cursor)
+  users: list[AdminCognitoUserDTO] = []
+
+  while len(users) < limit:
+    results = UserRecord.GSI2.query(
+      hash_key=UserRecord.gsi2_pk_user_profiles(),
+      scan_index_forward=False,
+      page_size=limit,
+      limit=limit,
+      last_evaluated_key=last_key,
+    )
+    records = list(results)
+    last_key = results.last_evaluated_key
+
+    for record in records:
+      user = _user_record_to_dto(record)
+      if _app_user_matches_email_prefix(user, email_prefix):
+        users.append(user)
+        if len(users) >= limit:
+          break
+
+    if not last_key:
+      break
+
+  return users, encode_cursor(last_key)
+
+
+@tracer.capture_method
 def find_cognito_user_by_sub(user_id: str) -> AdminCognitoUserDTO | None:
   """Return Cognito user metadata for a Cognito ``sub``."""
   if not settings.COGNITO_USER_POOL_ID:
@@ -146,14 +206,35 @@ def get_cognito_user_by_sub(user_id: str) -> AdminCognitoUserDTO:
 
 
 @tracer.capture_method
+def get_app_user_by_sub(user_id: str) -> AdminCognitoUserDTO:
+  """Return app-user directory metadata for a user identified by Cognito ``sub``."""
+  try:
+    record = UserRecord.get(UserRecord.pk(user_id), UserRecord.sk())
+  except UserRecord.DoesNotExist as exc:
+    raise NotFoundError(f"App user not found for sub {user_id}") from exc
+  return _user_record_to_dto(record)
+
+
+@tracer.capture_method
 def list_cognito_groups_for_user(user_id: str) -> list[str]:
   """List Cognito group names for a user identified by ``sub``."""
-  user = get_cognito_user_by_sub(user_id)
+  try:
+    app_user = get_app_user_by_sub(user_id)
+    username = app_user.cognito_username
+  except NotFoundError:
+    username = None
+
+  if not username:
+    cognito_user = get_cognito_user_by_sub(user_id)
+    username = cognito_user.cognito_username
+  if not username:
+    raise NotFoundError(f"Cognito username not found for sub {user_id}")
+
   client = cast(Any, cognito_service._get_cognito_client())
   try:
     response = client.admin_list_groups_for_user(
       UserPoolId=settings.COGNITO_USER_POOL_ID,
-      Username=user.username,
+      Username=username,
     )
   except Exception as exc:
     logger.exception("Failed to list Cognito groups for user %s", user_id)
@@ -218,6 +299,20 @@ def update_user_tier(user_id: str, tier: AdminTier) -> str | None:
     logger.warning("DynamoDB tier updated, but Cognito sync failed for user %s", user_id, exc_info=True)
     return f"DynamoDB updated successfully, but Cognito sync failed: {exc}"
   return None
+
+
+@tracer.capture_method
+def update_user_cognito_status(user_id: str, *, enabled: bool, status: str | None = None) -> None:
+  """Persist the latest Cognito account status snapshot on the app user record."""
+  try:
+    record = UserRecord.get(UserRecord.pk(user_id), UserRecord.sk())
+  except UserRecord.DoesNotExist:
+    logger.warning("Cannot sync Cognito status for missing app user %s", user_id)
+    return
+
+  record.enabled = enabled
+  record.cognito_status = status
+  record.save()
 
 
 def _sync_cognito_tier_strict(user_id: str, tier: AdminTier) -> None:

@@ -112,10 +112,21 @@ _TIER_PRICE_MAP: dict[str, str] = {
 }
 
 
+def _get_or_create_current_user_usage(current_user: User):
+  return get_or_create_usage(
+    current_user.id,
+    email=current_user.email,
+    app_username=current_user.app_username,
+    cognito_username=current_user.username,
+    email_verified=current_user.email_verified,
+    enabled=True,
+  )
+
+
 @router.get("/usage", response_model=UsageResponse, summary="Get current usage and quota info")
 async def get_usage(current_user: User = Depends(get_current_user)) -> UsageResponse:
   """Return the authenticated user's tier, usage counters, and limits."""
-  record = get_or_create_usage(current_user.id, email=current_user.email)
+  record = _get_or_create_current_user_usage(current_user)
   u = record.usage
   tier = str(u.tier) if u.tier else "FREE"
   limits = get_tier_limits(tier)
@@ -204,7 +215,7 @@ async def create_billing_portal(
   """Create a Stripe Billing Portal session so the user can manage their
   subscription (cancel, change plan, update payment method).
   """
-  record = get_or_create_usage(current_user.id)
+  record = _get_or_create_current_user_usage(current_user)
   if not record.usage.stripe_customer_id:
     raise BadRequestError("No active subscription found")
 
@@ -249,7 +260,7 @@ async def submit_feedback(
   )
   record.save()
 
-  record = get_or_create_usage(current_user.id)
+  record = _get_or_create_current_user_usage(current_user)
   tier = str(record.usage.tier) if record.usage.tier else "FREE"
 
   send_feedback_email(
@@ -279,7 +290,7 @@ async def update_newsletter(
   current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
   """Subscribe or unsubscribe the user from the product newsletter."""
-  record = get_or_create_usage(current_user.id)
+  record = _get_or_create_current_user_usage(current_user)
   record.newsletter_opted_in = payload.opted_in
   record.save()
 
@@ -328,7 +339,14 @@ async def set_username(
 
   Usernames are permanent and cannot be changed once set.
   """
-  stored = reserve_username(current_user.id, payload.username)
+  stored = reserve_username(
+    current_user.id,
+    payload.username,
+    email=current_user.email,
+    cognito_username=current_user.username,
+    email_verified=current_user.email_verified,
+    enabled=True,
+  )
   ph_capture("username_set", distinct_id=current_user.id)
   return UsernameSetResponse(username=stored)
 

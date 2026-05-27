@@ -29,14 +29,13 @@ from app.services.llm.sanitize import sanitize_llm_output, sanitize_user_input
 from app.services.pinecone import PineconeBranchFact
 from app.services.sessions import create_node_session, get_node_session
 from app.services.sqs import SQSSendError, send_node_analysis_message
-from app.services.usage import check_and_increment, check_quota, release_quota
+from app.services.usage import QuotaExceededError, check_and_increment, check_quota, release_quota
 from app.services.worlds import get_world_entity, world_meta_to_llm_world_info
 from app.utils import LLMOutputTruncatedError, base52_to_number, extract_xml_block, extract_xml_json
 from app.utils.pii import truncate_for_log
 
 if TYPE_CHECKING:
   from app.models.entities.world_meta import WorldMeta
-  from app.services.usage import QuotaExceededError
 
 
 class NodeServiceError(Exception):
@@ -654,11 +653,14 @@ async def generate_text(
       return
     raise InvalidGenerationStatusError(node_id, current_status, allowed_statuses) from None
 
+  quota_reserved = False
+
   try:
     # Enforce node quota after winning the status transition so that losing
     # concurrent requests (or retries after a network error) do not waste quota.
     if user_id:
       check_and_increment(user_id, "nodes")
+      quota_reserved = True
     # Select appropriate stream generator based on node type
     if node.parent_id is None:
       # Root node: use root node agent
@@ -759,13 +761,12 @@ async def generate_text(
 
   except QuotaExceededError:
     logger.info(f"Quota exceeded for nodes for user {user_id}")
-    if user_id:
-      release_quota(user_id, "nodes")
     node.generation_status = GenerationStatus.INITIALIZED.value
     node.save()
+    raise
   except Exception as e:
     logger.error(f"Error generating text for node {node_id}: {e}")
-    if user_id:
+    if user_id and quota_reserved:
       release_quota(user_id, "nodes")
     node.generation_status = GenerationStatus.FAILED.value
     node.save()

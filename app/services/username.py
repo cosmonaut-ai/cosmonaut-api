@@ -93,7 +93,15 @@ def check_availability(username: str) -> bool:
 
 
 @tracer.capture_method
-def reserve_username(user_id: str, username: str) -> str:
+def reserve_username(
+  user_id: str,
+  username: str,
+  *,
+  email: str | None = None,
+  cognito_username: str | None = None,
+  email_verified: bool | None = None,
+  enabled: bool | None = None,
+) -> str:
   """Atomically claim *username* for *user_id*.
 
   Returns the stored username (original casing preserved).
@@ -104,7 +112,13 @@ def reserve_username(user_id: str, username: str) -> str:
   """
   username = validate_username(username)
 
-  record = get_or_create_usage(user_id)
+  record = get_or_create_usage(
+    user_id,
+    email=email,
+    cognito_username=cognito_username,
+    email_verified=email_verified,
+    enabled=enabled,
+  )
   if record.username:
     raise BadRequestError("Username has already been set and cannot be changed")
 

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 
+from app.core.errors import NotFoundError
 from app.core.observability import logger
 from app.core.security import User, get_current_user
 from app.models.dtos.admin import (
@@ -37,28 +38,28 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.get(
   "/users",
   response_model=PaginatedResponse[AdminCognitoUserDTO],
-  summary="List Cognito users (admin)",
+  summary="List app users (admin)",
 )
 async def admin_list_users(
-  email_prefix: str | None = Query(None, description="Optional Cognito email prefix filter"),
+  email_prefix: str | None = Query(None, description="Optional app-user email prefix filter"),
   limit: int = Query(60, ge=1, le=60, description="Maximum number of users to return"),
   cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
 ) -> PaginatedResponse[AdminCognitoUserDTO]:
-  """List Cognito users for the admin user table."""
-  users, next_cursor = admin_service.list_cognito_users(email_prefix=email_prefix, limit=limit, cursor=cursor)
+  """List app-created users for the admin user table."""
+  users, next_cursor = admin_service.list_app_users(email_prefix=email_prefix, limit=limit, cursor=cursor)
   return PaginatedResponse(items=users, next_cursor=next_cursor)
 
 
 @router.get(
   "/users/{user_id}",
   response_model=AdminCognitoUserDTO,
-  summary="Get Cognito user metadata (admin)",
+  summary="Get app user metadata (admin)",
 )
 async def admin_get_user(
   user_id: str = Path(..., description="Cognito sub (UUID) of the user"),
 ) -> AdminCognitoUserDTO:
-  """Return Cognito metadata for a user identified by sub."""
-  return admin_service.get_cognito_user_by_sub(user_id)
+  """Return app-user directory metadata for a user identified by sub."""
+  return admin_service.get_app_user_by_sub(user_id)
 
 
 @router.get(
@@ -251,13 +252,23 @@ async def admin_delete_account(
   """
   logger.info("Admin %s deleting account for user %s", current_user.id, user_id)
 
-  email, _name = cognito_service.get_user_contact_info(user_id)
+  try:
+    app_user = admin_service.get_app_user_by_sub(user_id)
+    email = app_user.email
+    cognito_username = app_user.cognito_username
+  except NotFoundError:
+    email = ""
+    cognito_username = None
+
+  if not email:
+    email, _name = cognito_service.get_user_contact_info(user_id)
   if not email:
     logger.warning("Could not resolve email for user %s; proceeding without tombstone", user_id)
 
   # Resolve the Cognito username needed by the deletion cascade.
-  client = cognito_service._get_cognito_client()
-  cognito_username = cognito_service._resolve_cognito_username(client, user_id)
+  if not cognito_username:
+    client = cognito_service._get_cognito_client()
+    cognito_username = cognito_service._resolve_cognito_username(client, user_id)
   if not cognito_username:
     raise HTTPException(status_code=404, detail=f"Cognito user not found for sub {user_id}")
 
@@ -282,6 +293,7 @@ async def admin_ban_user(
     raise HTTPException(status_code=404, detail=str(e)) from None
   except RuntimeError as e:
     raise HTTPException(status_code=502, detail=str(e)) from None
+  admin_service.update_user_cognito_status(user_id, enabled=False, status="DISABLED")
   return {"status": "banned", "sessions_revoked": sessions_revoked}
 
 
@@ -302,4 +314,5 @@ async def admin_unban_user(
     raise HTTPException(status_code=404, detail=str(e)) from None
   except RuntimeError as e:
     raise HTTPException(status_code=502, detail=str(e)) from None
+  admin_service.update_user_cognito_status(user_id, enabled=True, status=None)
   return {"status": "unbanned"}

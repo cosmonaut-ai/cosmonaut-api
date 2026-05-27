@@ -20,7 +20,14 @@ from app.services.worlds import get_world_entity
 
 def require_onboarded(current_user: User = Depends(get_current_user)) -> User:
   """Reject requests from users who have not completed onboarding."""
-  record = get_or_create_usage(current_user.id, email=current_user.email)
+  record = get_or_create_usage(
+    current_user.id,
+    email=current_user.email,
+    app_username=current_user.app_username,
+    cognito_username=current_user.username,
+    email_verified=current_user.email_verified,
+    enabled=True,
+  )
   if not record.is_onboarded:
     raise ForbiddenError("Onboarding required")
   return current_user
