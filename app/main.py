@@ -14,6 +14,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from app.api.admin import router as admin_router
+from app.api.admin_audio import router as admin_audio_router
 from app.api.auth import router as auth_router
 from app.api.dependencies import require_admin, require_onboarded
 from app.api.meta import router as meta_router
@@ -144,5 +145,6 @@ app.include_router(webhooks_router)
 
 # Admin router – JWT auth plus Cognito group authorization for all child routes
 app.include_router(admin_router, dependencies=[Depends(require_admin)])
+app.include_router(admin_audio_router, dependencies=[Depends(require_admin)])
 
 nest_asyncio.apply()

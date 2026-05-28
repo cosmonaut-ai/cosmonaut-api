@@ -22,6 +22,7 @@ class EntityType(str, Enum):
   NODE_TEXT = "node_text"
   WORLD_FACT = "world_fact"
   BRANCH_FACT = "branch_fact"
+  SOUNDTRACK = "soundtrack"
 
 
 class PineconeRecord(BaseModel):

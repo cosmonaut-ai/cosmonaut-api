@@ -49,7 +49,34 @@ def upload_file(
     CacheControl=cache_control,
   )
   logger.info(f"Uploaded file to s3://{settings.STATIC_CONTENT_S3_BUCKET}/{key}")
+  return cdn_url_for_key(key)
+
+
+def cdn_url_for_key(key: str) -> str:
+  """Return the public CDN URL for a static-content S3 key."""
   return f"https://{settings.STATIC_CONTENT_CDN_DOMAIN}/{key}"
+
+
+def create_presigned_upload_url(
+  key: str,
+  content_type: str,
+  *,
+  cache_control: str = "public, max-age=31536000, immutable",
+  expires_in_seconds: int = 3600,
+) -> str:
+  """Create a presigned PUT URL for direct S3 upload."""
+  return str(
+    get_s3_client().generate_presigned_url(
+      "put_object",
+      Params={
+        "Bucket": settings.STATIC_CONTENT_S3_BUCKET,
+        "Key": key,
+        "ContentType": content_type,
+        "CacheControl": cache_control,
+      },
+      ExpiresIn=expires_in_seconds,
+    )
+  )
 
 
 def upload_image(key: str, image_bytes: bytes, content_type: str = "image/png") -> str:
@@ -66,6 +93,23 @@ def upload_image(key: str, image_bytes: bytes, content_type: str = "image/png") 
     The full CDN URL for the uploaded image.
   """
   return upload_file(key=key, data=image_bytes, content_type=content_type)
+
+
+@tracer.capture_method
+def delete_file(key: str) -> None:
+  """Delete a single static-content object by key."""
+  get_s3_client().delete_object(Bucket=settings.STATIC_CONTENT_S3_BUCKET, Key=key)
+  logger.info(f"Deleted file from s3://{settings.STATIC_CONTENT_S3_BUCKET}/{key}")
+
+
+@tracer.capture_method
+def file_exists(key: str) -> bool:
+  """Return whether a static-content object exists by exact key."""
+  bucket = settings.STATIC_CONTENT_S3_BUCKET
+  if not bucket:
+    return False
+  response = get_s3_client().list_objects_v2(Bucket=bucket, Prefix=key, MaxKeys=1)
+  return any(obj.get("Key") == key for obj in response.get("Contents", []))
 
 
 @tracer.capture_method
