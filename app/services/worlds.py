@@ -14,6 +14,7 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from pydantic import BaseModel
 from pynamodb.transactions import TransactWrite
 
 import app.services.llm as llm
@@ -22,18 +23,14 @@ from app.core.config import WORLD_LENGTH_MAX_NODES
 from app.core.errors import NotFoundError
 from app.core.observability import MetricUnit, logger, metrics, tracer
 from app.models.dtos.story_node import (
-  GenerationStatus as NodeGenerationStatus,
-)
-from app.models.dtos.story_node import (
+  NodeGenerationStatus,
   StoryNodeDTO,
   StoryNodeProcessingStatus,
 )
 from app.models.dtos.world_meta import (
-  CharacterDTO,
-  GenerationStatus,
   ImageGenerationStatus,
-  LocationDTO,
   WorldCreateRequest,
+  WorldGenerationStatus,
   WorldMetaDTO,
   WorldVisibility,
 )
@@ -167,7 +164,7 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> tuple[Worl
       author_id=user_id,
       visibility=create_request.visibility,
       world_prompt=sanitized_prompt,
-      generation_status=GenerationStatus.INITIALIZED,
+      generation_status=WorldGenerationStatus.INITIALIZED,
       story_max_nodes=max_nodes,
       world_length=create_request.world_length.value,
       vocab_level=create_request.vocab_level.value,
@@ -211,45 +208,27 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> tuple[Worl
   return meta, session
 
 
-def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
+def update_world(world_id: str, payload: BaseModel) -> WorldMeta:
   """Apply partial updates to an existing world.
 
-  Only fields explicitly provided (non-None) in the payload are updated.
-  Immutable fields (id, author_id, created_at, updated_at) are ignored.
+  Accepts either a ``WorldUpdateRequest`` (user-facing, restricted field set)
+  or a ``WorldMetaDTO`` (internal/admin, full field set).  Only fields
+  present on the *payload model* and non-None are applied; immutable fields
+  are always skipped.
   """
   world = get_world_entity(world_id)
 
-  # Fields that should never be updated via this endpoint.
-  # ``visibility`` is restricted to the dedicated /sharing endpoint
-  # to ensure the cascade (revoke_unauthorized_sessions) always fires.
   immutable_fields = {"id", "author_id", "created_at", "updated_at", "visibility"}
 
-  # Field converters: maps DTO field name to a converter function
-  def convert_visibility(v: WorldVisibility) -> str:
-    return WorldVisibility(v).value
-
-  def convert_generation_status(v: GenerationStatus) -> str:
-    return GenerationStatus(v).value
-
-  def convert_image_generation_status(v: ImageGenerationStatus) -> str:
-    return ImageGenerationStatus(v).value
-
-  def convert_characters(v: list[CharacterDTO]) -> list[Character]:
-    return [Character.from_dto(c) for c in v]
-
-  def convert_locations(v: list[LocationDTO]) -> list[Location]:
-    return [Location.from_dto(loc) for loc in v]
-
   converters: dict[str, Callable[[Any], Any]] = {
-    "visibility": convert_visibility,
-    "generation_status": convert_generation_status,
-    "image_generation_status": convert_image_generation_status,
-    "characters": convert_characters,
-    "locations": convert_locations,
+    "visibility": lambda v: WorldVisibility(v).value,
+    "generation_status": lambda v: WorldGenerationStatus(v).value,
+    "image_generation_status": lambda v: ImageGenerationStatus(v).value,
+    "characters": lambda v: [Character.from_dto(c) for c in v],
+    "locations": lambda v: [Location.from_dto(loc) for loc in v],
   }
 
-  # Iterate over all payload fields and apply non-None, non-immutable updates
-  for field_name in WorldMetaDTO.model_fields:
+  for field_name in payload.model_fields:
     if field_name in immutable_fields:
       continue
     value = getattr(payload, field_name)

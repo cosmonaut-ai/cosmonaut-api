@@ -13,7 +13,7 @@ if TYPE_CHECKING:
 _cognito_client: CognitoIdentityProviderClient | None = None
 
 
-def _get_cognito_client() -> CognitoIdentityProviderClient:
+def get_cognito_client() -> CognitoIdentityProviderClient:
   global _cognito_client
   if _cognito_client is None:
     import boto3
@@ -55,7 +55,7 @@ def get_user_contact_info(user_id: str) -> tuple[str, str]:
     logger.warning("COGNITO_USER_POOL_ID not set; cannot look up user contact info")
     return "", ""
 
-  client = _get_cognito_client()
+  client = get_cognito_client()
   try:
     response = client.list_users(
       UserPoolId=settings.COGNITO_USER_POOL_ID,
@@ -87,7 +87,7 @@ def update_user_tier(user_id: str, tier: str) -> None:
     logger.warning("COGNITO_USER_POOL_ID not set; skipping tier sync")
     return
 
-  client = _get_cognito_client()
+  client = get_cognito_client()
 
   # The user_id is the Cognito ``sub`` UUID.  admin_update_user_attributes
   # requires the actual Cognito username, so look it up first.
@@ -120,7 +120,7 @@ def update_user_username(user_id: str, app_username: str) -> None:
     logger.warning("COGNITO_USER_POOL_ID not set; skipping username sync")
     return
 
-  client = _get_cognito_client()
+  client = get_cognito_client()
 
   cognito_username = _resolve_cognito_username(client, user_id)
   if not cognito_username:
@@ -154,7 +154,7 @@ def ban_user(user_id: str) -> bool:
     logger.warning("COGNITO_USER_POOL_ID not set; skipping ban")
     return False
 
-  client = _get_cognito_client()
+  client = get_cognito_client()
   username = _resolve_cognito_username(client, user_id)
   if not username:
     raise ValueError(f"Could not resolve Cognito username for sub {user_id}")
@@ -188,7 +188,7 @@ def unban_user(user_id: str) -> None:
     logger.warning("COGNITO_USER_POOL_ID not set; skipping unban")
     return
 
-  client = _get_cognito_client()
+  client = get_cognito_client()
   username = _resolve_cognito_username(client, user_id)
   if not username:
     raise ValueError(f"Could not resolve Cognito username for sub {user_id}")

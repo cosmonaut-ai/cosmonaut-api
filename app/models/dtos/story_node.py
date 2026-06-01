@@ -28,7 +28,7 @@ class ChooseRequestDTO(DTOModel):
   """Request body for the choose endpoint."""
 
   target_id: str | None = None
-  custom_choice: str | None = Field(None, max_length=200)
+  custom_choice: str | None = Field(None, min_length=5, max_length=200)
 
 
 class StoryNodeProcessingStatus(str, Enum):
@@ -40,7 +40,7 @@ class StoryNodeProcessingStatus(str, Enum):
   FAILED = "failed"
 
 
-class GenerationStatus(str, Enum):
+class NodeGenerationStatus(str, Enum):
   """Status of story node text generation."""
 
   INITIALIZED = "initialized"
@@ -81,5 +81,5 @@ class StoryNodeDTO(DTOModel):
   updated_at: datetime | None = None
   source_session_id: str | None = None
   processing_status: StoryNodeProcessingStatus = StoryNodeProcessingStatus.PENDING
-  generation_status: GenerationStatus = GenerationStatus.INITIALIZED
+  generation_status: NodeGenerationStatus = NodeGenerationStatus.INITIALIZED
   audio: dict[str, AudioEntryDTO] = Field(default_factory=dict)

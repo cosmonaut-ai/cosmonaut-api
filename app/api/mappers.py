@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from app.models.dtos.session import WorldSessionDTO, WorldSessionSummaryDTO
 from app.models.dtos.story_node import ChoiceDTO, StoryNodeDTO
-from app.models.dtos.world_meta import GenerationStatus, ImageGenerationStatus, WorldMetaDTO
+from app.models.dtos.world_meta import ImageGenerationStatus, WorldGenerationStatus, WorldMetaDTO
 from app.models.entities.node_session import NodeSession
 from app.models.entities.session_membership import SessionMembership
 from app.models.entities.world_meta import WorldMeta
@@ -18,7 +18,7 @@ def membership_to_world_summary_dto(membership: SessionMembership) -> WorldMetaD
     title=membership.title,
     description=membership.description,
     genre=membership.genre,
-    generation_status=GenerationStatus(membership.generation_status) if membership.generation_status else None,
+    generation_status=WorldGenerationStatus(membership.generation_status) if membership.generation_status else None,
     root_node_id=membership.root_node_id,
     world_image_url=membership.world_image_url,
     world_image_alt_text=membership.world_image_alt_text,

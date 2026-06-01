@@ -17,6 +17,11 @@ class AppError(Exception):
   code: str = "INTERNAL_ERROR"
 
 
+class AuthenticationError(AppError):
+  status_code = 401
+  code = "AUTHENTICATION_ERROR"
+
+
 class NotFoundError(AppError):
   status_code = 404
   code = "NOT_FOUND"

@@ -23,7 +23,7 @@ from app.core.posthog import init_posthog
 from app.core.sentry import init_sentry
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
 from app.models.dtos.story_node import StoryNodeProcessingStatus
-from app.models.dtos.world_meta import GenerationStatus, ImageGenerationStatus
+from app.models.dtos.world_meta import ImageGenerationStatus, WorldGenerationStatus
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
 from app.services import images, story_nodes, worlds
@@ -195,20 +195,20 @@ async def _generate_world(payload: GenerateWorldPayload):
   # - generate_lore() overwrites previous lore
   # - generate_narrator_profile() is idempotent (returns early if already set)
   # - initialize_root_node() overwrites the root node (same deterministic ID "0")
-  if world.generation_status == GenerationStatus.COMPLETED:
+  if world.generation_status == WorldGenerationStatus.COMPLETED:
     logger.info(f"World {world_id} already completed, skipping.")
     return
 
   try:
     # 1. Generate Lore
     logger.info("Generating Lore...")
-    world.generation_status = GenerationStatus.GENERATING_LORE
+    world.generation_status = WorldGenerationStatus.GENERATING_LORE
     world.save()
     await worlds.generate_lore(world)
 
     # 2. Generate Narrator Profile
     logger.info("Generating Narrator...")
-    world.generation_status = GenerationStatus.GENERATING_NARRATOR_PROFILE
+    world.generation_status = WorldGenerationStatus.GENERATING_NARRATOR_PROFILE
     world.save()
     await worlds.generate_narrator_profile(world)
 
@@ -217,7 +217,7 @@ async def _generate_world(payload: GenerateWorldPayload):
     logger.info("Initializing Root Node...")
     worlds.initialize_root_node(world)
 
-    world.generation_status = GenerationStatus.COMPLETED
+    world.generation_status = WorldGenerationStatus.COMPLETED
     ph_capture(
       "world_generation_completed",
       distinct_id=str(world.author_id),
@@ -240,7 +240,7 @@ async def _generate_world(payload: GenerateWorldPayload):
 
   except Exception as e:
     logger.exception(f"Error generating world {world_id}: {e}")
-    world.generation_status = GenerationStatus.FAILED
+    world.generation_status = WorldGenerationStatus.FAILED
     ph_capture(
       "world_generation_failed",
       distinct_id=str(world.author_id),

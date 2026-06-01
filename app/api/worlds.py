@@ -16,6 +16,7 @@ from app.models.dtos.world_meta import (
   InviteTokenDTO,
   WorldCreateRequest,
   WorldMetaDTO,
+  WorldUpdateRequest,
   WorldUpdateSharingRequest,
   WorldVisibility,
 )
@@ -93,11 +94,16 @@ async def create_world(payload: WorldCreateRequest, user: User = Depends(get_cur
   summary="Update fields on an existing root world",
 )
 async def update_world(
-  payload: WorldMetaDTO,
+  payload: WorldUpdateRequest,
   world_id: str = Path(..., description="Root world identifier"),
   user: User = Depends(get_current_user),
 ) -> WorldMetaDTO:
-  """Apply partial updates to a root world owned by the caller."""
+  """Apply partial updates to a root world owned by the caller.
+
+  Only user-editable fields are accepted; system-managed fields
+  (generation_status, featured_order, image URLs, etc.) are rejected
+  by the ``WorldUpdateRequest`` schema.
+  """
   require_world_write(world_id, user)
   world = world_service.update_world(world_id, payload)
   return world.to_dto()

@@ -21,7 +21,7 @@ from app.core.posthog import flush as ph_flush
 from app.core.security import User, get_current_user
 from app.models.dtos.base import PaginatedResponse
 from app.models.dtos.session import SessionLinkHandoffDTO, WorldSessionDTO, WorldSessionSummaryDTO
-from app.models.dtos.story_node import ChooseRequestDTO, GenerationStatus, StoryNodeDTO
+from app.models.dtos.story_node import ChooseRequestDTO, NodeGenerationStatus, StoryNodeDTO
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_session import WorldSession
 from app.models.voices import get_voice_by_id
@@ -218,6 +218,7 @@ async def choose(
     raise BadRequestError("Exactly one of 'target_id' or 'custom_choice' must be provided")
 
   _, root_world_id, _ = _node_context(session_id, node_id, current_user)
+  node_existed_before = request.target_id is not None and get_node_session(session_id, request.target_id) is not None
   new_node = await node_service.choose_with_session(
     root_world_id=root_world_id,
     session_id=session_id,
@@ -226,7 +227,13 @@ async def choose(
     custom_choice=request.custom_choice,
     user_id=current_user.id,
   )
-  update_session_progress(session_id, root_world_id, current_user.id, str(new_node.id))
+  update_session_progress(
+    session_id,
+    root_world_id,
+    current_user.id,
+    str(new_node.id),
+    is_new_node=not node_existed_before,
+  )
   dto = new_node.to_dto()
   ns = get_node_session(session_id, str(new_node.id))
   dto.choices = merge_choices(
@@ -376,7 +383,7 @@ async def generate_node_audio(
   _, root_world_id, node = _node_context(session_id, node_id, current_user)
   check_rate_limit(current_user.id, "audio")
 
-  if GenerationStatus(node.generation_status) != GenerationStatus.COMPLETED:
+  if NodeGenerationStatus(node.generation_status) != NodeGenerationStatus.COMPLETED:
     raise BadRequestError(f"Node {node_id} text has not been generated yet")
 
   text = str(node.text)

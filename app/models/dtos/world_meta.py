@@ -9,7 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from app.models.dtos.base import DTOModel
 
 
-class GenerationStatus(str, Enum):
+class WorldGenerationStatus(str, Enum):
   """Status of the world generation."""
 
   INITIALIZED = "initialized"
@@ -63,13 +63,31 @@ class WorldCreateRequest(BaseModel):
   """Payload for creating a new world."""
 
   visibility: WorldVisibility = WorldVisibility.PRIVATE
-  world_prompt: str = Field(..., max_length=2000, description="The prompt for the world.")
+  world_prompt: str = Field(..., min_length=5, max_length=2000, description="The prompt for the world.")
   world_length: WorldLength = Field(default=WorldLength.MEDIUM, description="Story length preset (short/medium/long).")
   vocab_level: VocabLevel = Field(default=VocabLevel.ADULT, description="Vocabulary complexity level.")
   content_filter: ContentFilter = Field(
     default=ContentFilter.NONE, description="Content filtering strictness for graphic material."
   )
   max_choices: int | None = Field(default=None, ge=2, le=10, description="Fixed choice count per node.")
+
+
+class WorldUpdateRequest(BaseModel):
+  """Payload for owner-initiated world updates (PATCH /worlds/{id}).
+
+  Only fields that a world owner should be able to change directly are
+  exposed here. System-managed fields (generation_status, featured_order,
+  image_generation_status, root_node_id, story_max_nodes, score, etc.)
+  must be updated through internal/admin paths.
+  """
+
+  title: str | None = None
+  description: str | None = None
+  world_prompt: str | None = Field(None, min_length=5, max_length=2000)
+  vocab_level: str | None = None
+  content_filter: str | None = None
+  world_length: str | None = None
+  max_choices: int | None = Field(None, ge=2, le=10)
 
 
 class WorldUpdateSharingRequest(BaseModel):
@@ -112,7 +130,7 @@ class WorldMetaDTO(DTOModel):
   description: str | None = None
   genre: str | None = None
   score: str | None = None
-  generation_status: GenerationStatus | None = None
+  generation_status: WorldGenerationStatus | None = None
   author_id: str | None = None
   root_node_id: str | None = None
   visibility: WorldVisibility | None = None

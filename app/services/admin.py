@@ -132,7 +132,7 @@ def list_cognito_users(
   if isinstance(pagination_token, str) and pagination_token:
     params["PaginationToken"] = pagination_token
 
-  client = cast(Any, cognito_service._get_cognito_client())
+  client = cast(Any, cognito_service.get_cognito_client())
   try:
     response = client.list_users(**params)
   except ClientError as exc:
@@ -182,7 +182,7 @@ def find_cognito_user_by_sub(user_id: str) -> AdminCognitoUserDTO | None:
   if not settings.COGNITO_USER_POOL_ID:
     raise ExternalServiceError("COGNITO_USER_POOL_ID is not configured")
 
-  client = cast(Any, cognito_service._get_cognito_client())
+  client = cast(Any, cognito_service.get_cognito_client())
   try:
     response = client.list_users(
       UserPoolId=settings.COGNITO_USER_POOL_ID,
@@ -230,7 +230,7 @@ def list_cognito_groups_for_user(user_id: str) -> list[str]:
   if not username:
     raise NotFoundError(f"Cognito username not found for sub {user_id}")
 
-  client = cast(Any, cognito_service._get_cognito_client())
+  client = cast(Any, cognito_service.get_cognito_client())
   try:
     response = client.admin_list_groups_for_user(
       UserPoolId=settings.COGNITO_USER_POOL_ID,
@@ -320,7 +320,7 @@ def _sync_cognito_tier_strict(user_id: str, tier: AdminTier) -> None:
   if not settings.COGNITO_USER_POOL_ID:
     raise ExternalServiceError("COGNITO_USER_POOL_ID is not configured")
 
-  client = cast(Any, cognito_service._get_cognito_client())
+  client = cast(Any, cognito_service.get_cognito_client())
   username = cognito_service._resolve_cognito_username(client, user_id)
   if not username:
     raise NotFoundError(f"Could not resolve Cognito username for sub {user_id}")
@@ -385,18 +385,24 @@ def _world_matches_search(world: WorldMeta, search: str | None) -> bool:
 def list_all_worlds(limit: int, cursor: str | None, search: str | None = None) -> tuple[list[WorldMeta], str | None]:
   """List all world metadata records, sorted by created_at descending.
 
-  There is no current all-worlds-by-created-at index, so this preserves the
-  former dashboard behavior with a full admin scan and an offset cursor.
+  There is no current all-worlds-by-created-at index, so a scan is required.
+  The scan streams items in batches (page_size) instead of loading everything
+  at once to bound memory usage.  Sorting still happens in application code;
+  a dedicated GSI would be needed to eliminate this entirely.
   """
   offset = _offset_from_cursor(cursor)
   meta_condition = WorldMeta.SK == WorldMeta.sk()  # noqa: SIM300 - PynamoDB needs the attribute on the left.
-  worlds = list(
-    WorldMeta.scan(
-      filter_condition=(WorldMeta.PK.startswith("WORLD#") & meta_condition),
-    )
-  )
+
+  worlds: list[WorldMeta] = []
+  scan_kwargs: dict = {
+    "filter_condition": WorldMeta.PK.startswith("WORLD#") & meta_condition,
+    "page_size": 100,
+  }
+  for item in WorldMeta.scan(**scan_kwargs):
+    if _world_matches_search(item, search):
+      worlds.append(item)
+
   fallback = datetime.min.replace(tzinfo=UTC)
-  worlds = [world for world in worlds if _world_matches_search(world, search)]
   worlds.sort(key=lambda world: world.created_at or fallback, reverse=True)
 
   end = offset + limit

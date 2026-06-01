@@ -267,7 +267,7 @@ async def admin_delete_account(
 
   # Resolve the Cognito username needed by the deletion cascade.
   if not cognito_username:
-    client = cognito_service._get_cognito_client()
+    client = cognito_service.get_cognito_client()
     cognito_username = cognito_service._resolve_cognito_username(client, user_id)
   if not cognito_username:
     raise HTTPException(status_code=404, detail=f"Cognito user not found for sub {user_id}")
