@@ -20,7 +20,7 @@ from pynamodb.transactions import TransactWrite
 
 import app.services.llm as llm
 import app.services.pinecone as pinecone
-from app.core.config import WORLD_LENGTH_MAX_NODES
+from app.core.config import WORLD_LENGTH_MAX_NODES, settings
 from app.core.errors import NotFoundError
 from app.core.observability import MetricUnit, logger, metrics, tracer
 from app.models.dtos.story_node import (
@@ -181,7 +181,7 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> tuple[Worl
     for membership in memberships:
       membership._prepare_for_save()
 
-    with TransactWrite(connection=Connection()) as transaction:
+    with TransactWrite(connection=Connection(region=settings.AWS_REGION)) as transaction:
       transaction.save(meta, condition=WorldMeta.PK.does_not_exist())
       transaction.save(session, condition=WorldSession.PK.does_not_exist())
       for membership in memberships:
