@@ -18,6 +18,7 @@ from app.api.admin_audio import router as admin_audio_router
 from app.api.auth import router as auth_router
 from app.api.dependencies import require_admin, require_onboarded
 from app.api.meta import router as meta_router
+from app.api.playlists import router as playlists_router
 from app.api.sessions import router as sessions_router
 from app.api.voices import router as voices_router
 from app.api.webhooks import router as webhooks_router
@@ -132,6 +133,7 @@ async def health():
 
 app.include_router(worlds_router, dependencies=[Depends(require_onboarded)])
 app.include_router(sessions_router, dependencies=[Depends(require_onboarded)])
+app.include_router(playlists_router, dependencies=[Depends(require_onboarded)])
 app.include_router(auth_router, dependencies=[Depends(get_current_user)])
 
 # Meta router – public (bots can't authenticate)

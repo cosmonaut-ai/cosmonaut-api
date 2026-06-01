@@ -37,6 +37,7 @@ class WorldSessionDTO(DTOModel):
   role: str
   last_visited_node_id: str | None = None
   visited_node_count: int = 0
+  soundtrack_playlist_id: str | None = None
   created_at: str | None = None
   updated_at: str | None = None
   world: WorldMetaDTO

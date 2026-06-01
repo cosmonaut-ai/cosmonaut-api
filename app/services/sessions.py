@@ -45,6 +45,7 @@ def build_session_items(
     root_world_id=root_world_id,
     members=members,
     created_by=creator_id,
+    soundtrack_playlist_id=world.default_playlist_id if world and world.default_playlist_id else None,
     GSI3PK=WorldSession.gsi3_pk(root_world_id),
     GSI3SK=WorldSession.gsi3_sk(session_id),
   )

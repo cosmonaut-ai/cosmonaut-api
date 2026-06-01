@@ -68,6 +68,7 @@ def session_to_dto(
     role=role,
     last_visited_node_id=str(last_visited) if last_visited else None,
     visited_node_count=int(session.visited_node_count or 0),
+    soundtrack_playlist_id=str(session.soundtrack_playlist_id) if session.soundtrack_playlist_id else None,
     created_at=session.created_at.isoformat() if session.created_at else None,
     updated_at=session.updated_at.isoformat() if session.updated_at else None,
     world=world_dto,

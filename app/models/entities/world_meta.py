@@ -129,6 +129,8 @@ class WorldMeta(BaseCosmonautModel):
   world_image_size: UnicodeAttribute = UnicodeAttribute(null=True)
   image_generation_status: UnicodeAttribute = UnicodeAttribute(null=True)
 
+  default_playlist_id: UnicodeAttribute = UnicodeAttribute(null=True)
+
   def to_dto(self) -> WorldMetaDTO:
     return WorldMetaDTO(
       id=self.id,
@@ -163,6 +165,7 @@ class WorldMeta(BaseCosmonautModel):
       content_filter=self.content_filter,
       max_choices=int(self.max_choices) if self.max_choices else None,
       featured_order=int(self.featured_order) if self.featured_order is not None else None,
+      default_playlist_id=self.default_playlist_id,
       created_at=self.created_at.isoformat() if self.created_at else None,
       updated_at=self.updated_at.isoformat() if self.updated_at else None,
     )
@@ -208,6 +211,7 @@ class WorldMeta(BaseCosmonautModel):
       image_generation_status=ImageGenerationStatus(dto.image_generation_status).value
       if dto.image_generation_status
       else None,
+      default_playlist_id=dto.default_playlist_id,
       featured_order=dto.featured_order,
       GSI2PK=cls.gsi2_pk_featured() if dto.featured_order is not None else None,
       GSI2SK=cls.gsi2_sk_order(dto.featured_order) if dto.featured_order is not None else None,

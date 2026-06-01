@@ -39,6 +39,7 @@ from app.models.entities.story_node import StoryNode
 from app.models.entities.user import UserRecord
 from app.models.entities.world_meta import Character, Location, WorldMeta
 from app.models.entities.world_session import WorldSession
+from app.services import playlists
 from app.services.llm.sanitize import sanitize_user_input
 from app.services.s3 import delete_objects_by_prefix
 from app.services.sessions import build_session_items, delete_session
@@ -307,6 +308,16 @@ async def generate_lore(world: WorldMeta) -> WorldMeta:
     for location in llm_world_info.locations
   ]
   world.potential_endings = llm_world_info.endings or []  # type: ignore  # PynamoDB ListAttribute accepts list[str]
+
+  try:
+    playlist = playlists.generate_playlist(
+      soundtrack_description=llm_world_info.soundtrack_description,
+      content_filter=world.content_filter,
+    )
+    if playlist:
+      world.default_playlist_id = str(playlist.id)
+  except Exception:
+    logger.warning("Soundtrack playlist generation failed for world %s (non-fatal)", world.id, exc_info=True)
 
   return world
 
