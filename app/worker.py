@@ -26,8 +26,9 @@ from app.models.dtos.story_node import StoryNodeProcessingStatus
 from app.models.dtos.world_meta import ImageGenerationStatus, WorldGenerationStatus
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
+from app.models.entities.world_session import WorldSession
 from app.services import images, story_nodes, worlds
-from app.services.sessions import sync_world_session_metadata
+from app.services.sessions import get_session_for_user, sync_world_session_metadata
 from app.services.sqs import SQSSendError, send_world_image_generation_message
 
 init_sentry()
@@ -205,6 +206,17 @@ async def _generate_world(payload: GenerateWorldPayload):
     world.generation_status = WorldGenerationStatus.GENERATING_LORE
     world.save()
     await worlds.generate_lore(world)
+
+    if world.default_playlist_id:
+      try:
+        owner_session = get_session_for_user(str(world.author_id), world_id)
+        if owner_session:
+          owner_session.update(
+            actions=[WorldSession.soundtrack_playlist_id.set(str(world.default_playlist_id))],
+            add_version_condition=False,
+          )
+      except Exception:
+        logger.warning("Failed to backfill playlist on owner session for world %s (non-fatal)", world_id, exc_info=True)
 
     # 2. Generate Narrator Profile
     logger.info("Generating Narrator...")

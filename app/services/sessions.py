@@ -242,11 +242,33 @@ def list_sessions_for_world(root_world_id: str) -> list[WorldSession]:
 
 @tracer.capture_method
 def sync_world_session_metadata(world: WorldMeta, *, ensure_root_node: bool = False) -> int:
-  """Best-effort sync of denormalized world metadata onto every session membership."""
+  """Best-effort sync of denormalized world metadata onto every session membership.
+
+  Also backfills ``soundtrack_playlist_id`` onto sessions that were created
+  before the playlist was generated (the session is created transactionally
+  with the world, which precedes lore generation).
+  """
   root_world_id = str(world.id)
+  default_playlist_id = str(world.default_playlist_id) if world.default_playlist_id else None
   synced = 0
   for session in list_sessions_for_world(root_world_id):
     session_id = str(session.id)
+
+    if default_playlist_id and not session.soundtrack_playlist_id:
+      try:
+        session.update(
+          actions=[WorldSession.soundtrack_playlist_id.set(default_playlist_id)],
+          add_version_condition=False,
+        )
+        logger.info("Backfilled soundtrack_playlist_id on session %s", session_id)
+      except Exception:
+        logger.warning(
+          "Failed to backfill soundtrack_playlist_id for session %s in world %s",
+          session_id,
+          root_world_id,
+          exc_info=True,
+        )
+
     if ensure_root_node:
       try:
         ensure_root_node_session(session, world)
