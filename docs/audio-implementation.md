@@ -29,11 +29,11 @@ Story nodes can have AI-generated audio narrations via ElevenLabs TTS. Customers
 
 ### Tier Limits
 
-| Tier      | Audio narrations | Period  | Reset behaviour                 |
-| --------- | ---------------- | ------- | ------------------------------- |
-| FREE      | 10               | N/A     | **Never resets** (lifetime cap) |
+| Tier      | Audio narrations | Period  | Reset behaviour                                   |
+| --------- | ---------------- | ------- | ------------------------------------------------- |
+| FREE      | 10               | N/A     | **Never resets** (lifetime cap)                   |
 | EXPLORER  | 10               | N/A     | **Never resets** (lifetime cap, shared with Free) |
-| COSMONAUT | 150              | 30 days | Resets each billing period      |
+| COSMONAUT | 150              | 30 days | Resets each billing period                        |
 
 > Free and Explorer tiers share a lifetime audio pool of 10 narrations — once used, the user must upgrade to Cosmonaut for monthly audio. The audio counter persists across FREE ↔ EXPLORER tier changes. Only Cosmonaut gets fresh audio quota each billing cycle.
 
@@ -80,10 +80,10 @@ Each voice includes:
 ### Generate Audio for a Node
 
 ```
-POST /worlds/{world_id}/nodes/{node_id}/audio
+POST /sessions/{session_id}/nodes/{node_id}/audio
 ```
 
-**Auth**: Requires a valid JWT (same as all `/worlds` endpoints).
+**Auth**: Requires a valid JWT and membership in the playthrough session.
 
 **Preconditions**:
 
@@ -114,14 +114,14 @@ The `audio_url` is a permanent CDN link to the MP3 file. It can be used directly
 
 **Error responses**:
 
-| Status | Condition                          | Response `detail`                                  |
-| ------ | ---------------------------------- | -------------------------------------------------- |
-| `400`  | Unknown voice_id                   | `"Unknown voice_id: {voice_id}"`                   |
-| `400`  | Node text not yet generated        | `"Node {node_id} text has not been generated yet"` |
-| `403`  | User not authorized for this world | `"You are not authorized to access world ..."`     |
-| `404`  | World or node not found            | `"World {id} not found"` / `"Node {id} not found"` |
-| `429`  | Audio quota exceeded               | `"Quota exceeded: audio limit is {limit}"`         |
-| `500`  | ElevenLabs or S3 failure           | `"Audio generation failed"`                        |
+| Status | Condition                            | Response `detail`                                  |
+| ------ | ------------------------------------ | -------------------------------------------------- |
+| `400`  | Unknown voice_id                     | `"Unknown voice_id: {voice_id}"`                   |
+| `400`  | Node text not yet generated          | `"Node {node_id} text has not been generated yet"` |
+| `403`  | User not authorized for this session | `"This private playthrough is not accessible"`     |
+| `404`  | World or node not found              | `"World {id} not found"` / `"Node {id} not found"` |
+| `429`  | Audio quota exceeded                 | `"Quota exceeded: audio limit is {limit}"`         |
+| `500`  | ElevenLabs or S3 failure             | `"Audio generation failed"`                        |
 
 > The `429` response is the key one for triggering the upgrade prompt on the frontend.
 
@@ -190,10 +190,14 @@ All endpoints that return a `StoryNodeDTO` now include an `audio` dictionary map
 The current frontend API helpers live in `src/lib/api/voices.ts`:
 
 ```typescript
-import { listVoices, generateNodeAudio } from '$lib/api/voices';
+import { listVoices, generateNodeAudio } from "$lib/api/voices";
 
 const voices = await listVoices();
-const { audio_url, timestamps_url } = await generateNodeAudio(worldId, nodeId, voiceId);
+const { audio_url, timestamps_url } = await generateNodeAudio(
+  sessionId,
+  nodeId,
+  voiceId,
+);
 ```
 
 These helpers use the shared `apiRequest` wrapper for auth headers and normalized API errors.
@@ -228,7 +232,7 @@ In the narration component used by the story node view:
 if node.audio[selectedVoiceId] exists:
     → Play/pause toggle using <audio> element
 else:
-    → Call generateNodeAudio(worldId, nodeId, selectedVoiceId)
+    → Call generateNodeAudio(sessionId, nodeId, selectedVoiceId)
     → On success: update node.audio[selectedVoiceId] in local state, begin playback
     → On 429 error: show UpgradePrompt (reuse existing quota-exceeded pattern)
     → On other error: show toast/error message
@@ -261,7 +265,7 @@ User clicks "Play Audio" on a completed story node (with voice selected)
   │
   ├─ node.audio[selectedVoiceId] exists?
   │   ├─ YES → Play the MP3 directly (no API call)
-  │   └─ NO  → POST /worlds/{worldId}/nodes/{nodeId}/audio
+  │   └─ NO  → POST /sessions/{sessionId}/nodes/{nodeId}/audio
   │              Body: { "voice_id": "riley" }
   │              │
   │              ├─ 200 → { audio_url: "https://cdn.../audio/.../riley.mp3" }

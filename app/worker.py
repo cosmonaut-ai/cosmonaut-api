@@ -27,7 +27,7 @@ from app.models.dtos.world_meta import GenerationStatus, ImageGenerationStatus
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
 from app.services import images, story_nodes, worlds
-from app.services.sessions import create_node_session, get_session_for_user, update_membership_metadata
+from app.services.sessions import sync_world_session_metadata
 from app.services.sqs import SQSSendError, send_world_image_generation_message
 
 init_sentry()
@@ -35,19 +35,12 @@ init_posthog()
 init_llm_telemetry()
 
 
-def _sync_session_membership(world: WorldMeta) -> None:
-  """Best-effort update of session membership metadata after world generation steps."""
+def _sync_session_membership(world: WorldMeta, *, ensure_root_node: bool = False) -> None:
+  """Best-effort update of session data after world generation steps."""
   world_id = str(world.id)
-  author_id = str(world.author_id)
   try:
-    session = get_session_for_user(author_id, world_id)
-    if session:
-      update_membership_metadata(
-        user_id=author_id,
-        root_world_id=world_id,
-        session_id=str(session.id),
-        world=world,
-      )
+    synced = sync_world_session_metadata(world, ensure_root_node=ensure_root_node)
+    logger.info("Synced %d session memberships for world %s", synced, world_id)
   except Exception:
     logger.warning("Failed to update session data for world %s (non-fatal)", world_id, exc_info=True)
 
@@ -222,7 +215,7 @@ async def _generate_world(payload: GenerateWorldPayload):
     # 3. Initialize Root Node (without text generation)
     # Text will be generated when the client calls /generate-text
     logger.info("Initializing Root Node...")
-    root_node = worlds.initialize_root_node(world)
+    worlds.initialize_root_node(world)
 
     world.generation_status = GenerationStatus.COMPLETED
     ph_capture(
@@ -232,27 +225,18 @@ async def _generate_world(payload: GenerateWorldPayload):
     )
     logger.info(f"World {world_id} generation complete.")
 
-    # 4. Update session membership with populated world metadata + create root NodeSession
-    _sync_session_membership(world)
-    try:
-      session = get_session_for_user(str(world.author_id), world_id)
-      if session:
-        create_node_session(
-          session_id=str(session.id),
-          node_id=str(root_node.id),
-          root_world_id=world_id,
-        )
-    except Exception:
-      logger.warning("Failed to create root NodeSession for world %s (non-fatal)", world_id, exc_info=True)
+    # 4. Update session memberships with populated world metadata + create root NodeSessions.
+    world.image_generation_status = ImageGenerationStatus.PENDING.value
+    _sync_session_membership(world, ensure_root_node=True)
 
     # 5. Enqueue image generation (fire-and-forget, non-blocking).
     # An SQS failure here must not undo the successful world generation.
     try:
-      world.image_generation_status = ImageGenerationStatus.PENDING.value
       send_world_image_generation_message(world_id)
     except SQSSendError:
       world.image_generation_status = ImageGenerationStatus.FAILED.value
       logger.error(f"Failed to enqueue image generation for world {world_id} -- world will lack a cover image")
+      _sync_session_membership(world)
 
   except Exception as e:
     logger.exception(f"Error generating world {world_id}: {e}")

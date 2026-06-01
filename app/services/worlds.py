@@ -14,6 +14,8 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from pynamodb.transactions import TransactWrite
+
 import app.services.llm as llm
 import app.services.pinecone as pinecone
 from app.core.config import WORLD_LENGTH_MAX_NODES
@@ -35,12 +37,14 @@ from app.models.dtos.world_meta import (
   WorldMetaDTO,
   WorldVisibility,
 )
+from app.models.entities.session_membership import SessionMembership
 from app.models.entities.story_node import StoryNode
 from app.models.entities.user import UserRecord
 from app.models.entities.world_meta import Character, Location, WorldMeta
+from app.models.entities.world_session import WorldSession
 from app.services.llm.sanitize import sanitize_user_input
 from app.services.s3 import delete_objects_by_prefix
-from app.services.sessions import create_session
+from app.services.sessions import build_session_items, delete_session
 from app.services.sqs import send_world_generation_message
 from app.services.usage import (
   check_and_increment,
@@ -134,8 +138,8 @@ def _decrement_world_count(user_id: str) -> None:
 
 
 @tracer.capture_method
-def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
-  """Create a new world metadata record.
+def create_world(create_request: WorldCreateRequest, user_id: str) -> tuple[WorldMeta, WorldSession]:
+  """Create a new world metadata record and owner session.
 
   Expects a mapping aligned with the ``WorldMeta`` attributes.
   Raises ``QuotaExceededError`` if the user has reached their periodic world-creation limit.
@@ -172,22 +176,39 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
     )
 
     meta = WorldMeta.from_dto(meta_dto)
+    meta._prepare_for_save()
+    session, memberships = build_session_items(world_id, user_id, [user_id], meta)
+    session._prepare_for_save()
+    for membership in memberships:
+      membership._prepare_for_save()
 
-    meta.save()
-    send_world_generation_message(world_id)
+    with TransactWrite(connection=WorldMeta._get_connection()) as transaction:
+      transaction.save(meta, condition=WorldMeta.PK.does_not_exist())
+      transaction.save(session, condition=WorldSession.PK.does_not_exist())
+      for membership in memberships:
+        transaction.save(membership, condition=SessionMembership.PK.does_not_exist())
   except Exception:
     _decrement_world_count(user_id)
     release_quota(user_id, "worlds")
     raise
 
+  try:
+    send_world_generation_message(world_id)
+  except Exception:
+    logger.exception("Failed to enqueue generation for world %s; cleaning up created world/session", world_id)
+    try:
+      for membership in memberships:
+        membership.delete()
+      delete_session(str(session.id))
+      hard_delete_orphaned_world(world_id)
+    except Exception:
+      logger.exception("Failed to clean up world %s after enqueue failure", world_id)
+    release_quota(user_id, "worlds")
+    raise
+
   metrics.add_metric(name="WorldCreated", unit=MetricUnit.Count, value=1)
 
-  try:
-    create_session(root_world_id=world_id, creator_id=user_id, members=[user_id], world=meta)
-  except Exception:
-    logger.warning("Failed to create session for world %s (non-fatal)", world_id, exc_info=True)
-
-  return meta
+  return meta, session
 
 
 def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
