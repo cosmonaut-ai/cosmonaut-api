@@ -15,6 +15,7 @@ from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
+from pynamodb.connection import Connection
 from pynamodb.transactions import TransactWrite
 
 import app.services.llm as llm
@@ -180,7 +181,7 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> tuple[Worl
     for membership in memberships:
       membership._prepare_for_save()
 
-    with TransactWrite(connection=WorldMeta._get_connection()) as transaction:
+    with TransactWrite(connection=Connection()) as transaction:
       transaction.save(meta, condition=WorldMeta.PK.does_not_exist())
       transaction.save(session, condition=WorldSession.PK.does_not_exist())
       for membership in memberships:

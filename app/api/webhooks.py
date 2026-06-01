@@ -499,12 +499,12 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
     try:
       handler_fn(event)
       metrics.add_metric(name="WebhookProcessed", unit=MetricUnit.Count, value=1)
-    except Exception:
+    except Exception as exc:
       logger.exception(f"Error handling Stripe event {event_type}")
       raise HTTPException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         detail="Webhook handler failed",
-      )
+      ) from exc
   else:
     logger.info(f"Unhandled Stripe event type: {event_type}")
 

@@ -405,7 +405,7 @@ def update_session_progress(
     add_version_condition=False,
   )
 
-  actions = [
+  actions: list[Action] = [
     SessionMembership.last_visited_node_id.set(node_id),
     SessionMembership.last_accessed_at.set(now),
     SessionMembership.GSI2SK.set(SessionMembership.gsi2_sk(now, session_id)),
