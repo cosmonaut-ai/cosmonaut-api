@@ -15,7 +15,9 @@ from app.models.dtos.admin import (
   AdminFeaturedOrderItem,
   AdminTier,
   AdminUserUsageDTO,
+  AdminWorldMetaDTO,
 )
+from app.models.entities.playlist import Playlist
 from app.models.entities.story_node import StoryNode
 from app.models.entities.user import UserRecord
 from app.models.entities.world_meta import WorldMeta
@@ -379,6 +381,51 @@ def _world_matches_search(world: WorldMeta, search: str | None) -> bool:
     world.generation_status,
   ]
   return any(needle in str(value).lower() for value in values if value)
+
+
+def _playlist_ids_for_worlds(worlds: list[WorldMeta]) -> list[str]:
+  playlist_ids: list[str] = []
+  seen: set[str] = set()
+  for world in worlds:
+    if not world.default_playlist_id:
+      continue
+    playlist_id = str(world.default_playlist_id)
+    if playlist_id in seen:
+      continue
+    seen.add(playlist_id)
+    playlist_ids.append(playlist_id)
+  return playlist_ids
+
+
+def _soundtrack_descriptions_for_worlds(worlds: list[WorldMeta]) -> dict[str, str | None]:
+  playlist_ids = _playlist_ids_for_worlds(worlds)
+  if not playlist_ids:
+    return {}
+
+  try:
+    playlists = list(Playlist.batch_get([(Playlist.pk(playlist_id), Playlist.sk()) for playlist_id in playlist_ids]))
+  except Exception:
+    logger.warning("Failed to hydrate soundtrack playlist descriptions for admin worlds", exc_info=True)
+    return {}
+
+  return {str(playlist.id): str(playlist.description) if playlist.description else None for playlist in playlists}
+
+
+def world_to_admin_dto(world: WorldMeta) -> AdminWorldMetaDTO:
+  """Convert a world into the admin DTO, including its soundtrack description."""
+  return worlds_to_admin_dtos([world])[0]
+
+
+def worlds_to_admin_dtos(worlds: list[WorldMeta]) -> list[AdminWorldMetaDTO]:
+  """Convert worlds into admin DTOs with denormalized playlist descriptions."""
+  soundtrack_descriptions = _soundtrack_descriptions_for_worlds(worlds)
+  dtos: list[AdminWorldMetaDTO] = []
+  for world in worlds:
+    playlist_id = str(world.default_playlist_id) if world.default_playlist_id else None
+    dto_data = world.to_dto().model_dump()
+    dto_data["soundtrack_description"] = soundtrack_descriptions.get(playlist_id) if playlist_id else None
+    dtos.append(AdminWorldMetaDTO(**dto_data))
+  return dtos
 
 
 @tracer.capture_method

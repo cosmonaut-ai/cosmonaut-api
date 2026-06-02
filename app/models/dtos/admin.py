@@ -8,6 +8,7 @@ from pydantic import Field
 
 from app.models.dtos.base import DTOModel
 from app.models.dtos.usage import UsageStateDTO
+from app.models.dtos.world_meta import WorldMetaDTO
 
 AdminTier = Literal["FREE", "EXPLORER", "COSMONAUT"]
 
@@ -35,6 +36,12 @@ class AdminUserUsageDTO(UsageStateDTO):
   saved_world_count: int
   created_at: str | None = None
   updated_at: str | None = None
+
+
+class AdminWorldMetaDTO(WorldMetaDTO):
+  """World metadata enriched for admin moderation views."""
+
+  soundtrack_description: str | None = None
 
 
 class AdminUserGroupsResponse(DTOModel):

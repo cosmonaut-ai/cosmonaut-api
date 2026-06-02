@@ -18,10 +18,10 @@ from app.models.dtos.admin import (
   AdminTierUpdateResponse,
   AdminUserGroupsResponse,
   AdminUserUsageDTO,
+  AdminWorldMetaDTO,
 )
 from app.models.dtos.base import PaginatedResponse
 from app.models.dtos.story_node import StoryNodeDTO
-from app.models.dtos.world_meta import WorldMetaDTO
 from app.services import admin as admin_service
 from app.services import cognito as cognito_service
 from app.services.account import delete_account
@@ -88,17 +88,17 @@ async def admin_get_user_groups(
 
 @router.get(
   "/users/{user_id}/worlds",
-  response_model=PaginatedResponse[WorldMetaDTO],
+  response_model=PaginatedResponse[AdminWorldMetaDTO],
   summary="List worlds authored by a user (admin)",
 )
 async def admin_list_user_worlds(
   user_id: str = Path(..., description="Cognito sub (UUID) of the user"),
   limit: int = Query(50, ge=1, le=200, description="Maximum number of worlds to return"),
   cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
-) -> PaginatedResponse[WorldMetaDTO]:
+) -> PaginatedResponse[AdminWorldMetaDTO]:
   """List worlds authored by a user, independent of session membership."""
   worlds, next_cursor = admin_service.list_user_worlds(user_id, limit=limit, cursor=cursor)
-  return PaginatedResponse(items=[world.to_dto() for world in worlds], next_cursor=next_cursor)
+  return PaginatedResponse(items=admin_service.worlds_to_admin_dtos(worlds), next_cursor=next_cursor)
 
 
 @router.patch(
@@ -119,29 +119,29 @@ async def admin_update_user_tier(
 
 @router.get(
   "/worlds",
-  response_model=PaginatedResponse[WorldMetaDTO],
+  response_model=PaginatedResponse[AdminWorldMetaDTO],
   summary="List all worlds (admin)",
 )
 async def admin_list_worlds(
   limit: int = Query(50, ge=1, le=200, description="Maximum number of worlds to return"),
   cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
   search: str | None = Query(None, description="Optional title, world ID, author ID, or genre search"),
-) -> PaginatedResponse[WorldMetaDTO]:
+) -> PaginatedResponse[AdminWorldMetaDTO]:
   """List all root world metadata records for the admin worlds table."""
   worlds, next_cursor = admin_service.list_all_worlds(limit=limit, cursor=cursor, search=search)
-  return PaginatedResponse(items=[world.to_dto() for world in worlds], next_cursor=next_cursor)
+  return PaginatedResponse(items=admin_service.worlds_to_admin_dtos(worlds), next_cursor=next_cursor)
 
 
 @router.get(
   "/worlds/{world_id}",
-  response_model=WorldMetaDTO,
+  response_model=AdminWorldMetaDTO,
   summary="Get world metadata (admin)",
 )
 async def admin_get_world(
   world_id: str = Path(..., description="World ID to fetch"),
-) -> WorldMetaDTO:
+) -> AdminWorldMetaDTO:
   """Fetch world metadata without user/session access checks."""
-  return admin_service.get_world(world_id).to_dto()
+  return admin_service.world_to_admin_dto(admin_service.get_world(world_id))
 
 
 @router.get(
@@ -161,60 +161,60 @@ async def admin_list_world_nodes(
 
 @router.get(
   "/featured",
-  response_model=PaginatedResponse[WorldMetaDTO],
+  response_model=PaginatedResponse[AdminWorldMetaDTO],
   summary="List featured worlds (admin)",
 )
 async def admin_list_featured_worlds(
   limit: int = Query(50, ge=1, le=200, description="Maximum number of featured worlds to return"),
   cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
-) -> PaginatedResponse[WorldMetaDTO]:
+) -> PaginatedResponse[AdminWorldMetaDTO]:
   """List featured worlds for admin management, including non-public worlds."""
   worlds, next_cursor = admin_service.list_featured_worlds(limit=limit, cursor=cursor)
-  return PaginatedResponse(items=[world.to_dto() for world in worlds], next_cursor=next_cursor)
+  return PaginatedResponse(items=admin_service.worlds_to_admin_dtos(worlds), next_cursor=next_cursor)
 
 
 @router.post(
   "/worlds/{world_id}/featured",
-  response_model=WorldMetaDTO,
+  response_model=AdminWorldMetaDTO,
   summary="Promote a world to featured (admin)",
 )
 async def admin_promote_world_to_featured(
   payload: AdminFeaturedUpdateRequest = Body(default=AdminFeaturedUpdateRequest()),
   world_id: str = Path(..., description="World ID to promote"),
   current_user: User = Depends(get_current_user),
-) -> WorldMetaDTO:
+) -> AdminWorldMetaDTO:
   """Promote a world to the featured list, appending by default."""
   logger.info("Admin %s promoting world %s to featured", current_user.id, world_id)
-  return admin_service.promote_world_to_featured(world_id, order=payload.order).to_dto()
+  return admin_service.world_to_admin_dto(admin_service.promote_world_to_featured(world_id, order=payload.order))
 
 
 @router.delete(
   "/worlds/{world_id}/featured",
-  response_model=WorldMetaDTO,
+  response_model=AdminWorldMetaDTO,
   summary="Remove a world from featured (admin)",
 )
 async def admin_remove_world_from_featured(
   world_id: str = Path(..., description="World ID to remove from featured"),
   current_user: User = Depends(get_current_user),
-) -> WorldMetaDTO:
+) -> AdminWorldMetaDTO:
   """Remove a world from the featured list."""
   logger.info("Admin %s removing world %s from featured", current_user.id, world_id)
-  return admin_service.remove_world_from_featured(world_id).to_dto()
+  return admin_service.world_to_admin_dto(admin_service.remove_world_from_featured(world_id))
 
 
 @router.patch(
   "/featured/order",
-  response_model=list[WorldMetaDTO],
+  response_model=list[AdminWorldMetaDTO],
   summary="Update featured world ordering (admin)",
 )
 async def admin_update_featured_order(
   payload: AdminFeaturedOrderUpdateRequest = Body(...),
   current_user: User = Depends(get_current_user),
-) -> list[WorldMetaDTO]:
+) -> list[AdminWorldMetaDTO]:
   """Update ordering for one or more featured worlds."""
   logger.info("Admin %s updating featured order for %d worlds", current_user.id, len(payload.items))
   worlds = admin_service.update_featured_orders(payload.items)
-  return [world.to_dto() for world in worlds]
+  return admin_service.worlds_to_admin_dtos(worlds)
 
 
 @router.delete(
