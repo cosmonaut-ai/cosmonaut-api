@@ -30,7 +30,7 @@ Build out these elements:
 - **Story Description**: A short description of the story. (User viewable)
 - **Story Genre**: The genre of the story. (Literary, Fantasy, Sci-fi, Horror, Mystery, etc.) (User viewable)
 - **Potential Endings**: Generate a list of potential endings for the story to guide the narrative towards. Include a mix of positive, negative, and bittersweet outcomes. Not every ending should be a victory — meaningful failure is equally important.
-- **Soundtrack Description**: Describe the ideal ambient background music for this world — mood, instruments, tempo, atmosphere. One to two sentences. Do not name real songs or artists.
+- **Soundtrack Description**: Describe the ideal narration backtrack for this world in 3-4 sentences, roughly 70-100 words. Prioritize the primary mood and emotional arc, then the narrative moments it should support, then tempo/energy/density, broad genre or style, and finally a few supporting instruments or textures. This is used for soundtrack search, so make it read like an active soundtrack library description: mood-forward, atmospheric, and specific enough to match against ambient/cinematic tracks. Do not name real songs or artists, reveal spoiler-heavy story specifics, request literal sound effects or foley, dump a long instrument inventory, or repeat awkward tempo phrases like "steady a steady tempo."
 
 ## Guidelines
 - Leave room for player agency; don't predetermine the protagonist's personality or key decisions
@@ -58,7 +58,7 @@ Respond using these XML tags in order:
   "description": "A short description of the story",
   "genre": "Fantasy, Sci-fi, Horror, Mystery, Literary, etc.",
   "endings": ["Ending 1", "Ending 2", "..."],
-  "soundtrack_description": "A one to two sentence description of the ideal ambient background music."
+  "soundtrack_description": "A 3-4 sentence, mood-forward narration backtrack description for soundtrack search."
 }
 </world_info>
 
