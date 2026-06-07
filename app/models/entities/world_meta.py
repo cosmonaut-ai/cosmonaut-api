@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pynamodb.attributes import ListAttribute, MapAttribute, NumberAttribute, UnicodeAttribute
-from pynamodb.indexes import AllProjection, GlobalSecondaryIndex
+from pynamodb.indexes import AllProjection, GlobalSecondaryIndex, KeysOnlyProjection
 
 from app.models.dtos.world_meta import (
   CharacterDTO,
@@ -71,6 +71,16 @@ class WorldMetaGSI2Model(GlobalSecondaryIndex["WorldMeta"]):
     projection = AllProjection()
 
 
+class WorldMetaGSI3Model(GlobalSecondaryIndex["WorldMeta"]):
+  """Keys-only GSI for the admin recent-world directory."""
+
+  GSI3PK: UnicodeAttribute = UnicodeAttribute(hash_key=True)
+  GSI3SK: UnicodeAttribute = UnicodeAttribute(range_key=True)
+
+  class Meta:
+    projection = KeysOnlyProjection()
+
+
 class WorldMeta(BaseCosmonautModel):
   """Container for world-level metadata."""
 
@@ -81,6 +91,10 @@ class WorldMeta(BaseCosmonautModel):
   GSI2PK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI2PK", null=True)
   GSI2SK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI2SK", null=True)
   featured_order: NumberAttribute = NumberAttribute(null=True)
+
+  GSI3: WorldMetaGSI3Model = WorldMetaGSI3Model()
+  GSI3PK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI3PK", null=True)
+  GSI3SK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI3SK", null=True)
 
   id: UnicodeAttribute = UnicodeAttribute()
   title: UnicodeAttribute = UnicodeAttribute(null=True)
@@ -174,12 +188,15 @@ class WorldMeta(BaseCosmonautModel):
   def from_dto(cls, dto: WorldMetaDTO) -> WorldMeta:
     if dto.id is None:
       raise ValueError("ID is required to convert to PynamoDB entity")
+    created_at_dt = coerce_datetime(dto.created_at) if dto.created_at else None
     updated_at_dt = coerce_datetime(dto.updated_at)
     return WorldMeta(
       PK=cls.pk(dto.id),
       SK=cls.sk(),
       GSI1PK=cls.gsi1_pk(dto.author_id) if dto.author_id else None,
       GSI1SK=cls.gsi1_sk(updated_at_dt.isoformat()),
+      GSI3PK=cls.gsi3_pk_world_directory() if created_at_dt else None,
+      GSI3SK=cls.gsi3_sk_created(created_at_dt.isoformat(), dto.id) if created_at_dt else None,
       id=dto.id,
       generation_status=WorldGenerationStatus(dto.generation_status).value,
       title=dto.title,
@@ -215,6 +232,7 @@ class WorldMeta(BaseCosmonautModel):
       featured_order=dto.featured_order,
       GSI2PK=cls.gsi2_pk_featured() if dto.featured_order is not None else None,
       GSI2SK=cls.gsi2_sk_order(dto.featured_order) if dto.featured_order is not None else None,
+      created_at=created_at_dt,
       updated_at=updated_at_dt,
     )
 
@@ -224,6 +242,9 @@ class WorldMeta(BaseCosmonautModel):
       self.GSI1SK = WorldMeta.gsi1_sk(self.updated_at.isoformat())
     if self.featured_order is not None:
       self.GSI2SK = WorldMeta.gsi2_sk_order(int(self.featured_order))
+    if self.created_at:
+      self.GSI3PK = WorldMeta.gsi3_pk_world_directory()
+      self.GSI3SK = WorldMeta.gsi3_sk_created(self.created_at.isoformat(), str(self.id))
 
   def can_user_read(self, user_id: str) -> bool:
     if self.visibility in (WorldVisibility.PUBLIC, WorldVisibility.UNLISTED) or self.author_id == user_id:
@@ -258,3 +279,11 @@ class WorldMeta(BaseCosmonautModel):
   @classmethod
   def gsi2_sk_order(cls, order: int) -> str:
     return f"ORDER#{str(order).zfill(5)}"
+
+  @classmethod
+  def gsi3_pk_world_directory(cls) -> str:
+    return "WORLDS"
+
+  @classmethod
+  def gsi3_sk_created(cls, created_at: str, world_id: str) -> str:
+    return f"CREATED#{created_at}#{world_id}"

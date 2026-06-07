@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, status
 
+from app.api.mappers import membership_to_session_summary_dto, node_session_to_list_dto
 from app.core.errors import NotFoundError
 from app.core.observability import logger
 from app.core.security import User, get_current_user
@@ -14,16 +15,25 @@ from app.models.dtos.admin import (
   AdminCognitoUserDTO,
   AdminFeaturedOrderUpdateRequest,
   AdminFeaturedUpdateRequest,
+  AdminSessionDTO,
+  AdminSoundtrackMatchRequest,
+  AdminSoundtrackMatchResponse,
   AdminTierUpdateRequest,
   AdminTierUpdateResponse,
   AdminUserGroupsResponse,
   AdminUserUsageDTO,
+  AdminWorldContextPreviewRequest,
+  AdminWorldContextPreviewResponse,
   AdminWorldMetaDTO,
 )
 from app.models.dtos.base import PaginatedResponse
+from app.models.dtos.playlist import PlaylistDTO
+from app.models.dtos.session import WorldSessionSummaryDTO
 from app.models.dtos.story_node import StoryNodeDTO
 from app.services import admin as admin_service
+from app.services import admin_diagnostics as admin_diagnostics_service
 from app.services import cognito as cognito_service
+from app.services import sessions as sessions_service
 from app.services.account import delete_account
 from app.services.sessions import delete_sessions_for_world
 from app.services.worlds import hard_delete_orphaned_world
@@ -101,6 +111,24 @@ async def admin_list_user_worlds(
   return PaginatedResponse(items=admin_service.worlds_to_admin_dtos(worlds), next_cursor=next_cursor)
 
 
+@router.get(
+  "/users/{user_id}/sessions",
+  response_model=PaginatedResponse[WorldSessionSummaryDTO],
+  summary="List sessions for a user (admin)",
+)
+async def admin_list_user_sessions(
+  user_id: str = Path(..., description="Cognito sub (UUID) of the user"),
+  limit: int = Query(50, ge=1, le=100, description="Maximum number of sessions to return"),
+  cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
+) -> PaginatedResponse[WorldSessionSummaryDTO]:
+  """List playthrough sessions for a user through the user-session index."""
+  memberships, next_cursor = sessions_service.list_user_sessions(user_id, limit=limit, cursor=cursor)
+  return PaginatedResponse(
+    items=[membership_to_session_summary_dto(membership) for membership in memberships],
+    next_cursor=next_cursor,
+  )
+
+
 @router.patch(
   "/users/{user_id}/tier",
   response_model=AdminTierUpdateResponse,
@@ -120,14 +148,14 @@ async def admin_update_user_tier(
 @router.get(
   "/worlds",
   response_model=PaginatedResponse[AdminWorldMetaDTO],
-  summary="List all worlds (admin)",
+  summary="List recent worlds (admin)",
 )
 async def admin_list_worlds(
   limit: int = Query(50, ge=1, le=200, description="Maximum number of worlds to return"),
   cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
-  search: str | None = Query(None, description="Optional title, world ID, author ID, or genre search"),
+  search: str | None = Query(None, description="Optional exact world ID or author ID lookup"),
 ) -> PaginatedResponse[AdminWorldMetaDTO]:
-  """List all root world metadata records for the admin worlds table."""
+  """List recent indexed root worlds for the admin worlds table."""
   worlds, next_cursor = admin_service.list_all_worlds(limit=limit, cursor=cursor, search=search)
   return PaginatedResponse(items=admin_service.worlds_to_admin_dtos(worlds), next_cursor=next_cursor)
 
@@ -157,6 +185,65 @@ async def admin_list_world_nodes(
   """List root story nodes for a world without session filtering."""
   nodes, next_cursor = admin_service.list_world_nodes(world_id, limit=limit, cursor=cursor)
   return PaginatedResponse(items=[node.to_dto() for node in nodes], next_cursor=next_cursor)
+
+
+@router.get(
+  "/worlds/{world_id}/sessions",
+  response_model=PaginatedResponse[AdminSessionDTO],
+  summary="List sessions for a world (admin)",
+)
+async def admin_list_world_sessions(
+  world_id: str = Path(..., description="World ID to inspect"),
+  limit: int = Query(50, ge=1, le=100, description="Maximum number of sessions to return"),
+  cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
+) -> PaginatedResponse[AdminSessionDTO]:
+  """List playthrough sessions for a world through the world-session index."""
+  world = admin_service.get_world(world_id)
+  sessions, next_cursor = admin_service.list_world_sessions(world_id, limit=limit, cursor=cursor)
+  return PaginatedResponse(items=admin_service.sessions_to_admin_dtos(sessions, world=world), next_cursor=next_cursor)
+
+
+@router.get(
+  "/playlists/{playlist_id}",
+  response_model=PlaylistDTO,
+  summary="Get soundtrack playlist metadata (admin)",
+)
+async def admin_get_playlist(
+  playlist_id: str = Path(..., description="Playlist ID to inspect"),
+) -> PlaylistDTO:
+  """Fetch a playlist by exact ID for admin inspection."""
+  return admin_service.get_playlist(playlist_id).to_dto()
+
+
+@router.get(
+  "/sessions/{session_id}/nodes",
+  response_model=PaginatedResponse[StoryNodeDTO],
+  summary="List session node overlays (admin)",
+)
+async def admin_list_session_nodes(
+  session_id: str = Path(..., description="Session ID to inspect"),
+  limit: int = Query(100, ge=1, le=500, description="Maximum number of node overlays to return"),
+  cursor: str | None = Query(None, description="Opaque pagination cursor from a previous response"),
+) -> PaginatedResponse[StoryNodeDTO]:
+  """List per-session node overlays for a playthrough."""
+  session = admin_service.get_session(session_id)
+  nodes, next_cursor = sessions_service.list_node_sessions(session_id, limit=limit, cursor=cursor)
+  return PaginatedResponse(
+    items=[node_session_to_list_dto(node, str(session.root_world_id)) for node in nodes],
+    next_cursor=next_cursor,
+  )
+
+
+@router.get(
+  "/sessions/{session_id}",
+  response_model=AdminSessionDTO,
+  summary="Get world session metadata (admin)",
+)
+async def admin_get_session(
+  session_id: str = Path(..., description="Session ID to inspect"),
+) -> AdminSessionDTO:
+  """Fetch a world session by exact ID for admin inspection."""
+  return admin_service.session_to_admin_dto(admin_service.get_session(session_id))
 
 
 @router.get(
@@ -215,6 +302,39 @@ async def admin_update_featured_order(
   logger.info("Admin %s updating featured order for %d worlds", current_user.id, len(payload.items))
   worlds = admin_service.update_featured_orders(payload.items)
   return admin_service.worlds_to_admin_dtos(worlds)
+
+
+@router.post(
+  "/diagnostics/soundtrack-matches",
+  response_model=AdminSoundtrackMatchResponse,
+  summary="Preview playlist soundtrack matching (admin)",
+)
+async def admin_preview_soundtrack_matches(
+  payload: AdminSoundtrackMatchRequest = Body(...),
+  current_user: User = Depends(get_current_user),
+) -> AdminSoundtrackMatchResponse:
+  """Preview active soundtrack matches for arbitrary query text."""
+  logger.info("Admin %s previewing soundtrack matches", current_user.id)
+  return admin_diagnostics_service.preview_soundtrack_matches(payload)
+
+
+@router.post(
+  "/diagnostics/world-context",
+  response_model=AdminWorldContextPreviewResponse,
+  summary="Preview world context retrieval (admin)",
+)
+async def admin_preview_world_context(
+  payload: AdminWorldContextPreviewRequest = Body(...),
+  current_user: User = Depends(get_current_user),
+) -> AdminWorldContextPreviewResponse:
+  """Preview the world facts, branch facts, and similar nodes used for generation context."""
+  logger.info(
+    "Admin %s previewing world context for world %s node %s",
+    current_user.id,
+    payload.world_id,
+    payload.node_id,
+  )
+  return admin_diagnostics_service.preview_world_context(payload)
 
 
 @router.delete(

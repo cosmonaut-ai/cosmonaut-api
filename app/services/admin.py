@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from typing import Any, cast
 
 from botocore.exceptions import ClientError
 
 from app.core.config import settings
-from app.core.errors import BadRequestError, ExternalServiceError, NotFoundError
+from app.core.errors import BadRequestError, ExternalServiceError, NotFoundError, SessionNotFoundError
 from app.core.observability import logger, tracer
 from app.models.dtos.admin import (
   AdminCognitoUserDTO,
   AdminFeaturedOrderItem,
+  AdminSessionDTO,
+  AdminSessionMemberDTO,
   AdminTier,
   AdminUserUsageDTO,
   AdminWorldMetaDTO,
@@ -21,7 +22,9 @@ from app.models.entities.playlist import Playlist
 from app.models.entities.story_node import StoryNode
 from app.models.entities.user import UserRecord
 from app.models.entities.world_meta import WorldMeta
+from app.models.entities.world_session import WorldSession
 from app.services import cognito as cognito_service
+from app.services import sessions as sessions_service
 from app.services import usage as usage_service
 from app.services.worlds import WorldNotFoundError, get_world_entity
 from app.utils.pagination import decode_cursor, encode_cursor
@@ -354,33 +357,31 @@ def list_user_worlds(
   return cast(list[WorldMeta], list(results)), encode_cursor(results.last_evaluated_key)
 
 
-def _offset_from_cursor(cursor: str | None) -> int:
-  payload = _cursor_payload(cursor)
-  offset = payload.get("offset", 0)
-  if isinstance(offset, int):
-    return max(offset, 0)
-  if isinstance(offset, str) and offset.isdigit():
-    return int(offset)
-  return 0
-
-
-def _world_matches_search(world: WorldMeta, search: str | None) -> bool:
+def _clean_world_lookup(search: str | None) -> str | None:
   if not search:
-    return True
+    return None
+  cleaned = search.strip()
+  if not cleaned:
+    return None
+  if cleaned.startswith("WORLD#"):
+    return cleaned.removeprefix("WORLD#")
+  return cleaned
 
-  needle = search.strip().lower()
-  if not needle:
-    return True
 
-  values = [
-    world.id,
-    world.title,
-    world.author_id,
-    world.genre,
-    world.visibility,
-    world.generation_status,
-  ]
-  return any(needle in str(value).lower() for value in values if value)
+def _get_world_or_none(world_id: str) -> WorldMeta | None:
+  try:
+    return get_world(world_id)
+  except NotFoundError:
+    return None
+
+
+def _hydrate_worlds_from_index(indexed_worlds: list[WorldMeta]) -> list[WorldMeta]:
+  keys = [(str(item.PK), str(item.SK)) for item in indexed_worlds]
+  if not keys:
+    return []
+
+  hydrated = {(str(world.PK), str(world.SK)): world for world in WorldMeta.batch_get(keys)}
+  return [hydrated[key] for key in keys if key in hydrated]
 
 
 def _playlist_ids_for_worlds(worlds: list[WorldMeta]) -> list[str]:
@@ -428,33 +429,145 @@ def worlds_to_admin_dtos(worlds: list[WorldMeta]) -> list[AdminWorldMetaDTO]:
   return dtos
 
 
+def _hydrate_sessions_from_index(indexed_sessions: list[WorldSession]) -> list[WorldSession]:
+  keys = [(str(item.PK), str(item.SK)) for item in indexed_sessions]
+  if not keys:
+    return []
+
+  hydrated = {(str(session.PK), str(session.SK)): session for session in WorldSession.batch_get(keys)}
+  return [hydrated[key] for key in keys if key in hydrated]
+
+
+def _session_progress_map(session: WorldSession) -> dict[str, str]:
+  if not session.per_member_progress:
+    return {}
+  values = session.per_member_progress.attribute_values
+  return {str(user_id): str(node_id) for user_id, node_id in values.items() if node_id}
+
+
+def _session_membership_detail(session: WorldSession, user_id: str) -> AdminSessionMemberDTO:
+  root_world_id = str(session.root_world_id)
+  session_id = str(session.id)
+  membership = sessions_service.get_session_membership(user_id, root_world_id, session_id)
+  progress_map = _session_progress_map(session)
+
+  if membership is None:
+    return AdminSessionMemberDTO(
+      user_id=user_id,
+      role="owner" if user_id == str(session.created_by) else None,
+      last_visited_node_id=progress_map.get(user_id),
+    )
+
+  return AdminSessionMemberDTO(
+    user_id=user_id,
+    role=str(membership.role) if membership.role else None,
+    last_visited_node_id=str(membership.last_visited_node_id)
+    if membership.last_visited_node_id
+    else progress_map.get(user_id),
+    visited_node_count=int(membership.visited_node_count or 0),
+    joined_at=membership.joined_at.isoformat() if membership.joined_at else None,
+    last_accessed_at=membership.last_accessed_at.isoformat() if membership.last_accessed_at else None,
+  )
+
+
+def session_to_admin_dto(session: WorldSession, world: WorldMeta | None = None) -> AdminSessionDTO:
+  """Convert a world session into an admin DTO with member progress."""
+  if world is None:
+    try:
+      world = get_world(str(session.root_world_id))
+    except NotFoundError:
+      world = None
+
+  members = [str(member) for member in session.members]
+  return AdminSessionDTO(
+    id=str(session.id),
+    root_world_id=str(session.root_world_id),
+    created_by=str(session.created_by) if session.created_by else None,
+    members=members,
+    member_details=[_session_membership_detail(session, member_id) for member_id in members],
+    per_member_progress=_session_progress_map(session),
+    visited_node_count=int(session.visited_node_count or 0),
+    soundtrack_playlist_id=str(session.soundtrack_playlist_id) if session.soundtrack_playlist_id else None,
+    created_at=session.created_at.isoformat() if session.created_at else None,
+    updated_at=session.updated_at.isoformat() if session.updated_at else None,
+    world=world_to_admin_dto(world) if world else None,
+  )
+
+
+def sessions_to_admin_dtos(sessions: list[WorldSession], world: WorldMeta | None = None) -> list[AdminSessionDTO]:
+  """Convert world sessions into admin DTOs."""
+  return [session_to_admin_dto(session, world=world) for session in sessions]
+
+
+@tracer.capture_method
+def get_session(session_id: str) -> WorldSession:
+  """Fetch a world session by exact session ID for admin inspection."""
+  try:
+    return sessions_service.get_session(session_id)
+  except SessionNotFoundError as exc:
+    raise NotFoundError(f"Session not found: {session_id}") from exc
+
+
+@tracer.capture_method
+def list_world_sessions(world_id: str, limit: int, cursor: str | None) -> tuple[list[WorldSession], str | None]:
+  """List sessions for a world through the world-session GSI."""
+  get_world(world_id)
+  last_key = decode_cursor(cursor)
+  sessions: list[WorldSession] = []
+
+  while len(sessions) < limit:
+    page_limit = limit - len(sessions)
+    results = WorldSession.GSI3.query(
+      hash_key=WorldSession.gsi3_pk(world_id),
+      range_key_condition=WorldSession.GSI3SK.startswith("SESSION#"),
+      scan_index_forward=False,
+      page_size=page_limit,
+      limit=page_limit,
+      last_evaluated_key=last_key,
+    )
+    indexed_sessions = list(results)
+    sessions.extend(_hydrate_sessions_from_index(indexed_sessions))
+    last_key = results.last_evaluated_key
+    if not last_key:
+      break
+
+  sessions.sort(key=lambda session: str(session.created_at or session.updated_at or ""), reverse=True)
+  return sessions, encode_cursor(last_key)
+
+
 @tracer.capture_method
 def list_all_worlds(limit: int, cursor: str | None, search: str | None = None) -> tuple[list[WorldMeta], str | None]:
-  """List all world metadata records, sorted by created_at descending.
+  """List recent indexed world metadata records, newest first.
 
-  There is no current all-worlds-by-created-at index, so a scan is required.
-  The scan streams items in batches (page_size) instead of loading everything
-  at once to bound memory usage.  Sorting still happens in application code;
-  a dedicated GSI would be needed to eliminate this entirely.
+  Search is intentionally exact-ID based to keep the admin endpoint bounded:
+  a lookup first tries a world ID, then treats the value as an author ID and
+  uses the author-worlds index.
   """
-  offset = _offset_from_cursor(cursor)
-  meta_condition = WorldMeta.SK == WorldMeta.sk()  # noqa: SIM300 - PynamoDB needs the attribute on the left.
+  lookup = _clean_world_lookup(search)
+  if lookup:
+    world = _get_world_or_none(lookup)
+    if world:
+      return [world], None
+    return list_user_worlds(lookup, limit=limit, cursor=cursor)
 
+  last_key = decode_cursor(cursor)
   worlds: list[WorldMeta] = []
-  scan_kwargs: dict = {
-    "filter_condition": WorldMeta.PK.startswith("WORLD#") & meta_condition,
-    "page_size": 100,
-  }
-  for item in WorldMeta.scan(**scan_kwargs):
-    if _world_matches_search(item, search):
-      worlds.append(item)
 
-  fallback = datetime.min.replace(tzinfo=UTC)
-  worlds.sort(key=lambda world: world.created_at or fallback, reverse=True)
+  while len(worlds) < limit:
+    results = WorldMeta.GSI3.query(
+      hash_key=WorldMeta.gsi3_pk_world_directory(),
+      scan_index_forward=False,
+      page_size=limit,
+      limit=limit - len(worlds),
+      last_evaluated_key=last_key,
+    )
+    indexed_worlds = list(results)
+    worlds.extend(_hydrate_worlds_from_index(indexed_worlds))
+    last_key = results.last_evaluated_key
+    if not last_key:
+      break
 
-  end = offset + limit
-  next_cursor = encode_cursor({"offset": end}) if end < len(worlds) else None
-  return worlds[offset:end], next_cursor
+  return worlds, encode_cursor(last_key)
 
 
 @tracer.capture_method
@@ -478,6 +591,15 @@ def list_world_nodes(world_id: str, limit: int, cursor: str | None) -> tuple[lis
     last_evaluated_key=decode_cursor(cursor),
   )
   return list(results), encode_cursor(results.last_evaluated_key)
+
+
+@tracer.capture_method
+def get_playlist(playlist_id: str) -> Playlist:
+  """Fetch a soundtrack playlist by exact ID for admin inspection."""
+  try:
+    return Playlist.get(Playlist.pk(playlist_id), Playlist.sk())
+  except Playlist.DoesNotExist as exc:
+    raise NotFoundError(f"Playlist not found: {playlist_id}") from exc
 
 
 @tracer.capture_method
