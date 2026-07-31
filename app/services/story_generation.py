@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING, Any
 from pynamodb.exceptions import UpdateError
 
 import app.services.llm as llm
+from app.core.llm_telemetry import ai_trace_span, reset_llm_context, set_llm_context
 from app.core.observability import MetricUnit, logger, metrics, tracer
 from app.models.dtos.story_node import NodeGenerationStatus
 from app.models.entities.node_session import BaseChoiceStateMap
@@ -159,7 +160,6 @@ async def _stream_root_node(
 # =============================================================================
 
 
-@tracer.capture_method
 async def generate_text(
   world_id: str,
   node_id: str,
@@ -171,6 +171,9 @@ async def generate_text(
   For root nodes (node_id == "0"), uses the root node agent.
   For child nodes, uses the next node agent with parent context.
 
+  All LLM calls made during generation are grouped into one PostHog AI trace
+  carrying the world/node/session/user context.
+
   Yields:
     Text chunks as they are generated
 
@@ -179,6 +182,22 @@ async def generate_text(
     InvalidGenerationStatusError: If the node is not in INITIALIZED or FAILED status
     QuotaExceededError: If the user has reached their tier's node limit
   """
+  llm_context_token = set_llm_context(world_id=world_id, node_id=node_id, world_session_id=session_id, user_id=user_id)
+  try:
+    with ai_trace_span("story_generation"):
+      async for chunk in _generate_text_impl(world_id, node_id, user_id=user_id, session_id=session_id):
+        yield chunk
+  finally:
+    reset_llm_context(llm_context_token)
+
+
+@tracer.capture_method
+async def _generate_text_impl(
+  world_id: str,
+  node_id: str,
+  user_id: str | None = None,
+  session_id: str | None = None,
+) -> AsyncGenerator[str]:
   logger.info(f"Generating text for node {node_id}")
 
   node = get_node_entity(world_id, node_id)

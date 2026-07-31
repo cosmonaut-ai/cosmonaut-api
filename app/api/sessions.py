@@ -14,6 +14,7 @@ import app.services.worlds as world_service
 from app.api.dependencies import require_session_read
 from app.api.mappers import membership_to_session_summary_dto, node_session_to_list_dto, session_to_dto
 from app.core.errors import AppError, BadRequestError, SessionAccessDeniedError, WrongSessionForNodeError
+from app.core.llm_telemetry import ai_trace_span, current_ai_trace_id, reset_llm_context, set_llm_context
 from app.core.llm_telemetry import flush as llm_flush
 from app.core.observability import MetricUnit, logger, metrics
 from app.core.posthog import capture as ph_capture
@@ -293,6 +294,7 @@ async def generate_text(
           "session_id": session_id,
           "node_id": node_id,
           "source": "server",
+          "trace_id": current_ai_trace_id(),
         },
       )
       await queue.put(exc)
@@ -399,18 +401,24 @@ async def generate_node_audio(
 
   check_and_increment(current_user.id, "audio", email=current_user.email)
 
+  llm_context_token = set_llm_context(
+    world_id=root_world_id, node_id=node_id, world_session_id=session_id, user_id=current_user.id
+  )
   try:
-    audio_cdn_url, timestamps_cdn_url = await generate_and_store_audio(
-      world_id=root_world_id,
-      node_id=node_id,
-      text=str(node.text),
-      voice_id=voice.id,
-      elevenlabs_voiceid=voice.elevenlabs_voiceid,
-    )
+    with ai_trace_span("audio_narration"):
+      audio_cdn_url, timestamps_cdn_url = await generate_and_store_audio(
+        world_id=root_world_id,
+        node_id=node_id,
+        text=str(node.text),
+        voice_id=voice.id,
+        elevenlabs_voiceid=voice.elevenlabs_voiceid,
+      )
   except Exception as e:
     release_quota(current_user.id, "audio")
     logger.error(f"Audio generation failed for node {node_id}: {e}", exc_info=True)
     raise AppError("Audio generation failed") from e
+  finally:
+    reset_llm_context(llm_context_token)
 
   audio_entry = {"audio_url": audio_cdn_url, "timestamps_url": timestamps_cdn_url}
   try:

@@ -83,6 +83,7 @@ _agent: Agent[WorldInfoDeps, str] = Agent(
   model=get_world_building_model(),
   deps_type=WorldInfoDeps,
   output_type=str,
+  name="world_info",
 )
 
 

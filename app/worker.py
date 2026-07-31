@@ -9,8 +9,10 @@ from pydantic import TypeAdapter
 from pynamodb.exceptions import UpdateError
 
 from app.core.llm_telemetry import (
+  ai_trace_span,
   clear_request_distinct_id,
   init_llm_telemetry,
+  set_llm_context,
   set_request_distinct_id,
 )
 from app.core.llm_telemetry import (
@@ -117,22 +119,31 @@ async def _process_task(payload: SQSPayload):
   """
   Router for specific task logic.
   """
+  author_id: str | None = None
   try:
     world_for_id = worlds.get_world_entity(payload.world_id)
-    set_request_distinct_id(str(world_for_id.author_id))
+    author_id = str(world_for_id.author_id)
+    set_request_distinct_id(author_id)
   except Exception:
     logger.debug("Could not resolve author_id for telemetry (world_id=%s)", payload.world_id)
 
+  set_llm_context(
+    world_id=payload.world_id,
+    node_id=getattr(payload, "node_id", None),
+    user_id=author_id,
+  )
+
   try:
-    match payload:
-      case AnalyzeNodePayload():
-        await _analyze_node(payload)
+    with ai_trace_span(f"worker.{payload.task_type}"):
+      match payload:
+        case AnalyzeNodePayload():
+          await _analyze_node(payload)
 
-      case GenerateWorldPayload():
-        await _generate_world(payload)
+        case GenerateWorldPayload():
+          await _generate_world(payload)
 
-      case GenerateWorldImagePayload():
-        await _generate_world_image(payload)
+        case GenerateWorldImagePayload():
+          await _generate_world_image(payload)
   finally:
     clear_request_distinct_id()
 

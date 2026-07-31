@@ -25,7 +25,12 @@ from app.api.webhooks import router as webhooks_router
 from app.api.worlds import router as worlds_router
 from app.core.config import settings
 from app.core.errors import AppError, RateLimitError
-from app.core.llm_telemetry import clear_request_distinct_id, init_llm_telemetry, set_request_distinct_id
+from app.core.llm_telemetry import (
+  clear_request_distinct_id,
+  init_llm_telemetry,
+  set_llm_context,
+  set_request_distinct_id,
+)
 from app.core.llm_telemetry import flush as llm_flush
 from app.core.observability import logger, metrics, tracer
 from app.core.posthog import capture_exception as ph_capture_exception
@@ -117,6 +122,12 @@ async def inject_logger_context(request: Request, call_next: Callable[[Request],
   if posthog_distinct_id:
     ph_identify(posthog_distinct_id)
     set_request_distinct_id(posthog_distinct_id)
+
+  # Client replay session, so server-side AI events join the user's session
+  # replay in PostHog.
+  posthog_session_id = request.headers.get("x-posthog-session-id")
+  if posthog_session_id:
+    set_llm_context(session_id=posthog_session_id)
 
   try:
     response: Response = await call_next(request)

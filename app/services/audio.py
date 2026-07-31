@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import json
+import time
 from functools import lru_cache
 
 from httpx import HTTPStatusError
@@ -16,7 +17,9 @@ from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponen
 
 from app.core.config import settings
 from app.core.http import get_http_client
+from app.core.llm_telemetry import current_ai_trace_id, get_llm_context
 from app.core.observability import MetricUnit, logger, metrics, tracer
+from app.core.posthog import capture as ph_capture
 from app.services.s3 import upload_file
 from app.services.secret_manager import get_secret_value
 
@@ -41,6 +44,41 @@ def _is_retryable(exc: BaseException) -> bool:
   if isinstance(exc, HTTPStatusError):
     return exc.response.status_code in _RETRYABLE_STATUS_CODES
   return isinstance(exc, ConnectionError | TimeoutError)
+
+
+def _capture_tts_generation(
+  text: str,
+  latency_s: float,
+  http_status: int | None,
+  error: str | None = None,
+) -> None:
+  """Record the TTS call as a PostHog $ai_generation event.
+
+  TTS is priced per character, not per token, so cost is computed here
+  (ELEVENLABS_USD_PER_CHAR) instead of relying on PostHog's token pricing.
+  Captured per attempt: retried failures each produce an error event.
+  """
+  context = get_llm_context()
+  distinct_id = context.get("distinct_id") or context.get("user_id")
+  if not distinct_id:
+    return
+  properties: dict[str, object] = {
+    "$ai_provider": "elevenlabs",
+    "$ai_model": ELEVENLABS_MODEL,
+    "$ai_span_name": "tts",
+    "$ai_latency": latency_s,
+    "$ai_trace_id": current_ai_trace_id(),
+    "$ai_http_status": http_status,
+    "$ai_total_cost_usd": len(text) * settings.ELEVENLABS_USD_PER_CHAR,
+    "character_count": len(text),
+    "world_id": context.get("world_id"),
+    "node_id": context.get("node_id"),
+    "$session_id": context.get("session_id"),
+  }
+  if error is not None:
+    properties["$ai_is_error"] = True
+    properties["$ai_error"] = error
+  ph_capture("$ai_generation", distinct_id=str(distinct_id), properties=properties)
 
 
 @tracer.capture_method
@@ -69,23 +107,30 @@ async def generate_audio(text: str, elevenlabs_voiceid: str) -> tuple[bytes, dic
   url = f"{ELEVENLABS_TTS_URL}/{elevenlabs_voiceid}/with-timestamps"
 
   client = get_http_client()
-  response = await client.post(
-    url,
-    headers={
-      "xi-api-key": api_key,
-      "Content-Type": "application/json",
-    },
-    json={
-      "text": text,
-      "model_id": ELEVENLABS_MODEL,
-      "voice_settings": {
-        "stability": 0.5,
-        "similarity_boost": 0.75,
+  started_at = time.monotonic()
+  try:
+    response = await client.post(
+      url,
+      headers={
+        "xi-api-key": api_key,
+        "Content-Type": "application/json",
       },
-    },
-    timeout=_TIMEOUT_S,
-  )
-  response.raise_for_status()
+      json={
+        "text": text,
+        "model_id": ELEVENLABS_MODEL,
+        "voice_settings": {
+          "stability": 0.5,
+          "similarity_boost": 0.75,
+        },
+      },
+      timeout=_TIMEOUT_S,
+    )
+    response.raise_for_status()
+  except Exception as exc:
+    status = exc.response.status_code if isinstance(exc, HTTPStatusError) else None
+    _capture_tts_generation(text, time.monotonic() - started_at, status, error=str(exc))
+    raise
+  _capture_tts_generation(text, time.monotonic() - started_at, response.status_code)
 
   data = response.json()
   audio_bytes = base64.b64decode(data["audio_base64"])

@@ -45,6 +45,7 @@ _agent: Agent[LLMWorldInfo, str] = Agent(
   model=get_utility_model(),
   deps_type=LLMWorldInfo,
   output_type=str,
+  name="image_prompt",
 )
 
 

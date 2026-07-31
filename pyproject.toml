@@ -27,8 +27,6 @@ dependencies = [
     "sentry-sdk[fastapi]>=2.54.0",
     "better-profanity>=0.7.0",
     "posthog[otel]>=3.0.0",
-    "opentelemetry-instrumentation-google-generativeai",
-    "opentelemetry-instrumentation-anthropic",
 ]
 
 

@@ -80,6 +80,7 @@ _agent = cast(
     model=get_utility_model(),
     deps_type=FactExtractionDeps,
     output_type=LLMFactExtraction,
+    name="fact_extraction",
   ),
 )
 
