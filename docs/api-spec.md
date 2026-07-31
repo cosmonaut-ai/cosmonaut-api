@@ -39,9 +39,11 @@ The streaming endpoint uses CloudFront's signed cookies for secure, long-lived c
 
 ---
 
-## 3. Worlds
+## 3. Worlds And Sessions
 
-### Create a World (Asynchronous)
+Worlds are canonical/shareable story definitions. Sessions are a user's concrete playthrough state for a world. Clients should treat `/worlds/*` as root-world metadata and sharing, and `/sessions/*` as dashboard, progress, nodes, choices, streaming, and audio.
+
+### Create a World And Owner Session
 
 Initializes a new story world. World generation is an asynchronous process involving multiple LLM steps (lore generation, narrator profile, and root node creation).
 
@@ -59,24 +61,40 @@ Initializes a new story world. World generation is an asynchronous process invol
 - **Response:** `200 OK`
   ```json
   {
-    "id": "uuid-123",
-    "generation_status": "generating_lore",
-    "author_id": "user-sub-id",
-    "created_at": "2025-12-30T10:00:00Z",
-    "updated_at": "2025-12-30T10:00:00Z"
+    "world": {
+      "id": "world-123",
+      "generation_status": "generating_lore",
+      "author_id": "user-sub-id",
+      "created_at": "2026-05-30T10:00:00Z",
+      "updated_at": "2026-05-30T10:00:00Z"
+    },
+    "session": {
+      "id": "session-123",
+      "root_world_id": "world-123",
+      "role": "owner",
+      "last_visited_node_id": null,
+      "visited_node_count": 0,
+      "world": {
+        "id": "world-123",
+        "generation_status": "generating_lore"
+      }
+    }
   }
   ```
 
-### Polling World Status
+Clients should cache both objects. Newly created stories appear on dashboard session lists because creation also creates the owner's first session.
 
-Clients should poll this endpoint until `generation_status` reaches `completed`.
+### Fetch Root World Metadata
+
+Returns canonical root-world data only. This endpoint never creates or returns a session.
 
 **GET** `/worlds/{world_id}`
 
+- Optional query param: `invite=<token>` to read an invited private world.
 - **Response Example (`completed`):**
   ```json
   {
-    "id": "uuid-123",
+    "id": "world-123",
     "title": "The Gilded Gear",
     "description": "A city of steam and brass...",
     "generation_status": "completed",
@@ -86,43 +104,73 @@ Clients should poll this endpoint until `generation_status` reaches `completed`.
   }
   ```
 
-### List My Worlds
+### Start Or Resume A Session
 
-**GET** `/worlds/`
+Finds or creates the current user's session for a root world and returns the session with embedded world data.
 
-- **Returns:** A list of `WorldMetaDTO` objects for the authenticated user.
+**POST** `/worlds/{world_id}/sessions`
 
-### Delete a World
+- **Request Body:** optional
+  ```json
+  {
+    "invite_token": "invite-token-if-needed"
+  }
+  ```
+- **Response:** `WorldSessionDTO`
 
-**DELETE** `/worlds/{world_id}`
+### List My Sessions
+
+Dashboard/library endpoint for the current user's playthroughs.
+
+**GET** `/sessions/?limit=50&cursor=<cursor>`
+
+- **Returns:** paginated `WorldSessionSummaryDTO` objects, each with embedded world summary metadata.
+
+### Fetch Session Detail
+
+**GET** `/sessions/{session_id}`
+
+- **Returns:** `WorldSessionDTO` with full embedded root world data.
+- **Auth:** session members only.
+
+### Session Link Handoff
+
+Resolves a session link that was accidentally shared. If the viewer can read the underlying root world, the API returns minimal root-world routing data; otherwise it returns `403` without leaking private world fields.
+
+**GET** `/sessions/{session_id}/handoff`
+
+### Delete A Session
+
+Removes the current user's library entry/playthrough. If no sessions remain for the root world, the backend hard-deletes the orphaned world and associated data.
+
+**DELETE** `/sessions/{session_id}`
 
 - **Response:** `204 No Content`
-- **Behavior:** Deletes the world metadata, all associated story nodes, and clears vector memory from Pinecone.
 
 ---
 
-## 4. Story Nodes
+## 4. Session Story Nodes
 
-### List Nodes in a World
+### List Nodes in a Session
 
-Returns generated nodes for a specific world.
+Returns graph-compatible node overlays visited in a specific session.
 
-**GET** `/worlds/{world_id}/nodes/`
+**GET** `/sessions/{session_id}/nodes/`
 
-- **Response:** `list[StoryNodeDTO]`
-- **Pagination:** Currently returns up to 100 nodes.
+- **Response:** paginated `StoryNodeDTO`
+- **Pagination:** defaults to 100 nodes and supports a cursor.
 
 ### Fetch a Story Node
 
 Retrieves the content, choices, and processing status for a specific node.
 
-**GET** `/worlds/{world_id}/nodes/{node_id}`
+**GET** `/sessions/{session_id}/nodes/{node_id}`
 
 - **Response:**
   ```json
   {
     "id": "0",
-    "world_id": "uuid-123",
+    "world_id": "world-123",
     "text": "The brass gears of the Great Clock groan as you step into the plaza...",
     "title": "Gear Plaza",
     "choices": [
@@ -135,17 +183,32 @@ Retrieves the content, choices, and processing status for a specific node.
   }
   ```
 
-### Choose and Generate (Streaming)
+### Choose An Option
 
-Selects a choice and streams the narrative text of the next node using Server-Sent Events (SSE).
+Initializes or returns the next story node for the current session. Exactly one of `target_id` or `custom_choice` must be provided.
 
-**POST** `{STREAMING_BASE_URL}/worlds/{world_id}/nodes/{node_id}/choose/{choice_index}`
+**POST** `/sessions/{session_id}/nodes/{node_id}/choose`
 
-- **Note:** If the choice already has a `target` ID (pre-generated), the API will return the full text immediately.
+- **Request Body:**
+  ```json
+  {
+    "target_id": "node-2",
+    "custom_choice": null
+  }
+  ```
+- **Response:** `201 Created` with `StoryNodeDTO`
+- **Side Effects:** updates the caller's session progress and marks session choice state.
+
+### Generate Text (Streaming)
+
+Streams narrative text for an initialized node using Server-Sent Events (SSE).
+
+**POST** `{STREAMING_BASE_URL}/sessions/{session_id}/nodes/{node_id}/generate-text`
+
 - **Auth:** Requires the signed cookies obtained from `/auth/session`. If these are missing or expired, the endpoint will return a `401` or `403` error.
 - **Streaming Response:** `text/event-stream` (Server-Sent Events format)
 - **Side Effects:**
-  - After the stream completes, the new node is saved with `processing_status: "pending"`.
+  - After the stream completes, the node is saved with `generation_status: "completed"` and `processing_status: "pending"`.
   - Background analysis (fact extraction, RAG context preparation) is triggered.
 
 #### SSE Response Format
@@ -173,28 +236,28 @@ data: [DONE]
 To consume the SSE stream, use the browser's `EventSource` API or parse the stream manually:
 
 ```javascript
-const response = await fetch(url, { method: 'POST' });
+const response = await fetch(url, { method: "POST" });
 const reader = response.body.getReader();
 const decoder = new TextDecoder();
 
-let storyText = '';
+let storyText = "";
 
 while (true) {
   const { done, value } = await reader.read();
   if (done) break;
 
   const chunk = decoder.decode(value);
-  const lines = chunk.split('\n');
+  const lines = chunk.split("\n");
 
   for (const line of lines) {
-    if (line.startsWith('data: ')) {
+    if (line.startsWith("data: ")) {
       const content = line.slice(6); // Remove 'data: ' prefix
-      if (content === '[DONE]') {
+      if (content === "[DONE]") {
         // Stream complete
         break;
       }
       // Unescape newlines to restore paragraph breaks
-      const unescaped = content.replace(/\\n/g, '\n');
+      const unescaped = content.replace(/\\n/g, "\n");
       storyText += unescaped;
       // Update UI with new content
     }
@@ -205,8 +268,19 @@ while (true) {
 #### Polling and Error Handling
 
 - **Authentication Errors:** If a `401` or `403` is received, clients should refresh the session via the `/auth/session` endpoint and retry.
-- **Wait Time:** If you call `/choose` on a node that is still `pending` or `processing`, the server will wait up to **5 seconds** for it to complete before returning a `400 Bad Request` or `500 Internal Server Error`.
 - **Client Strategy:** If the server returns a status error, wait 2-3 seconds and retry.
+
+### Retry Processing
+
+**POST** `/sessions/{session_id}/nodes/{node_id}/retry-processing`
+
+Re-enqueues fact extraction/RAG preparation for a failed node.
+
+### Generate Audio
+
+**POST** `/sessions/{session_id}/nodes/{node_id}/audio`
+
+Generates or returns cached TTS narration for the node/voice pair. See [`audio-implementation.md`](audio-implementation.md) for the full guide.
 
 ---
 

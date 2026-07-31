@@ -10,6 +10,7 @@ import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, cast
 
+from pynamodb.exceptions import PutError
 from pynamodb.expressions.update import Action
 
 from app.core.errors import SessionNotFoundError
@@ -26,6 +27,40 @@ if TYPE_CHECKING:
 # =============================================================================
 # WorldSession Operations
 # =============================================================================
+
+
+def build_session_items(
+  root_world_id: str,
+  creator_id: str,
+  members: list[str],
+  world: WorldMeta | None = None,
+) -> tuple[WorldSession, list[SessionMembership]]:
+  """Build a session and membership items without writing them."""
+  session_id = str(uuid.uuid4())
+  now = datetime.now(UTC)
+  session = WorldSession(
+    PK=WorldSession.pk(session_id),
+    SK=WorldSession.sk(),
+    id=session_id,
+    root_world_id=root_world_id,
+    members=members,
+    created_by=creator_id,
+    soundtrack_playlist_id=world.default_playlist_id if world and world.default_playlist_id else None,
+    GSI3PK=WorldSession.gsi3_pk(root_world_id),
+    GSI3SK=WorldSession.gsi3_sk(session_id),
+  )
+  memberships = [
+    _build_membership(
+      session_id=session_id,
+      root_world_id=root_world_id,
+      user_id=member_id,
+      role="owner" if member_id == creator_id else "member",
+      joined_at=now,
+      world=world,
+    )
+    for member_id in members
+  ]
+  return session, memberships
 
 
 @tracer.capture_method
@@ -46,26 +81,13 @@ def create_session(
   Returns:
     The created WorldSession.
   """
-  session_id = str(uuid.uuid4())
-  now = datetime.now(UTC)
-
-  session = WorldSession(
-    PK=WorldSession.pk(session_id),
-    SK=WorldSession.sk(),
-    id=session_id,
-    root_world_id=root_world_id,
-    members=members,
-    created_by=creator_id,
-    GSI3PK=WorldSession.gsi3_pk(root_world_id),
-    GSI3SK=WorldSession.gsi3_sk(session_id),
-  )
+  session, memberships = build_session_items(root_world_id, creator_id, members, world)
   session.save()
 
-  for member_id in members:
-    role = "owner" if member_id == creator_id else "member"
-    _create_membership(session_id, root_world_id, member_id, role, now, world)
+  for membership in memberships:
+    membership.save()
 
-  logger.info("Created session %s for world %s (members=%s)", session_id, root_world_id, members)
+  logger.info("Created session %s for world %s (members=%s)", session.id, root_world_id, members)
   return session
 
 
@@ -125,6 +147,22 @@ def get_session_for_user(user_id: str, root_world_id: str) -> WorldSession | Non
 
 
 @tracer.capture_method
+def get_session_membership(
+  user_id: str,
+  root_world_id: str,
+  session_id: str,
+) -> SessionMembership | None:
+  """Fetch a user's membership row for a specific session, returning None if missing."""
+  try:
+    return SessionMembership.get(
+      SessionMembership.pk(user_id),
+      SessionMembership.sk(root_world_id, session_id),
+    )
+  except SessionMembership.DoesNotExist:
+    return None
+
+
+@tracer.capture_method
 def find_or_create_session(
   root_world_id: str,
   user_id: str,
@@ -132,8 +170,8 @@ def find_or_create_session(
 ) -> WorldSession:
   """Find a user's session for a world, or create one if none exists.
 
-  Used for lazy session initialization: when a user first interacts with
-  a world (choose, generate-text), their session is created on demand.
+  Used for owner session creation during world initialization and for
+  idempotent session initialization when a user first plays a shared world.
 
   Args:
     root_world_id: The root world ID.
@@ -153,20 +191,112 @@ def find_or_create_session(
 
 
 @tracer.capture_method
-def add_member(
-  session_id: str,
-  user_id: str,
-  root_world_id: str,
-  role: str = "member",
-) -> SessionMembership:
-  """Add a member to an existing session."""
-  session = get_session(session_id)
-  session.update(
-    actions=[WorldSession.members.set(WorldSession.members.append([user_id]))],
+def ensure_root_node_session(session: WorldSession, world: WorldMeta) -> None:
+  """Create the session overlay for the root node when the root node already exists."""
+  root_node_id = str(world.root_node_id) if world.root_node_id else None
+  if not root_node_id:
+    return
+
+  session_id = str(session.id)
+  if get_node_session(session_id, root_node_id):
+    return
+
+  try:
+    from app.services.story_nodes import get_node_entity
+
+    root_node = get_node_entity(str(world.id), root_node_id)
+  except Exception:
+    logger.info(
+      "Root node %s is not available yet for session %s in world %s",
+      root_node_id,
+      session_id,
+      world.id,
+    )
+    return
+
+  create_node_session(
+    session_id=session_id,
+    node_id=root_node_id,
+    root_world_id=str(world.id),
+    title=root_node.title,
+    base_choice_count=len(root_node.choices),
+    parent_id=root_node.parent_id,
   )
 
-  now = datetime.now(UTC)
-  return _create_membership(session_id, root_world_id, user_id, role, now)
+
+@tracer.capture_method
+def list_sessions_for_world(root_world_id: str) -> list[WorldSession]:
+  """Return all persisted sessions for a root world."""
+  results = WorldSession.GSI3.query(
+    hash_key=WorldSession.gsi3_pk(root_world_id),
+    range_key_condition=WorldSession.GSI3SK.startswith("SESSION#"),
+  )
+  sessions: list[WorldSession] = []
+  for result in results:
+    session_id = str(result.PK).removeprefix("SESSION#")
+    session = find_session(session_id)
+    if session is not None:
+      sessions.append(session)
+  return sessions
+
+
+@tracer.capture_method
+def sync_world_session_metadata(world: WorldMeta, *, ensure_root_node: bool = False) -> int:
+  """Best-effort sync of denormalized world metadata onto every session membership.
+
+  Also backfills ``soundtrack_playlist_id`` onto sessions that were created
+  before the playlist was generated (the session is created transactionally
+  with the world, which precedes lore generation).
+  """
+  root_world_id = str(world.id)
+  default_playlist_id = str(world.default_playlist_id) if world.default_playlist_id else None
+  synced = 0
+  for session in list_sessions_for_world(root_world_id):
+    session_id = str(session.id)
+
+    if default_playlist_id and not session.soundtrack_playlist_id:
+      try:
+        session.update(
+          actions=[WorldSession.soundtrack_playlist_id.set(default_playlist_id)],
+          add_version_condition=False,
+        )
+        logger.info("Backfilled soundtrack_playlist_id on session %s", session_id)
+      except Exception:
+        logger.warning(
+          "Failed to backfill soundtrack_playlist_id for session %s in world %s",
+          session_id,
+          root_world_id,
+          exc_info=True,
+        )
+
+    if ensure_root_node:
+      try:
+        ensure_root_node_session(session, world)
+      except Exception:
+        logger.warning(
+          "Failed to ensure root NodeSession for session %s in world %s",
+          session_id,
+          root_world_id,
+          exc_info=True,
+        )
+
+    for member_id in [str(m) for m in (session.members or [])]:
+      try:
+        update_membership_metadata(
+          user_id=member_id,
+          root_world_id=root_world_id,
+          session_id=session_id,
+          world=world,
+        )
+        synced += 1
+      except Exception:
+        logger.warning(
+          "Failed to update session membership metadata for user %s in session %s",
+          member_id,
+          session_id,
+          exc_info=True,
+        )
+  return synced
 
 
 @tracer.capture_method
@@ -222,7 +352,13 @@ def create_node_session(
     parent_id=parent_id,
     base_choice_states=[BaseChoiceStateMap(is_explored=False) for _ in range(base_choice_count)],
   )
-  ns.save()
+  try:
+    ns.save(condition=NodeSession.PK.does_not_exist(), add_version_condition=False)
+  except PutError:
+    existing = get_node_session(session_id, node_id)
+    if existing is not None:
+      return existing
+    raise
 
   try:
     ws = WorldSession(PK=WorldSession.pk(session_id), SK=WorldSession.sk())
@@ -274,10 +410,14 @@ def update_session_progress(
   root_world_id: str,
   user_id: str,
   node_id: str,
+  *,
+  is_new_node: bool = True,
 ) -> None:
   """Update per-member progress on WorldSession and SessionMembership.
 
-  Uses direct update expressions (no read required).
+  Uses direct update expressions (no read required).  When *is_new_node*
+  is ``False`` (e.g. revisiting a previously explored node) the visited
+  counter is left unchanged to avoid inflating the dashboard count.
   """
   now = datetime.now(UTC)
 
@@ -287,17 +427,20 @@ def update_session_progress(
     add_version_condition=False,
   )
 
+  actions: list[Action] = [
+    SessionMembership.last_visited_node_id.set(node_id),
+    SessionMembership.last_accessed_at.set(now),
+    SessionMembership.GSI2SK.set(SessionMembership.gsi2_sk(now, session_id)),
+  ]
+  if is_new_node:
+    actions.append(SessionMembership.visited_node_count.set((SessionMembership.visited_node_count | 0) + 1))
+
   membership = SessionMembership(
     PK=SessionMembership.pk(user_id),
     SK=SessionMembership.sk(root_world_id, session_id),
   )
   membership.update(
-    actions=[
-      SessionMembership.last_visited_node_id.set(node_id),
-      SessionMembership.visited_node_count.set((SessionMembership.visited_node_count | 0) + 1),
-      SessionMembership.last_accessed_at.set(now),
-      SessionMembership.GSI2SK.set(SessionMembership.gsi2_sk(now, session_id)),
-    ],
+    actions=actions,
     add_version_condition=False,
   )
 
@@ -317,33 +460,12 @@ def update_membership_metadata(
   """Update denormalized world metadata on a user's SessionMembership.
 
   Called from the worker after world generation and image generation complete.
+  Uses the same canonical field set as _build_membership via _world_metadata_fields.
   """
-  actions: list[Action] = []
-  if world.title:
-    actions.append(SessionMembership.title.set(world.title))
-  if world.description:
-    actions.append(SessionMembership.description.set(world.description))
-  if world.genre:
-    actions.append(SessionMembership.genre.set(world.genre))
-  if world.world_length:
-    actions.append(SessionMembership.world_length.set(world.world_length))
-  if world.world_image_url:
-    actions.append(SessionMembership.world_image_url.set(world.world_image_url))
-  if world.world_image_alt_text:
-    actions.append(SessionMembership.world_image_alt_text.set(world.world_image_alt_text))
-  if world.image_generation_status:
-    actions.append(SessionMembership.image_generation_status.set(world.image_generation_status))
-  if world.generation_status:
-    actions.append(SessionMembership.generation_status.set(world.generation_status))
-  if world.created_at:
-    created_at_str = world.created_at.isoformat() if hasattr(world.created_at, "isoformat") else str(world.created_at)
-    actions.append(SessionMembership.root_created_at.set(created_at_str))
-  if world.root_node_id:
-    actions.append(SessionMembership.root_node_id.set(world.root_node_id))
-  if world.vocab_level:
-    actions.append(SessionMembership.vocab_level.set(world.vocab_level))
-  if world.content_filter:
-    actions.append(SessionMembership.content_filter.set(world.content_filter))
+  fields = _world_metadata_fields(world)
+  actions: list[Action] = [
+    getattr(SessionMembership, field_name).set(value) for field_name, value in fields.items() if value is not None
+  ]
 
   if not actions:
     return
@@ -550,6 +672,46 @@ def _create_membership(
   world: WorldMeta | None = None,
 ) -> SessionMembership:
   """Create a SessionMembership item, optionally denormalizing world metadata."""
+  membership = _build_membership(session_id, root_world_id, user_id, role, joined_at, world)
+  membership.save()
+  return membership
+
+
+def _world_metadata_fields(world: WorldMeta) -> dict[str, Any]:
+  """Extract the canonical set of denormalized world fields for SessionMembership.
+
+  Used by both _build_membership (creation) and update_membership_metadata
+  (worker sync) so the field list is defined in exactly one place.
+  """
+  fields: dict[str, Any] = {
+    "title": world.title,
+    "description": world.description,
+    "genre": world.genre,
+    "world_length": world.world_length,
+    "world_image_url": world.world_image_url,
+    "world_image_alt_text": world.world_image_alt_text,
+    "image_generation_status": world.image_generation_status,
+    "generation_status": world.generation_status,
+    "root_node_id": world.root_node_id,
+    "vocab_level": world.vocab_level,
+    "content_filter": world.content_filter,
+  }
+  if world.created_at:
+    fields["root_created_at"] = (
+      world.created_at.isoformat() if hasattr(world.created_at, "isoformat") else str(world.created_at)
+    )
+  return fields
+
+
+def _build_membership(
+  session_id: str,
+  root_world_id: str,
+  user_id: str,
+  role: str,
+  joined_at: datetime,
+  world: WorldMeta | None = None,
+) -> SessionMembership:
+  """Build a SessionMembership item without writing it."""
   membership = SessionMembership(
     PK=SessionMembership.pk(user_id),
     SK=SessionMembership.sk(root_world_id, session_id),
@@ -564,20 +726,7 @@ def _create_membership(
   )
 
   if world:
-    membership.title = world.title
-    membership.description = world.description
-    membership.genre = world.genre
-    membership.world_length = world.world_length
-    membership.world_image_url = world.world_image_url
-    membership.world_image_alt_text = world.world_image_alt_text
-    if world.created_at:
-      membership.root_created_at = (
-        world.created_at.isoformat() if hasattr(world.created_at, "isoformat") else str(world.created_at)
-      )
-    membership.generation_status = world.generation_status
-    membership.root_node_id = world.root_node_id
-    membership.vocab_level = world.vocab_level
-    membership.content_filter = world.content_filter
+    for field_name, value in _world_metadata_fields(world).items():
+      setattr(membership, field_name, value)
 
-  membership.save()
   return membership

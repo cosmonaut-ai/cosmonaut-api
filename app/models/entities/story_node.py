@@ -9,7 +9,7 @@ from pynamodb.attributes import BooleanAttribute, ListAttribute, MapAttribute, N
 from app.models.dtos.story_node import (
   AudioEntryDTO,
   ChoiceDTO,
-  GenerationStatus,
+  NodeGenerationStatus,
   StoryNodeContextDTO,
   StoryNodeDTO,
   StoryNodeProcessingStatus,
@@ -172,7 +172,7 @@ class StoryNode(BaseCosmonautModel):
       ancestors=self.ancestors,
       context=self.context.to_dto() if self.context else None,
       processing_status=StoryNodeProcessingStatus(self.processing_status),
-      generation_status=GenerationStatus(self.generation_status),
+      generation_status=NodeGenerationStatus(self.generation_status),
       audio={
         voice_id: AudioEntryDTO(
           audio_url=entry["audio_url"] if isinstance(entry, dict) else str(entry),
@@ -216,7 +216,7 @@ class StoryNode(BaseCosmonautModel):
       if dto.parent_choice
       else None,
       processing_status=StoryNodeProcessingStatus(dto.processing_status).value,
-      generation_status=GenerationStatus(dto.generation_status).value,
+      generation_status=NodeGenerationStatus(dto.generation_status).value,
       context=StoryNodeContext.from_dto(dto.context) if dto.context else None,
       audio={
         voice_id: {"audio_url": entry.audio_url, "timestamps_url": entry.timestamps_url}

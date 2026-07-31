@@ -57,6 +57,14 @@ class BaseCosmonautModel(Model):
 
   # -- Timestamp management ---------------------------------------------------
 
+  def _prepare_for_save(self) -> None:
+    """Refresh timestamp-derived fields before a normal or transactional save."""
+    now = datetime.now(UTC)
+    if not self.created_at:
+      self.created_at = now
+    self.updated_at = now
+    self._on_save()
+
   def save(
     self,
     condition: Condition | None = None,
@@ -64,11 +72,7 @@ class BaseCosmonautModel(Model):
     add_version_condition: bool = True,
   ) -> dict[str, Any]:
     """Persist the item, automatically maintaining timestamps."""
-    now = datetime.now(UTC)
-    if not self.created_at:
-      self.created_at = now
-    self.updated_at = now
-    self._on_save()
+    self._prepare_for_save()
     return super().save(condition=condition, add_version_condition=add_version_condition)
 
   def update(

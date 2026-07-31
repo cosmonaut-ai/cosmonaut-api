@@ -49,6 +49,7 @@ _agent: Agent[NextNodeDeps, str] = Agent(
   model=get_storytelling_model(),
   deps_type=NextNodeDeps,
   output_type=str,
+  name="next_node",
 )
 
 

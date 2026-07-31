@@ -57,6 +57,7 @@ _agent = cast(
     model=get_utility_model(),
     deps_type=NarratorDeps,
     output_type=LLMNarratorProfile,
+    name="narrator",
   ),
 )
 

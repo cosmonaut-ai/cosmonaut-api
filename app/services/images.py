@@ -6,6 +6,7 @@ S3 upload, and WorldMeta persistence.
 
 from __future__ import annotations
 
+import time
 from functools import lru_cache
 
 from google.genai import Client as GenAIClient
@@ -14,7 +15,9 @@ from google.genai import types
 import app.services.llm as llm
 from app.core.config import settings
 from app.core.gcp_auth import get_gcp_credentials
+from app.core.llm_telemetry import current_ai_trace_id, get_llm_context
 from app.core.observability import logger, tracer
+from app.core.posthog import capture as ph_capture
 from app.models.entities.world_meta import WorldMeta
 from app.services.s3 import upload_image
 from app.services.worlds import world_meta_to_llm_world_info
@@ -34,6 +37,32 @@ def _get_genai_client() -> GenAIClient:
     project=settings.GCP_PROJECT_ID,
     location=settings.GCP_LOCATION,
   )
+
+
+def _capture_image_generation(world_id: str, latency_s: float, error: str | None = None) -> None:
+  """Record the Imagen call as a PostHog $ai_generation event.
+
+  Imagen is priced per image, not per token, so cost is computed here
+  (IMAGEN_USD_PER_IMAGE). generate_images is outside pydantic-ai, so no
+  span is created automatically.
+  """
+  context = get_llm_context()
+  distinct_id = context.get("distinct_id") or context.get("user_id")
+  if not distinct_id:
+    return
+  properties: dict[str, object] = {
+    "$ai_provider": "google",
+    "$ai_model": IMAGEN_MODEL,
+    "$ai_span_name": "image_generation",
+    "$ai_latency": latency_s,
+    "$ai_trace_id": current_ai_trace_id(),
+    "$ai_total_cost_usd": settings.IMAGEN_USD_PER_IMAGE,
+    "world_id": world_id,
+  }
+  if error is not None:
+    properties["$ai_is_error"] = True
+    properties["$ai_error"] = error
+  ph_capture("$ai_generation", distinct_id=str(distinct_id), properties=properties)
 
 
 @tracer.capture_method
@@ -61,14 +90,20 @@ async def generate_world_image(world: WorldMeta) -> WorldMeta:
 
   # 2. Generate image via Imagen 3
   client = _get_genai_client()
-  response = client.models.generate_images(
-    model=IMAGEN_MODEL,
-    prompt=image_prompt,
-    config=types.GenerateImagesConfig(
-      number_of_images=1,
-      aspect_ratio="1:1",
-    ),
-  )
+  started_at = time.monotonic()
+  try:
+    response = client.models.generate_images(
+      model=IMAGEN_MODEL,
+      prompt=image_prompt,
+      config=types.GenerateImagesConfig(
+        number_of_images=1,
+        aspect_ratio="1:1",
+      ),
+    )
+  except Exception as exc:
+    _capture_image_generation(world.id, time.monotonic() - started_at, error=str(exc))
+    raise
+  _capture_image_generation(world.id, time.monotonic() - started_at)
 
   if not response.generated_images:
     raise RuntimeError(f"Imagen returned no images for world {world.id}")

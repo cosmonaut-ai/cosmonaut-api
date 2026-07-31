@@ -33,6 +33,7 @@ _agent: Agent[RootNodeDeps, str] = Agent(
   model=get_storytelling_model(),
   deps_type=RootNodeDeps,
   output_type=str,
+  name="root_node",
 )
 
 

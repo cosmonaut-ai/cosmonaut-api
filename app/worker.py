@@ -9,8 +9,10 @@ from pydantic import TypeAdapter
 from pynamodb.exceptions import UpdateError
 
 from app.core.llm_telemetry import (
+  ai_trace_span,
   clear_request_distinct_id,
   init_llm_telemetry,
+  set_llm_context,
   set_request_distinct_id,
 )
 from app.core.llm_telemetry import (
@@ -23,11 +25,12 @@ from app.core.posthog import init_posthog
 from app.core.sentry import init_sentry
 from app.models.dtos.sqs_payloads import AnalyzeNodePayload, GenerateWorldImagePayload, GenerateWorldPayload, SQSPayload
 from app.models.dtos.story_node import StoryNodeProcessingStatus
-from app.models.dtos.world_meta import GenerationStatus, ImageGenerationStatus
+from app.models.dtos.world_meta import ImageGenerationStatus, WorldGenerationStatus
 from app.models.entities.story_node import StoryNode
 from app.models.entities.world_meta import WorldMeta
+from app.models.entities.world_session import WorldSession
 from app.services import images, story_nodes, worlds
-from app.services.sessions import create_node_session, get_session_for_user, update_membership_metadata
+from app.services.sessions import get_session_for_user, sync_world_session_metadata
 from app.services.sqs import SQSSendError, send_world_image_generation_message
 
 init_sentry()
@@ -35,19 +38,12 @@ init_posthog()
 init_llm_telemetry()
 
 
-def _sync_session_membership(world: WorldMeta) -> None:
-  """Best-effort update of session membership metadata after world generation steps."""
+def _sync_session_membership(world: WorldMeta, *, ensure_root_node: bool = False) -> None:
+  """Best-effort update of session data after world generation steps."""
   world_id = str(world.id)
-  author_id = str(world.author_id)
   try:
-    session = get_session_for_user(author_id, world_id)
-    if session:
-      update_membership_metadata(
-        user_id=author_id,
-        root_world_id=world_id,
-        session_id=str(session.id),
-        world=world,
-      )
+    synced = sync_world_session_metadata(world, ensure_root_node=ensure_root_node)
+    logger.info("Synced %d session memberships for world %s", synced, world_id)
   except Exception:
     logger.warning("Failed to update session data for world %s (non-fatal)", world_id, exc_info=True)
 
@@ -123,22 +119,31 @@ async def _process_task(payload: SQSPayload):
   """
   Router for specific task logic.
   """
+  author_id: str | None = None
   try:
     world_for_id = worlds.get_world_entity(payload.world_id)
-    set_request_distinct_id(str(world_for_id.author_id))
+    author_id = str(world_for_id.author_id)
+    set_request_distinct_id(author_id)
   except Exception:
     logger.debug("Could not resolve author_id for telemetry (world_id=%s)", payload.world_id)
 
+  set_llm_context(
+    world_id=payload.world_id,
+    node_id=getattr(payload, "node_id", None),
+    user_id=author_id,
+  )
+
   try:
-    match payload:
-      case AnalyzeNodePayload():
-        await _analyze_node(payload)
+    with ai_trace_span(f"worker.{payload.task_type}"):
+      match payload:
+        case AnalyzeNodePayload():
+          await _analyze_node(payload)
 
-      case GenerateWorldPayload():
-        await _generate_world(payload)
+        case GenerateWorldPayload():
+          await _generate_world(payload)
 
-      case GenerateWorldImagePayload():
-        await _generate_world_image(payload)
+        case GenerateWorldImagePayload():
+          await _generate_world_image(payload)
   finally:
     clear_request_distinct_id()
 
@@ -202,29 +207,40 @@ async def _generate_world(payload: GenerateWorldPayload):
   # - generate_lore() overwrites previous lore
   # - generate_narrator_profile() is idempotent (returns early if already set)
   # - initialize_root_node() overwrites the root node (same deterministic ID "0")
-  if world.generation_status == GenerationStatus.COMPLETED:
+  if world.generation_status == WorldGenerationStatus.COMPLETED:
     logger.info(f"World {world_id} already completed, skipping.")
     return
 
   try:
     # 1. Generate Lore
     logger.info("Generating Lore...")
-    world.generation_status = GenerationStatus.GENERATING_LORE
+    world.generation_status = WorldGenerationStatus.GENERATING_LORE
     world.save()
     await worlds.generate_lore(world)
 
+    if world.default_playlist_id:
+      try:
+        owner_session = get_session_for_user(str(world.author_id), world_id)
+        if owner_session:
+          owner_session.update(
+            actions=[WorldSession.soundtrack_playlist_id.set(str(world.default_playlist_id))],
+            add_version_condition=False,
+          )
+      except Exception:
+        logger.warning("Failed to backfill playlist on owner session for world %s (non-fatal)", world_id, exc_info=True)
+
     # 2. Generate Narrator Profile
     logger.info("Generating Narrator...")
-    world.generation_status = GenerationStatus.GENERATING_NARRATOR_PROFILE
+    world.generation_status = WorldGenerationStatus.GENERATING_NARRATOR_PROFILE
     world.save()
     await worlds.generate_narrator_profile(world)
 
     # 3. Initialize Root Node (without text generation)
     # Text will be generated when the client calls /generate-text
     logger.info("Initializing Root Node...")
-    root_node = worlds.initialize_root_node(world)
+    worlds.initialize_root_node(world)
 
-    world.generation_status = GenerationStatus.COMPLETED
+    world.generation_status = WorldGenerationStatus.COMPLETED
     ph_capture(
       "world_generation_completed",
       distinct_id=str(world.author_id),
@@ -232,31 +248,22 @@ async def _generate_world(payload: GenerateWorldPayload):
     )
     logger.info(f"World {world_id} generation complete.")
 
-    # 4. Update session membership with populated world metadata + create root NodeSession
-    _sync_session_membership(world)
-    try:
-      session = get_session_for_user(str(world.author_id), world_id)
-      if session:
-        create_node_session(
-          session_id=str(session.id),
-          node_id=str(root_node.id),
-          root_world_id=world_id,
-        )
-    except Exception:
-      logger.warning("Failed to create root NodeSession for world %s (non-fatal)", world_id, exc_info=True)
+    # 4. Update session memberships with populated world metadata + create root NodeSessions.
+    world.image_generation_status = ImageGenerationStatus.PENDING.value
+    _sync_session_membership(world, ensure_root_node=True)
 
     # 5. Enqueue image generation (fire-and-forget, non-blocking).
     # An SQS failure here must not undo the successful world generation.
     try:
-      world.image_generation_status = ImageGenerationStatus.PENDING.value
       send_world_image_generation_message(world_id)
     except SQSSendError:
       world.image_generation_status = ImageGenerationStatus.FAILED.value
       logger.error(f"Failed to enqueue image generation for world {world_id} -- world will lack a cover image")
+      _sync_session_membership(world)
 
   except Exception as e:
     logger.exception(f"Error generating world {world_id}: {e}")
-    world.generation_status = GenerationStatus.FAILED
+    world.generation_status = WorldGenerationStatus.FAILED
     ph_capture(
       "world_generation_failed",
       distinct_id=str(world.author_id),

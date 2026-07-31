@@ -14,33 +14,36 @@ import uuid
 from collections.abc import Callable
 from typing import Any
 
+from pydantic import BaseModel
+from pynamodb.connection import Connection
+from pynamodb.transactions import TransactWrite
+
 import app.services.llm as llm
 import app.services.pinecone as pinecone
-from app.core.config import WORLD_LENGTH_MAX_NODES
+from app.core.config import WORLD_LENGTH_MAX_NODES, settings
 from app.core.errors import NotFoundError
 from app.core.observability import MetricUnit, logger, metrics, tracer
 from app.models.dtos.story_node import (
-  GenerationStatus as NodeGenerationStatus,
-)
-from app.models.dtos.story_node import (
+  NodeGenerationStatus,
   StoryNodeDTO,
   StoryNodeProcessingStatus,
 )
 from app.models.dtos.world_meta import (
-  CharacterDTO,
-  GenerationStatus,
   ImageGenerationStatus,
-  LocationDTO,
   WorldCreateRequest,
+  WorldGenerationStatus,
   WorldMetaDTO,
   WorldVisibility,
 )
+from app.models.entities.session_membership import SessionMembership
 from app.models.entities.story_node import StoryNode
 from app.models.entities.user import UserRecord
 from app.models.entities.world_meta import Character, Location, WorldMeta
+from app.models.entities.world_session import WorldSession
+from app.services import playlists
 from app.services.llm.sanitize import sanitize_user_input
 from app.services.s3 import delete_objects_by_prefix
-from app.services.sessions import create_session
+from app.services.sessions import build_session_items, delete_session
 from app.services.sqs import send_world_generation_message
 from app.services.usage import (
   check_and_increment,
@@ -134,8 +137,8 @@ def _decrement_world_count(user_id: str) -> None:
 
 
 @tracer.capture_method
-def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
-  """Create a new world metadata record.
+def create_world(create_request: WorldCreateRequest, user_id: str) -> tuple[WorldMeta, WorldSession]:
+  """Create a new world metadata record and owner session.
 
   Expects a mapping aligned with the ``WorldMeta`` attributes.
   Raises ``QuotaExceededError`` if the user has reached their periodic world-creation limit.
@@ -163,7 +166,7 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
       author_id=user_id,
       visibility=create_request.visibility,
       world_prompt=sanitized_prompt,
-      generation_status=GenerationStatus.INITIALIZED,
+      generation_status=WorldGenerationStatus.INITIALIZED,
       story_max_nodes=max_nodes,
       world_length=create_request.world_length.value,
       vocab_level=create_request.vocab_level.value,
@@ -172,63 +175,62 @@ def create_world(create_request: WorldCreateRequest, user_id: str) -> WorldMeta:
     )
 
     meta = WorldMeta.from_dto(meta_dto)
+    meta._prepare_for_save()
+    session, memberships = build_session_items(world_id, user_id, [user_id], meta)
+    session._prepare_for_save()
+    for membership in memberships:
+      membership._prepare_for_save()
 
-    meta.save()
-    send_world_generation_message(world_id)
+    with TransactWrite(connection=Connection(region=settings.AWS_REGION)) as transaction:
+      transaction.save(meta, condition=WorldMeta.PK.does_not_exist())
+      transaction.save(session, condition=WorldSession.PK.does_not_exist())
+      for membership in memberships:
+        transaction.save(membership, condition=SessionMembership.PK.does_not_exist())
   except Exception:
     _decrement_world_count(user_id)
     release_quota(user_id, "worlds")
     raise
 
+  try:
+    send_world_generation_message(world_id)
+  except Exception:
+    logger.exception("Failed to enqueue generation for world %s; cleaning up created world/session", world_id)
+    try:
+      for membership in memberships:
+        membership.delete()
+      delete_session(str(session.id))
+      hard_delete_orphaned_world(world_id)
+    except Exception:
+      logger.exception("Failed to clean up world %s after enqueue failure", world_id)
+    release_quota(user_id, "worlds")
+    raise
+
   metrics.add_metric(name="WorldCreated", unit=MetricUnit.Count, value=1)
 
-  try:
-    create_session(root_world_id=world_id, creator_id=user_id, members=[user_id], world=meta)
-  except Exception:
-    logger.warning("Failed to create session for world %s (non-fatal)", world_id, exc_info=True)
-
-  return meta
+  return meta, session
 
 
-def update_world(world_id: str, payload: WorldMetaDTO) -> WorldMeta:
+def update_world(world_id: str, payload: BaseModel) -> WorldMeta:
   """Apply partial updates to an existing world.
 
-  Only fields explicitly provided (non-None) in the payload are updated.
-  Immutable fields (id, author_id, created_at, updated_at) are ignored.
+  Accepts either a ``WorldUpdateRequest`` (user-facing, restricted field set)
+  or a ``WorldMetaDTO`` (internal/admin, full field set).  Only fields
+  present on the *payload model* and non-None are applied; immutable fields
+  are always skipped.
   """
   world = get_world_entity(world_id)
 
-  # Fields that should never be updated via this endpoint.
-  # ``visibility`` is restricted to the dedicated /sharing endpoint
-  # to ensure the cascade (revoke_unauthorized_sessions) always fires.
   immutable_fields = {"id", "author_id", "created_at", "updated_at", "visibility"}
 
-  # Field converters: maps DTO field name to a converter function
-  def convert_visibility(v: WorldVisibility) -> str:
-    return WorldVisibility(v).value
-
-  def convert_generation_status(v: GenerationStatus) -> str:
-    return GenerationStatus(v).value
-
-  def convert_image_generation_status(v: ImageGenerationStatus) -> str:
-    return ImageGenerationStatus(v).value
-
-  def convert_characters(v: list[CharacterDTO]) -> list[Character]:
-    return [Character.from_dto(c) for c in v]
-
-  def convert_locations(v: list[LocationDTO]) -> list[Location]:
-    return [Location.from_dto(loc) for loc in v]
-
   converters: dict[str, Callable[[Any], Any]] = {
-    "visibility": convert_visibility,
-    "generation_status": convert_generation_status,
-    "image_generation_status": convert_image_generation_status,
-    "characters": convert_characters,
-    "locations": convert_locations,
+    "visibility": lambda v: WorldVisibility(v).value,
+    "generation_status": lambda v: WorldGenerationStatus(v).value,
+    "image_generation_status": lambda v: ImageGenerationStatus(v).value,
+    "characters": lambda v: [Character.from_dto(c) for c in v],
+    "locations": lambda v: [Location.from_dto(loc) for loc in v],
   }
 
-  # Iterate over all payload fields and apply non-None, non-immutable updates
-  for field_name in WorldMetaDTO.model_fields:
+  for field_name in payload.model_fields:
     if field_name in immutable_fields:
       continue
     value = getattr(payload, field_name)
@@ -307,6 +309,16 @@ async def generate_lore(world: WorldMeta) -> WorldMeta:
     for location in llm_world_info.locations
   ]
   world.potential_endings = llm_world_info.endings or []  # type: ignore  # PynamoDB ListAttribute accepts list[str]
+
+  try:
+    playlist = playlists.generate_playlist(
+      soundtrack_description=llm_world_info.soundtrack_description,
+      content_filter=world.content_filter,
+    )
+    if playlist:
+      world.default_playlist_id = str(playlist.id)
+  except Exception:
+    logger.warning("Soundtrack playlist generation failed for world %s (non-fatal)", world.id, exc_info=True)
 
   return world
 

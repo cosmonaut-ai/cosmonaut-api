@@ -14,6 +14,7 @@ from typing import Any, cast
 
 import stripe
 from fastapi import APIRouter, HTTPException, Request, status
+from pynamodb.exceptions import PutError
 
 from app.core.config import PRICE_TO_TIER, settings
 from app.core.observability import MetricUnit, logger, metrics
@@ -380,11 +381,17 @@ def _handle_subscription_updated(event: stripe.Event) -> None:
 
 
 def _handle_invoice_payment_failed(event: stripe.Event) -> None:
-  """Payment attempt failed -- immediately downgrade to FREE tier limits.
+  """Payment attempt failed -- mark as past_due but keep current tier limits.
 
-  The user retains their subscription_status as 'past_due' so the frontend
-  can display a payment update prompt. If Stripe's retry succeeds later,
-  the invoice.payment_succeeded handler will restore the paid tier.
+  Stripe's smart-retry logic will re-attempt the charge over the next few days.
+  During this grace window the user keeps their paid-tier limits so they aren't
+  penalized for a temporary card issue. The frontend can check subscription_status
+  to show a payment-update prompt.
+
+  The actual downgrade to FREE only happens when:
+  - All retries are exhausted (subscription status becomes 'unpaid'), handled
+    in _handle_subscription_updated, OR
+  - The subscription is deleted, handled in _handle_subscription_deleted.
   """
   invoice = event["data"]["object"]
   subscription_id = invoice.get("subscription")
@@ -398,11 +405,6 @@ def _handle_invoice_payment_failed(event: stripe.Event) -> None:
     logger.warning(f"invoice.payment_failed: no user_id in subscription {subscription_id} metadata")
     return
 
-  update_tier(user_id, "FREE")
-  update_user_tier(user_id, "FREE")
-
-  # update_tier resets subscription_status to "active", so we must
-  # call update_subscription_status AFTER to ensure "past_due" sticks.
   update_subscription_status(user_id, "past_due")
 
   email, name = get_user_contact_info(user_id)
@@ -415,7 +417,7 @@ def _handle_invoice_payment_failed(event: stripe.Event) -> None:
     distinct_id=user_id,
     properties={"subscription_id": subscription_id, "source": "server"},
   )
-  logger.warning(f"Invoice payment failed: user={user_id} sub={subscription_id} -- downgraded to FREE")
+  logger.warning(f"Invoice payment failed: user={user_id} sub={subscription_id} -- marked past_due (grace period)")
 
 
 def _handle_subscription_deleted(event: stripe.Event) -> None:
@@ -476,35 +478,33 @@ async def stripe_webhook(request: Request) -> dict[str, str]:
   event_type: str = event.get("type", "")
   logger.info(f"Stripe webhook received: {event_type}")
 
-  # Idempotency: skip duplicate events from Stripe retries
+  # Idempotency: atomically claim the event before processing to prevent
+  # duplicate handling from concurrent Stripe deliveries.
   event_id: str = event.get("id", "")
   idempotency_pk = RateLimitRecord.pk(f"WEBHOOK#{event_id}") if event_id else ""
   if event_id:
     try:
-      existing = RateLimitRecord.get(idempotency_pk, RateLimitRecord.sk("PROCESSED"))
-      if existing and existing.expiration > int(time.time()):
-        logger.info("Duplicate webhook event %s, skipping", event_id)
-        return {"status": "already_processed"}
-    except RateLimitRecord.DoesNotExist:
-      pass
+      claim_record = RateLimitRecord(
+        PK=idempotency_pk,
+        SK=RateLimitRecord.sk("PROCESSED"),
+        expiration=int(time.time()) + 172800,  # 48 hours TTL
+      )
+      claim_record.save(condition=RateLimitRecord.PK.does_not_exist())
+    except PutError:
+      logger.info("Duplicate webhook event %s, skipping", event_id)
+      return {"status": "already_processed"}
 
   handler_fn = _EVENT_HANDLERS.get(event_type)
   if handler_fn:
     try:
       handler_fn(event)
       metrics.add_metric(name="WebhookProcessed", unit=MetricUnit.Count, value=1)
-      # Mark as processed only after successful handling
-      if event_id:
-        record = RateLimitRecord(
-          PK=idempotency_pk,
-          SK=RateLimitRecord.sk("PROCESSED"),
-          expiration=int(time.time()) + 172800,  # 48 hours TTL
-        )
-        record.save()
-    except Exception:
+    except Exception as exc:
       logger.exception(f"Error handling Stripe event {event_type}")
-      # Return 200 even on internal errors to prevent Stripe retries for
-      # transient failures.  The error is logged for investigation.
+      raise HTTPException(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        detail="Webhook handler failed",
+      ) from exc
   else:
     logger.info(f"Unhandled Stripe event type: {event_type}")
 

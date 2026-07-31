@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime, timedelta
-from typing import TYPE_CHECKING
 
 import stripe
 
@@ -18,24 +17,11 @@ from app.core.observability import logger
 from app.models.entities.session_membership import SessionMembership
 from app.models.entities.user import UsageTombstone, UsernameReservation, UserRecord
 from app.models.entities.world_meta import WorldMeta
+from app.services.cognito import get_cognito_client
 from app.services.newsletter import unsubscribe as newsletter_unsubscribe
 from app.services.secret_manager import get_secret_value
 from app.services.sessions import delete_session, delete_sessions_for_world, delete_user_memberships
 from app.services.worlds import hard_delete_orphaned_world
-
-if TYPE_CHECKING:
-  from mypy_boto3_cognito_idp.client import CognitoIdentityProviderClient
-
-_cognito_client: CognitoIdentityProviderClient | None = None
-
-
-def _get_cognito_client() -> CognitoIdentityProviderClient:
-  global _cognito_client
-  if _cognito_client is None:
-    import boto3
-
-    _cognito_client = boto3.client("cognito-idp", region_name=settings.AWS_REGION)
-  return _cognito_client
 
 
 async def delete_account(user_id: str, cognito_username: str, email: str | None = None) -> None:
@@ -227,7 +213,7 @@ def _delete_cognito_user(cognito_username: str) -> None:
     return
 
   try:
-    client = _get_cognito_client()
+    client = get_cognito_client()
     client.admin_delete_user(
       UserPoolId=settings.COGNITO_USER_POOL_ID,
       Username=cognito_username,

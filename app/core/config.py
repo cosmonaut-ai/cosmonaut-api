@@ -53,6 +53,13 @@ class Settings(BaseSettings):
   GOOGLE_CLIENT_SECRET_PARAM: str = Field(default="", description="Parameter store path for the Google client secret.")
   PINECONE_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Pinecone API key.")
   ELEVENLABS_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the ElevenLabs API key.")
+  ELEVENLABS_USD_PER_CHAR: float = Field(
+    default=0.0001,
+    description="Estimated ElevenLabs TTS cost per character (Flash ≈ 0.5 credits/char), for PostHog AI cost tracking.",
+  )
+  IMAGEN_USD_PER_IMAGE: float = Field(
+    default=0.04, description="Estimated Imagen cost per generated image, for PostHog AI cost tracking."
+  )
 
   # Stripe
   STRIPE_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Stripe API key.")

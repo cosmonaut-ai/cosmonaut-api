@@ -14,16 +14,23 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from app.api.admin import router as admin_router
+from app.api.admin_audio import router as admin_audio_router
 from app.api.auth import router as auth_router
 from app.api.dependencies import require_admin, require_onboarded
 from app.api.meta import router as meta_router
-from app.api.story_nodes import router as story_nodes_router
+from app.api.playlists import router as playlists_router
+from app.api.sessions import router as sessions_router
 from app.api.voices import router as voices_router
 from app.api.webhooks import router as webhooks_router
 from app.api.worlds import router as worlds_router
 from app.core.config import settings
 from app.core.errors import AppError, RateLimitError
-from app.core.llm_telemetry import clear_request_distinct_id, init_llm_telemetry, set_request_distinct_id
+from app.core.llm_telemetry import (
+  clear_request_distinct_id,
+  init_llm_telemetry,
+  set_llm_context,
+  set_request_distinct_id,
+)
 from app.core.llm_telemetry import flush as llm_flush
 from app.core.observability import logger, metrics, tracer
 from app.core.posthog import capture_exception as ph_capture_exception
@@ -91,7 +98,14 @@ app.add_middleware(
   allow_origins=settings.CORS_ORIGINS,
   allow_credentials=True,
   allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-  allow_headers=["Authorization", "Content-Type", "X-PostHog-Distinct-Id", "X-PostHog-Session-Id"],
+  allow_headers=[
+    "Authorization",
+    "Content-Type",
+    "X-PostHog-Distinct-Id",
+    "X-PostHog-Session-Id",
+    "Sentry-Trace",
+    "Baggage",
+  ],
   expose_headers=["X-New-Node-Id"],
 )
 
@@ -108,6 +122,12 @@ async def inject_logger_context(request: Request, call_next: Callable[[Request],
   if posthog_distinct_id:
     ph_identify(posthog_distinct_id)
     set_request_distinct_id(posthog_distinct_id)
+
+  # Client replay session, so server-side AI events join the user's session
+  # replay in PostHog.
+  posthog_session_id = request.headers.get("x-posthog-session-id")
+  if posthog_session_id:
+    set_llm_context(session_id=posthog_session_id)
 
   try:
     response: Response = await call_next(request)
@@ -130,7 +150,8 @@ async def health():
 
 
 app.include_router(worlds_router, dependencies=[Depends(require_onboarded)])
-app.include_router(story_nodes_router, dependencies=[Depends(require_onboarded)])
+app.include_router(sessions_router, dependencies=[Depends(require_onboarded)])
+app.include_router(playlists_router, dependencies=[Depends(require_onboarded)])
 app.include_router(auth_router, dependencies=[Depends(get_current_user)])
 
 # Meta router – public (bots can't authenticate)
@@ -144,5 +165,6 @@ app.include_router(webhooks_router)
 
 # Admin router – JWT auth plus Cognito group authorization for all child routes
 app.include_router(admin_router, dependencies=[Depends(require_admin)])
+app.include_router(admin_audio_router, dependencies=[Depends(require_admin)])
 
 nest_asyncio.apply()

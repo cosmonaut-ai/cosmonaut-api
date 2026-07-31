@@ -45,6 +45,7 @@ class WorldSession(BaseCosmonautModel):
   created_by: UnicodeAttribute = UnicodeAttribute()
   per_member_progress: MapAttribute[str, str] = MapAttribute[str, str](default=dict)
   visited_node_count: NumberAttribute = NumberAttribute(default=0)
+  soundtrack_playlist_id: UnicodeAttribute = UnicodeAttribute(null=True)
 
   GSI3PK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI3PK", null=True)
   GSI3SK: UnicodeAttribute = UnicodeAttribute(attr_name="GSI3SK", null=True)

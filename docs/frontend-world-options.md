@@ -11,10 +11,10 @@ Optional fields on the **Create World** request, returned on every **World** res
 Controls how long a single story branch can be (max number of nodes before the LLM starts wrapping up the narrative).
 
 | Value      | Max Nodes | Approx. Read Time |
-| :--------- | :-------- | :----------------- |
-| `"short"`  | 5         | ~5 minutes         |
-| `"medium"` | 10        | ~10 minutes        |
-| `"long"`   | 15        | ~20 minutes        |
+| :--------- | :-------- | :---------------- |
+| `"short"`  | 5         | ~5 minutes        |
+| `"medium"` | 10        | ~10 minutes       |
+| `"long"`   | 15        | ~20 minutes       |
 
 - **Type:** `string` enum — `"short"` | `"medium"` | `"long"`
 - **Default:** `"medium"` (if omitted from the request)
@@ -24,11 +24,11 @@ Controls how long a single story branch can be (max number of nodes before the L
 
 Controls the vocabulary complexity and reading level used in generated story text.
 
-| Value     | Description                                                       |
-| :-------- | :---------------------------------------------------------------- |
-| `"child"` | Simple words and short sentences suitable for ages 8+.            |
-| `"teen"`  | Moderate vocabulary complexity for ages 13+.                      |
-| `"adult"` | No vocabulary restrictions.                                       |
+| Value     | Description                                            |
+| :-------- | :----------------------------------------------------- |
+| `"child"` | Simple words and short sentences suitable for ages 8+. |
+| `"teen"`  | Moderate vocabulary complexity for ages 13+.           |
+| `"adult"` | No vocabulary restrictions.                            |
 
 - **Type:** `string` enum — `"child"` | `"teen"` | `"adult"`
 - **Default:** `"adult"` (if omitted from the request)
@@ -38,11 +38,11 @@ Controls the vocabulary complexity and reading level used in generated story tex
 
 Controls how explicit graphic material (mainly violence) can be. Sexual content is never allowed on the platform regardless of this setting.
 
-| Value        | Description                                                            |
-| :----------- | :--------------------------------------------------------------------- |
-| `"none"`     | No content filtering beyond platform rules.                            |
-| `"moderate"` | Violence without gratuitous detail. No extreme horror.                 |
-| `"strict"`   | No graphic violence, profanity, horror, or disturbing imagery.         |
+| Value        | Description                                                    |
+| :----------- | :------------------------------------------------------------- |
+| `"none"`     | No content filtering beyond platform rules.                    |
+| `"moderate"` | Violence without gratuitous detail. No extreme horror.         |
+| `"strict"`   | No graphic violence, profanity, horror, or disturbing imagery. |
 
 - **Type:** `string` enum — `"none"` | `"moderate"` | `"strict"`
 - **Default:** `"none"` (if omitted from the request)
@@ -52,7 +52,7 @@ Controls how explicit graphic material (mainly violence) can be. Sexual content 
 
 ## API Changes
 
-### `POST /worlds/` — Create a World
+### `POST /worlds/` — Create a World And Owner Session
 
 Optional fields in the request body:
 
@@ -68,9 +68,37 @@ Optional fields in the request body:
 
 All fields except `world_prompt` are optional; omitting them gives `"medium"`, `"adult"`, and `"none"` respectively.
 
-### `GET /worlds/{world_id}` and `GET /worlds/` — Read Worlds
+The response contains both the root world and the owner's initial playthrough session:
 
-The response includes these fields on every `WorldMetaDTO`:
+```json
+{
+  "world": {
+    "id": "uuid-123",
+    "generation_status": "generating_lore",
+    "story_max_nodes": 5,
+    "world_length": "short",
+    "vocab_level": "teen",
+    "content_filter": "strict"
+  },
+  "session": {
+    "id": "session-123",
+    "root_world_id": "uuid-123",
+    "role": "owner",
+    "world": {
+      "id": "uuid-123",
+      "generation_status": "generating_lore",
+      "story_max_nodes": 5,
+      "world_length": "short",
+      "vocab_level": "teen",
+      "content_filter": "strict"
+    }
+  }
+}
+```
+
+### `GET /worlds/{world_id}` and session responses — Read Worlds
+
+`GET /worlds/{world_id}` returns canonical root-world metadata only. `GET /sessions/` and `GET /sessions/{session_id}` embed world metadata on each session. In both cases, the embedded `WorldMetaDTO` includes:
 
 ```json
 {

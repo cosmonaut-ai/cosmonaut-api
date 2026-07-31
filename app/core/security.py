@@ -5,12 +5,13 @@ import jwt
 import sentry_sdk
 from cachetools import TTLCache
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPublicKey
-from fastapi import HTTPException, Request, Security
+from fastapi import Request, Security
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.algorithms import RSAAlgorithm
 from pydantic import BaseModel
 
 from app.core.config import settings
+from app.core.errors import AuthenticationError, ForbiddenError
 from app.core.observability import logger
 
 ADMIN_GROUPS = frozenset({"Admin", "Owner"})
@@ -62,7 +63,7 @@ def get_jwks() -> dict[str, Any]:
       return data
   except Exception as e:
     logger.error(f"Failed to fetch JWKS: {e}")
-    raise HTTPException(status_code=500, detail="Authentication service unavailable") from e
+    raise AuthenticationError("Authentication service unavailable") from e
 
 
 # --- Validation Logic ---
@@ -85,7 +86,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
 
   # 2. Require token for production
   if not token:
-    raise HTTPException(status_code=401, detail="Missing authorization token")
+    raise AuthenticationError("Missing authorization token")
 
   # 2. Production Path: Verify Token
   try:
@@ -116,7 +117,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
         break
 
     if not rsa_key:
-      raise HTTPException(status_code=401, detail="Invalid token header (kid not found)")
+      raise AuthenticationError("Invalid token")
 
     # B. Verify Signature and Claims
     public_key = cast(RSAPublicKey, RSAAlgorithm.from_jwk(rsa_key))
@@ -184,7 +185,7 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
     # Dev environment email allowlist — reject users not on the list.
     if settings.ENV == "dev" and user.email not in settings.DEV_ALLOWED_EMAILS:
       logger.warning("Dev access denied for user %s", user.id)
-      raise HTTPException(status_code=403, detail="Access denied: email not authorized for the dev environment")
+      raise ForbiddenError("Access denied: email not authorized for the dev environment")
 
     logger.append_keys(user_id=user.id)
     sentry_sdk.set_user({"id": user.id, "email": user.email, "username": user.app_username or user.username})
@@ -192,10 +193,14 @@ def get_current_user(request: Request, token: HTTPAuthorizationCredentials | Non
 
   except jwt.ExpiredSignatureError:
     logger.warning("Token has expired")
-    raise HTTPException(status_code=401, detail="Token has expired") from None
-  except jwt.InvalidTokenError as e:
-    logger.warning(f"Invalid token: {e}")
-    raise HTTPException(status_code=401, detail=f"Invalid token: {e!s}") from e
+    raise AuthenticationError("Token has expired") from None
+  except jwt.InvalidTokenError:
+    logger.warning("Invalid token")
+    raise AuthenticationError("Invalid token") from None
+  except AuthenticationError:
+    raise
+  except ForbiddenError:
+    raise
   except Exception as e:
     logger.exception("Unexpected Auth Error")
-    raise HTTPException(status_code=500, detail="Authentication error") from e
+    raise AuthenticationError("Authentication error") from e

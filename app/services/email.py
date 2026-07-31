@@ -307,8 +307,9 @@ def send_payment_failed(recipient_email: str, name: str) -> bool:
     {_greeting(safe_name)}
   </p>
   <p style="margin:0 0 24px;font-size:15px;color:{_MUTED};line-height:1.6;">
-    We were unable to process your latest subscription payment. Your access
-    remains active while we retry, but please update your payment method to avoid interruption.
+    We were unable to process your latest subscription payment. Your plan has
+    been temporarily downgraded while the payment is outstanding. Please update
+    your payment method to restore your subscription benefits.
   </p>
 
   {_cta_button(_frontend_url("/pricing"), "Update Payment Method")}
@@ -321,7 +322,8 @@ def send_payment_failed(recipient_email: str, name: str) -> bool:
   text_body = (
     f"{_greeting(name)}\n\n"
     "We were unable to process your latest subscription payment. "
-    "Please update your payment method to avoid interruption.\n\n"
+    "Your plan has been temporarily downgraded while the payment is outstanding. "
+    "Please update your payment method to restore your subscription benefits.\n\n"
     f"Update payment: {_frontend_url('/pricing')}\n\n"
     "— The Cosmonaut Team"
   )

@@ -34,6 +34,13 @@ class LLMWorldInfo(BaseModel):
   description: str = Field(description="A short description of the story.")
   genre: str = Field(description="The genre of the story.")
   endings: list[str] = Field(description="A list of potential endings for the story to guide the narrative towards.")
+  soundtrack_description: str = Field(
+    default="",
+    description=(
+      "A 3-4 sentence, mood-forward narration backtrack description for soundtrack search, including narrative fit, "
+      "tempo or energy, broad genre or style, and a few supporting instruments or textures."
+    ),
+  )
 
 
 class LLMChoice(BaseModel):
