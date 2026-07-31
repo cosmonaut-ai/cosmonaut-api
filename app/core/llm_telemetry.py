@@ -47,8 +47,11 @@ _last_trace_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar(
   "posthog_last_ai_trace_id", default=None
 )
 
-# Context keys stamped onto spans as posthog.properties.<name>. session_id is
-# the client's PostHog replay session (from X-PostHog-Session-Id), mapped to
+# Context keys stamped onto spans as plain attribute names — PostHog's OTel
+# ingestion copies span attributes to event properties verbatim (a
+# "posthog.properties." prefix is NOT stripped, verified 2026-07-31), so the
+# attribute name must equal the desired property name. session_id is the
+# client's PostHog replay session (from X-PostHog-Session-Id), mapped to
 # $session_id so server-side AI events join the session replay; the domain
 # WorldSession id is the separate world_session_id key.
 _PROPERTY_KEYS = {
@@ -97,7 +100,7 @@ def init_llm_telemetry() -> None:
       for key, property_name in _PROPERTY_KEYS.items():
         value = context.get(key)
         if value:
-          span.set_attribute(f"posthog.properties.{property_name}", str(value))
+          span.set_attribute(property_name, str(value))
 
     def on_end(self, span: ReadableSpan) -> None:
       pass

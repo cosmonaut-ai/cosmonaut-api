@@ -134,7 +134,7 @@ async def _process_task(payload: SQSPayload):
   )
 
   try:
-    with ai_trace_span(f"worker.{payload.task_type}"):
+    with ai_trace_span(f"worker.{payload.task_type.value}"):
       match payload:
         case AnalyzeNodePayload():
           await _analyze_node(payload)
