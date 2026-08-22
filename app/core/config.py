@@ -49,7 +49,11 @@ class Settings(BaseSettings):
   STATIC_CONTENT_CDN_DOMAIN: str = Field(default="", description="CloudFront domain for serving static content.")
 
   GCP_PROJECT_ID: str = Field(default="", description="GCP project ID for Vertex AI.")
-  GCP_LOCATION: str = Field(default="", description="GCP region for Vertex AI.")
+  GCP_LOCATION: str = Field(default="", description="GCP region for Vertex AI text models.")
+  GCP_IMAGE_LOCATION: str = Field(
+    default="us-central1",
+    description="GCP region for Vertex AI Imagen. Imagen is not served on the 'global' endpoint.",
+  )
   GOOGLE_CLIENT_SECRET_PARAM: str = Field(default="", description="Parameter store path for the Google client secret.")
   PINECONE_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the Pinecone API key.")
   ELEVENLABS_API_KEY_PARAM: str = Field(default="", description="Parameter store path for the ElevenLabs API key.")
