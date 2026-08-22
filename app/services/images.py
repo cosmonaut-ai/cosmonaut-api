@@ -35,7 +35,7 @@ def _get_genai_client() -> GenAIClient:
     vertexai=True,
     credentials=get_gcp_credentials(),
     project=settings.GCP_PROJECT_ID,
-    location=settings.GCP_LOCATION,
+    location=settings.GCP_IMAGE_LOCATION,
   )
 
 
