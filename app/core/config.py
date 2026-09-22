@@ -58,7 +58,8 @@ class Settings(BaseSettings):
     description="Estimated ElevenLabs TTS cost per character (Flash ≈ 0.5 credits/char), for PostHog AI cost tracking.",
   )
   IMAGEN_USD_PER_IMAGE: float = Field(
-    default=0.04, description="Estimated Imagen cost per generated image, for PostHog AI cost tracking."
+    default=0.017,
+    description="Estimated Gemini image cost per generated image at Standard tier, for PostHog AI cost tracking.",
   )
 
   # Stripe
