@@ -25,8 +25,7 @@ from app.utils.pii import truncate_for_log
 
 IMAGEN_MODEL = "gemini-3.1-flash-lite-image"
 IMAGE_SIZE = "1024x1024"
-S3_KEY_TEMPLATE = "worlds/{world_id}/cover.{extension}"
-_IMAGE_EXTENSIONS = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp"}
+S3_KEY_TEMPLATE = "worlds/{world_id}/cover.png"
 
 
 @lru_cache
@@ -98,7 +97,7 @@ async def generate_world_image(world: WorldMeta) -> WorldMeta:
       contents=[image_prompt],
       config=types.GenerateContentConfig(
         response_modalities=["IMAGE"],
-        image_config=types.ImageConfig(aspect_ratio="1:1"),
+        image_config=types.ImageConfig(aspect_ratio="1:1", output_mime_type="image/png"),
       ),
     )
     image_data = next(
@@ -107,14 +106,14 @@ async def generate_world_image(world: WorldMeta) -> WorldMeta:
         for part in response.parts or []
         if not part.thought
         and part.inline_data is not None
-        and part.inline_data.mime_type in _IMAGE_EXTENSIONS
+        and part.inline_data.mime_type == "image/png"
         and part.inline_data.data
       ),
       None,
     )
-    if image_data is None or not image_data.data or image_data.mime_type is None:
+    if image_data is None or not image_data.data:
       logger.warning(
-        "Gemini returned no supported image data",
+        "Gemini returned no PNG image data",
         extra={
           "world_id": world.id,
           "model": IMAGEN_MODEL,
@@ -123,17 +122,16 @@ async def generate_world_image(world: WorldMeta) -> WorldMeta:
           "block_reason": str(response.prompt_feedback.block_reason) if response.prompt_feedback else None,
         },
       )
-      raise RuntimeError(f"Gemini returned no supported image data for world {world.id}")
+      raise RuntimeError(f"Gemini returned no PNG image data for world {world.id}")
     image_bytes: bytes = image_data.data
-    content_type = image_data.mime_type
   except Exception as exc:
     _capture_image_generation(world.id, time.monotonic() - started_at, error=str(exc))
     raise
   _capture_image_generation(world.id, time.monotonic() - started_at)
 
   # 3. Upload to S3
-  s3_key = S3_KEY_TEMPLATE.format(world_id=world.id, extension=_IMAGE_EXTENSIONS[content_type])
-  cdn_url = upload_image(key=s3_key, image_bytes=image_bytes, content_type=content_type)
+  s3_key = S3_KEY_TEMPLATE.format(world_id=world.id)
+  cdn_url = upload_image(key=s3_key, image_bytes=image_bytes)
 
   # 4. Persist image metadata on the world entity
   world.world_image_url = cdn_url
