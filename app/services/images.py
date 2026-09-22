@@ -1,6 +1,6 @@
 """Image generation service for world cover images.
 
-Orchestrates prompt crafting via Gemini, image generation via Imagen 3,
+Orchestrates prompt crafting via Gemini, image generation via Gemini,
 S3 upload, and WorldMeta persistence.
 """
 
@@ -23,7 +23,7 @@ from app.services.s3 import upload_image
 from app.services.worlds import world_meta_to_llm_world_info
 from app.utils.pii import truncate_for_log
 
-IMAGEN_MODEL = "imagen-4.0-generate-001"
+IMAGEN_MODEL = "gemini-3.1-flash-lite-image"
 IMAGE_SIZE = "1024x1024"
 S3_KEY_TEMPLATE = "worlds/{world_id}/cover.png"
 
@@ -40,11 +40,11 @@ def _get_genai_client() -> GenAIClient:
 
 
 def _capture_image_generation(world_id: str, latency_s: float, error: str | None = None) -> None:
-  """Record the Imagen call as a PostHog $ai_generation event.
+  """Record the Gemini image call as a PostHog $ai_generation event.
 
-  Imagen is priced per image, not per token, so cost is computed here
-  (IMAGEN_USD_PER_IMAGE). generate_images is outside pydantic-ai, so no
-  span is created automatically.
+  Gemini is token-billed; IMAGEN_USD_PER_IMAGE is a configurable estimate
+  for a Standard-tier 1K image, not an exact bill. This direct SDK call
+  is outside pydantic-ai, so no span is created automatically.
   """
   context = get_llm_context()
   distinct_id = context.get("distinct_id") or context.get("user_id")
@@ -70,7 +70,7 @@ async def generate_world_image(world: WorldMeta) -> WorldMeta:
   """Generate a cover image for a world and persist it.
 
   1. Craft an optimised image prompt via the Gemini LLM agent.
-  2. Generate an image with Imagen 3.
+  2. Generate an image with Gemini.
   3. Upload the image to S3.
   4. Update the WorldMeta entity with image metadata.
 
@@ -88,31 +88,33 @@ async def generate_world_image(world: WorldMeta) -> WorldMeta:
     "Crafted image prompt for world %s", world.id, extra={"image_prompt_preview": truncate_for_log(image_prompt)}
   )
 
-  # 2. Generate image via Imagen 3
+  # 2. Generate image via Gemini
   client = _get_genai_client()
   started_at = time.monotonic()
   try:
-    response = client.models.generate_images(
+    response = client.models.generate_content(
       model=IMAGEN_MODEL,
-      prompt=image_prompt,
-      config=types.GenerateImagesConfig(
-        number_of_images=1,
-        aspect_ratio="1:1",
+      contents=[image_prompt],
+      config=types.GenerateContentConfig(
+        response_modalities=["IMAGE"],
+        image_config=types.ImageConfig(aspect_ratio="1:1"),
       ),
     )
+    image_data = next(
+      (
+        part.inline_data
+        for part in response.parts or []
+        if part.inline_data is not None and part.inline_data.mime_type == "image/png" and part.inline_data.data
+      ),
+      None,
+    )
+    if image_data is None or not image_data.data:
+      raise RuntimeError(f"Gemini returned no PNG image data for world {world.id}")
+    image_bytes: bytes = image_data.data
   except Exception as exc:
     _capture_image_generation(world.id, time.monotonic() - started_at, error=str(exc))
     raise
   _capture_image_generation(world.id, time.monotonic() - started_at)
-
-  if not response.generated_images:
-    raise RuntimeError(f"Imagen returned no images for world {world.id}")
-
-  generated_image = response.generated_images[0]
-  if generated_image.image is None or generated_image.image.image_bytes is None:
-    raise RuntimeError(f"Imagen returned an image with no data for world {world.id}")
-
-  image_bytes: bytes = generated_image.image.image_bytes
 
   # 3. Upload to S3
   s3_key = S3_KEY_TEMPLATE.format(world_id=world.id)
