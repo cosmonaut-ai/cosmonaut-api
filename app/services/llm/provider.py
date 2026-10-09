@@ -12,10 +12,10 @@ from functools import lru_cache
 from typing import Literal
 
 from anthropic import AsyncAnthropicVertex
+from google.genai.types import ThinkingLevel
 from httpx import AsyncClient, HTTPStatusError, Response, Timeout
-from pydantic_ai import ModelSettings
 from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-from pydantic_ai.models.google import GoogleModel
+from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.providers.google import GoogleProvider
 from pydantic_ai.retries import AsyncTenacityTransport, RetryConfig, wait_retry_after
@@ -30,6 +30,7 @@ _RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 # Anthropic requires a minimum token count for prompt caching to activate.
 # Below this threshold the request is processed normally (no error, no cache).
 ANTHROPIC_CACHE_MIN_TOKENS: dict[str, int] = {
+  "claude-haiku-5-5": 512,
   "claude-haiku-4-5": 4096,
   "claude-haiku-4-5@20251001": 4096,
   "claude-3-5-haiku": 4096,
@@ -89,11 +90,14 @@ def get_vertex_google_provider() -> GoogleProvider:
 
 @lru_cache
 def get_vertex_google_model(model_name: str = settings.MODEL_SMALL) -> GoogleModel:
-  """Get or create a Vertex AI Google model with the specified model name."""
+  """Get or create a Vertex AI Google model with the specified model name.
+
+  Temperature is left at the Gemini 3 default of 1.0; Google warns that lower
+  values can cause looping or degraded output.
+  """
   return GoogleModel(
     model_name=model_name,
     provider=get_vertex_google_provider(),
-    settings=ModelSettings(temperature=0.95),
   )
 
 
@@ -117,6 +121,7 @@ def get_vertex_anthropic_provider() -> AnthropicProvider:
 @lru_cache
 def get_vertex_anthropic_model(
   model_name: str = settings.MODEL_SMALL_ANTHROPIC,
+  effort: Literal["low", "medium", "high", "xhigh", "max"] = settings.MODEL_SMALL_ANTHROPIC_EFFORT,
   cache_instructions: Literal["5m", "1h"] | None = "1h",
 ) -> AnthropicModel:
   """Get or create a Vertex AI Anthropic model.
@@ -125,16 +130,21 @@ def get_vertex_anthropic_model(
   completely unaware of caching mechanics.  Anthropic caches the system prompt
   prefix automatically when ``cache_control`` breakpoints are present.
 
-  If the system prompt is below the model's minimum token threshold (e.g. 4096
-  for Haiku 4.5), Anthropic silently processes the request without caching --
+  If the system prompt is below the model's minimum token threshold (e.g. 512
+  for Haiku 5.5), Anthropic silently processes the request without caching --
   no error occurs, the request simply costs standard input token rates.
+
+  Sampling parameters are left at their defaults because Haiku 5.5 rejects
+  non-default ``temperature`` / ``top_p`` / ``top_k``.
 
   Args:
     model_name: The Anthropic model name on Vertex AI.
+    effort: ``output_config.effort`` sent through ``extra_body`` because
+      pydantic-ai has no native effort setting for Anthropic.
     cache_instructions: TTL for system prompt caching. ``'1h'`` gives 90%
       discount on cache reads at 2x write cost. ``None`` disables caching.
   """
-  model_settings: AnthropicModelSettings = AnthropicModelSettings(temperature=0.95)
+  model_settings: AnthropicModelSettings = AnthropicModelSettings(extra_body={"output_config": {"effort": effort}})
   if cache_instructions is not None:
     model_settings["anthropic_cache_instructions"] = cache_instructions
   return AnthropicModel(
@@ -164,6 +174,16 @@ def get_utility_model() -> GoogleModel:
   return get_vertex_google_model()
 
 
+@lru_cache
 def get_world_building_model() -> GoogleModel:
-  """Model for world building (world_info generation)."""
-  return get_vertex_google_model(settings.MODEL_LARGE)
+  """Model for world building (world_info generation).
+
+  Temperature is not set because Gemini 3.8 Flash ignores sampling parameters.
+  """
+  return GoogleModel(
+    model_name=settings.MODEL_LARGE,
+    provider=get_vertex_google_provider(),
+    settings=GoogleModelSettings(
+      google_thinking_config={"thinking_level": ThinkingLevel(settings.MODEL_LARGE_THINKING_LEVEL)}
+    ),
+  )
