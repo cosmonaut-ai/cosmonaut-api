@@ -18,9 +18,15 @@ class Settings(BaseSettings):
   DYNAMODB_TABLE_NAME: str = Field(default="cosmonaut-dev", description="Primary DynamoDB table for application state.")
   MODEL_SMALL: str = Field(default="gemini-3-flash-preview", description="Vertex AI model name for small tasks.")
   MODEL_SMALL_ANTHROPIC: str = Field(
-    default="claude-haiku-4-5", description="Vertex AI model name for small tasks."
-  )  # claude-haiku-4-5@20251001
-  MODEL_LARGE: str = Field(default="gemini-3.1-pro-preview", description="Vertex AI model name for large tasks.")
+    default="claude-haiku-5-5", description="Vertex AI Anthropic model name for story narration."
+  )
+  MODEL_SMALL_ANTHROPIC_EFFORT: Literal["low", "medium", "high", "xhigh", "max"] = Field(
+    default="medium", description="Anthropic output_config.effort for story narration."
+  )
+  MODEL_LARGE: str = Field(default="gemini-3.8-flash", description="Vertex AI model name for large tasks.")
+  MODEL_LARGE_THINKING_LEVEL: Literal["LOW", "MEDIUM", "HIGH"] = Field(
+    default="MEDIUM", description="Gemini thinking level for large tasks."
+  )
   VERTEX_TIMEOUT_S: int = Field(default=30, description="Client timeout in seconds.")
   PINECONE_INDEX: str | None = Field(default=None, description="Target Pinecone index for vector operations.")
   MOCK_AUTH: bool = Field(default=False, description="If True, bypasses JWT validation (DEV ONLY).")
