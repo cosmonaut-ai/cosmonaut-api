@@ -4,8 +4,8 @@ Generates world setting, characters, locations from a user prompt.
 Uses structured output (no XML parsing needed for non-streaming).
 """
 
-from pydantic import BaseModel, Field
-from pydantic_ai import Agent, RunContext
+from pydantic import BaseModel, Field, ValidationError
+from pydantic_ai import Agent, ModelRetry, RunContext
 
 from app.services.llm.agents.prompts import NARRATIVE_CONSTRAINTS, build_content_directives
 from app.services.llm.models import LLMWorldInfo
@@ -78,11 +78,45 @@ class WorldInfoDeps(BaseModel):
   content_filter: str = Field(default="none", description="Content filter strictness.")
 
 
+# Re-prompts allowed after the first response when the output fails validation (3 model calls max).
+_OUTPUT_RETRIES = 2
+
+_RETRY_INSTRUCTION = (
+  "Respond again with <plan>...</plan> followed by one complete <world_info>...</world_info> block "
+  "containing valid JSON with every required field."
+)
+
+
+def _parse_world_info(text: str) -> LLMWorldInfo:
+  """Extract and validate the ``<world_info>`` JSON from the model's text output.
+
+  Raises ``ModelRetry`` so pydantic-ai re-prompts the model (bounded by
+  ``output_retries``) instead of failing the run on a missing/unclosed wrapper
+  or schema-invalid JSON. Retry feedback never echoes the raw model output.
+  """
+  try:
+    return extract_xml_json(text, "world_info", LLMWorldInfo)
+  except ValidationError as e:
+    issues = "; ".join(
+      f"{'.'.join(str(loc) for loc in err['loc']) or '<root>'}: {err['msg']}"
+      for err in e.errors(include_url=False, include_input=False)
+    )
+    feedback = f"The <world_info> JSON failed validation ({issues})."
+  except ValueError as e:
+    # Missing or unclosed <world_info> wrapper (incl. LLMOutputTruncatedError); messages contain no model output.
+    feedback = str(e)
+
+  # Raised outside the except blocks so neither __cause__ nor __context__ references the original exception:
+  # ValidationError text includes model-output snippets and would surface in tracebacks once retries are exhausted.
+  raise ModelRetry(f"{feedback}\n{_RETRY_INSTRUCTION}") from None
+
+
 # Module-level agent instantiation
 _agent: Agent[WorldInfoDeps, str] = Agent(
   model=get_world_building_model(),
   deps_type=WorldInfoDeps,
   output_type=str,
+  output_retries=_OUTPUT_RETRIES,
   name="world_info",
 )
 
@@ -94,19 +128,30 @@ def _build_system_prompt(ctx: RunContext[WorldInfoDeps]) -> str:
   return SYSTEM_PROMPT + NARRATIVE_CONSTRAINTS + directives
 
 
+@_agent.output_validator
+def _validate_world_info_output(text: str) -> str:
+  """Reject output without a valid ``<world_info>`` block so the agent retries.
+
+  An output validator (rather than a ``TextOutput`` function) is used because
+  pydantic-ai does not wrap validators in an output-function span, so the raw
+  text and parsed result are not duplicated into telemetry.
+  """
+  _parse_world_info(text)
+  return text
+
+
 async def generate_world_info(
   world_prompt: str, *, vocab_level: str = "adult", content_filter: str = "none"
 ) -> LLMWorldInfo:
   """Generate world info from a prompt using XML-based planning format.
 
   The LLM first creates a plan in <plan> tags, then outputs structured
-  world info in <world_info> tags as JSON.
+  world info in <world_info> tags as JSON. The agent's output validator
+  retries responses that lack a valid <world_info> block.
   """
   deps = WorldInfoDeps(vocab_level=vocab_level, content_filter=content_filter)
   sanitized = sanitize_user_input(world_prompt)
   wrapped = f"<user_story_concept>\n{sanitized}\n</user_story_concept>"
   result = await _agent.run(wrapped, deps=deps, model_settings={"max_tokens": 8192})
-  raw_output = result.output
-
-  # Extract world_info JSON from XML response
-  return extract_xml_json(raw_output, "world_info", LLMWorldInfo)
+  # The validator accepted this exact text, so this deterministic parse succeeds.
+  return _parse_world_info(result.output)
